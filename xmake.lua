@@ -20,6 +20,8 @@ add_configfiles("src/config.h.in")
 
 add_includedirs("$(builddir)/config/")
 
+add_requires("fmt")
+
 
 option("with_gtest")
     set_default(false)
@@ -63,6 +65,8 @@ target("dlog")
     set_kind(build_shared and "shared" or "static")
 
     apply_current_platform_target_config()
+
+    add_packages("fmt", {public = true})
 
     if build_shared and is_current_win32() then
         add_rules("utils.symbols.export_all")
