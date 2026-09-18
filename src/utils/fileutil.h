@@ -24,7 +24,7 @@ public:
     ~FileUtil();
 
     // 向文件追加写入指定长度的数据。
-    void append(const char *data, std::size_t len);
+    void append(const char *data, size_t len);
 
     // 将用户态缓冲区中的数据刷新到文件。
     void flush();
@@ -36,7 +36,7 @@ public:
 private:
 
     // 执行一次底层写入操作。append() 负责处理部分写入。
-    std::size_t write(const char *data, std::size_t len) noexcept;
+    size_t write(const char *data, size_t len) noexcept;
 
 
     // 文件指针，用于操作文件。
