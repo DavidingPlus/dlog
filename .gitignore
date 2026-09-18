@@ -7,7 +7,6 @@ build/
 # Makefile Build Artifacts
 *.o
 *.o.d
-core
 .depend
 .*.cmd
 *.ko
