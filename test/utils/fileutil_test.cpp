@@ -79,10 +79,10 @@ TEST_F(FileUtilTest, AppendsDataAndReportsWrittenBytes)
         FileUtil file(m_filePath.string());
 
         file.append(first.data(), first.size());
-        EXPECT_EQ(file.writtenBytes(), static_cast<std::int64_t>(first.size()));
+        EXPECT_EQ(file.writtenBytes(), static_cast<int64_t>(first.size()));
 
         file.append(second.data(), second.size());
-        EXPECT_EQ(file.writtenBytes(), static_cast<std::int64_t>(first.size() + second.size()));
+        EXPECT_EQ(file.writtenBytes(), static_cast<int64_t>(first.size() + second.size()));
 
         file.flush();
     }
@@ -131,7 +131,7 @@ TEST_F(FileUtilTest, AppendsAfterExistingFileContent)
         // writtenBytes() 只统计当前 FileUtil 实例追加的数据，不包含文件原有内容。
         EXPECT_EQ(file.writtenBytes(), 0);
         file.append(appended.data(), appended.size());
-        EXPECT_EQ(file.writtenBytes(), static_cast<std::int64_t>(appended.size()));
+        EXPECT_EQ(file.writtenBytes(), static_cast<int64_t>(appended.size()));
     }
 
     EXPECT_EQ(readBinaryFile(m_filePath), existing + appended);
@@ -157,17 +157,17 @@ TEST_F(FileUtilTest, PreservesBinaryData)
 
 TEST_F(FileUtilTest, HandlesDataLargerThanInternalBuffer)
 {
-    constexpr std::size_t bufferSize = 64 * 1024;
-    const std::size_t dataSize = bufferSize * 3 + 123;
+    constexpr size_t bufferSize = 64 * 1024;
+    const size_t dataSize = bufferSize * 3 + 123;
 
     std::string data(dataSize, '\0');
-    for (std::size_t i = 0; i < data.size(); ++i) data[i] = static_cast<char>(i % 251);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<char>(i % 251);
 
     {
         FileUtil file(m_filePath.string());
         file.append(data.data(), data.size());
 
-        EXPECT_EQ(file.writtenBytes(), static_cast<std::int64_t>(data.size()));
+        EXPECT_EQ(file.writtenBytes(), static_cast<int64_t>(data.size()));
         file.flush();
     }
 

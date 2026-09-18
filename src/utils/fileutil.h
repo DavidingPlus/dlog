@@ -27,7 +27,7 @@ public:
     void flush();
 
     // 返回已经成功写入的字节数。
-    std::int64_t writtenBytes() const noexcept { return m_writtenBytes; }
+    int64_t writtenBytes() const noexcept { return m_writtenBytes; }
 
 
 private:
