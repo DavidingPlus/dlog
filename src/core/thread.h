@@ -8,8 +8,7 @@
 #include <memory>
 #include <string>
 #include <atomic>
-
-#include <unistd.h>
+#include <utility>
 
 
 class Thread
@@ -31,7 +30,7 @@ public:
 
     bool started() { return m_started; }
 
-    pid_t tid() const { return m_tid; }
+    int tid() const { return m_tid; }
 
     const std::string &name() const { return m_name; }
 
@@ -54,8 +53,8 @@ private:
 
     std::shared_ptr<std::thread> m_thread;
 
-    // Linux 线程 ID，在线程创建时再绑定。
-    pid_t m_tid = static_cast<pid_t>(0);
+    // 系统线程 ID，在线程创建时绑定。
+    int m_tid = 0;
 
     // 线程回调函数。
     ThreadFunc m_func;
