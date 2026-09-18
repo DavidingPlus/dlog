@@ -45,11 +45,6 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
     return {};
 }
 
-time_t Timestamp::secondsSinceEpoch() const
-{
-    return {};
-}
-
 Timestamp Timestamp::Now()
 {
     // 获取当前系统时间。
@@ -62,17 +57,10 @@ Timestamp Timestamp::Now()
     return Timestamp(microSeconds);
 }
 
-Timestamp Timestamp::addTime(const Timestamp &timestamp, double seconds)
+Timestamp Timestamp::AddTime(const Timestamp &timestamp, double seconds)
 {
-    return {};
-}
-
-bool operator==(const Timestamp &lhs, const Timestamp &rhs)
-{
-    return {};
-}
-
-bool operator<(const Timestamp &lhs, const Timestamp &rhs)
-{
-    return {};
+    // 将延时的秒数转换为微妙。
+    int64_t delta = static_cast<int64_t>(seconds * Timestamp::kMicroSecondsPerSecond);
+    // 返回新增时后的时间戳。
+    return Timestamp(timestamp.microSecondsSinceEpoch() + delta);
 }
