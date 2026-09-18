@@ -6,6 +6,29 @@
 
 #include "currentthread.h"
 
+#include "globalmacros.h"
+
+#if defined(OS_WIN32)
+#include <windows.h>
+#elif defined(OS_LINUX)
+#include <unistd.h>
+#endif
+
+
+namespace
+{
+
+    int nativeTid()
+    {
+#if defined(OS_WIN32)
+        return static_cast<int>(::GetCurrentThreadId());
+#elif defined(OS_LINUX)
+        return static_cast<int>(::gettid());
+#endif
+    }
+
+}
+
 
 // 这个 fixture 专门负责在每个用例前后清空 thread_local 缓存，避免测试互相污染。
 class CurrentThreadTest : public testing::Test
@@ -32,7 +55,7 @@ TEST_F(CurrentThreadTest, TidReturnsKernelThreadId)
 {
     const int tid = CurrentThread::tid();
 
-    EXPECT_EQ(tid, static_cast<int>(::gettid()));
+    EXPECT_EQ(tid, nativeTid());
     EXPECT_EQ(CurrentThread::t_cachedTid, tid);
 }
 
@@ -67,7 +90,7 @@ TEST_F(CurrentThreadTest, CacheTidInitializesCacheExplicitly)
 
     CurrentThread::cacheTid();
 
-    EXPECT_EQ(CurrentThread::t_cachedTid, static_cast<int>(::gettid()));
+    EXPECT_EQ(CurrentThread::t_cachedTid, nativeTid());
     EXPECT_EQ(CurrentThread::tid(), CurrentThread::t_cachedTid);
 }
 
