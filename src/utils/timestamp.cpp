@@ -9,17 +9,8 @@
 #include <fmt/chrono.h>
 
 
-Timestamp Timestamp::Now()
-{
-    // 获取当前系统时间。
-    // 注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
-    auto now = std::chrono::system_clock::now();
-    // 获取从 Unix epoch (1970-01-01 00:00:00 UTC) 到当前时间经过的微秒数。
-    auto microSeconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+const int Timestamp::kMicroSecondsPerSecond = 1000 * 1000;
 
-
-    return Timestamp(microSeconds);
-}
 
 std::string Timestamp::toString() const
 {
@@ -47,4 +38,41 @@ std::string Timestamp::toString() const
 
 
     return fmt::format("{:%Y/%m/%d %H:%M:%S}.{:09}", localTime, nanoseconds);
+}
+
+std::string Timestamp::toFormattedString(bool showMicroseconds) const
+{
+    return {};
+}
+
+time_t Timestamp::secondsSinceEpoch() const
+{
+    return {};
+}
+
+Timestamp Timestamp::Now()
+{
+    // 获取当前系统时间。
+    // 注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
+    auto now = std::chrono::system_clock::now();
+    // 获取从 Unix epoch (1970-01-01 00:00:00 UTC) 到当前时间经过的微秒数。
+    auto microSeconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+
+
+    return Timestamp(microSeconds);
+}
+
+Timestamp Timestamp::addTime(const Timestamp &timestamp, double seconds)
+{
+    return {};
+}
+
+bool operator==(const Timestamp &lhs, const Timestamp &rhs)
+{
+    return {};
+}
+
+bool operator<(const Timestamp &lhs, const Timestamp &rhs)
+{
+    return {};
 }
