@@ -10,40 +10,40 @@
  *
  */
 
-#ifndef _XMAKE_PROJECT_CONFIG_H_
-#define _XMAKE_PROJECT_CONFIG_H_
+#ifndef _DLOG_CONFIG_H_
+#define _DLOG_CONFIG_H_
 
 
 /**
  * @brief 完整版本号（X.Y.Z）。
  */
-#define XMAKE_PROJECT_CONFIG_VERSION "${VERSION}"
+#define DLOG_CONFIG_VERSION "${VERSION}"
 
 /**
  * @brief 主版本号。
  */
-#define XMAKE_PROJECT_CONFIG_VERSION_MAJOR ${VERSION_MAJOR}
+#define DLOG_CONFIG_VERSION_MAJOR ${VERSION_MAJOR}
 
 /**
  * @brief 次版本号。
  */
-#define XMAKE_PROJECT_CONFIG_VERSION_MINOR ${VERSION_MINOR}
+#define DLOG_CONFIG_VERSION_MINOR ${VERSION_MINOR}
 
 /**
  * @brief 修订版本号。
  * @details patch 和 alter 均可。Linux 内核的习惯是 patch，这里顺从 XMake 内置变量命名规则，即 alter。
  */
-#define XMAKE_PROJECT_CONFIG_VERSION_ALTER ${VERSION_ALTER}
+#define DLOG_CONFIG_VERSION_ALTER ${VERSION_ALTER}
 
 /**
  * @brief 构建模式，DEBUG 或 RELEASE。
  */
-#define XMAKE_PROJECT_CONFIG_MODE ${MODE}
+#define DLOG_CONFIG_MODE ${MODE}
 
 /**
  * @brief 构建模式是否为 DEBUG。
  */
-#define XMAKE_PROJECT_CONFIG_DEBUG ${DEBUG}
+#define DLOG_CONFIG_DEBUG ${DEBUG}
 
 
 #endif

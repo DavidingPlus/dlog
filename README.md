@@ -1,4 +1,4 @@
-# xmake-project-template
+# dlog
 
-C/C++ 项目的 XMake 模板。
+日志系统。
 

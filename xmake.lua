@@ -9,8 +9,8 @@ local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = tru
 set_version(version)
 
 set_xmakever("3.0.9")
-set_project("XMake Project")
-set_description("A C/C++ Project Template Powered By Xmake.")
+set_project("dlog")
+set_description("A Simple Log System.")
 set_languages("cxx17")
 
 add_rules("mode.debug", "mode.release")
@@ -36,7 +36,7 @@ option_end()
 option("build_shared")
     set_default(default_build_shared_for_current_platform())
     set_showmenu(true)
-    set_description("Build the template library as a shared library.")
+    set_description("Build the dlog library as a shared library.")
 option_end()
 
 
@@ -59,7 +59,7 @@ if install_in_place then
     set_installdir("$(builddir)/$(plat)/$(arch)/$(mode)/install")
 end
 
-target("xmake-project")
+target("dlog")
     set_kind(build_shared and "shared" or "static")
 
     apply_current_platform_target_config()
