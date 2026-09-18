@@ -1,0 +1,55 @@
+# Unit Test On Multiple Platform
+name: Unit Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+
+jobs:
+  unit-test:
+    strategy:
+      matrix:
+        include:
+          - os: windows
+            arch: x86_64
+            plat: windows
+            xmake-arch: x64
+            runs-on: windows-latest
+
+          - os: ubuntu
+            arch: x86_64
+            plat: linux
+            xmake-arch: x86_64
+            runs-on: ubuntu-latest
+
+          - os: ubuntu
+            arch: arm64
+            plat: linux
+            xmake-arch: arm64
+            runs-on: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runs-on }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup XMake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+
+    - name: Configure XMake
+      working-directory: ${{github.workspace}}
+      run: xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} --with_gtest=yes -y
+
+    - name: Build Targets
+      working-directory: ${{github.workspace}}
+      run: xmake build
+
+    - name: Run Unit Test
+      working-directory: ${{github.workspace}}
+      run: xmake test

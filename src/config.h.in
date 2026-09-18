@@ -1,0 +1,49 @@
+/**
+ * @file config.h.in
+ * @author DavidingPlus (davidingplus@qq.com)
+ * @brief 生成配置文件 config.h 的模板文件。请勿手动修改或格式化!!!
+ * @details 配置文件 config.h 通过 XMake 构建系统动态生成，对本文件进行任何修改或手动格式化操作都可能导致：
+ * - ${VERSION} 等占位符失效。
+ * - 版本号宏定义结构破坏。
+ *
+ * Copyright (c) 2025 电子科技大学 刘治学
+ *
+ */
+
+#ifndef _XMAKE_PROJECT_CONFIG_H_
+#define _XMAKE_PROJECT_CONFIG_H_
+
+
+/**
+ * @brief 完整版本号（X.Y.Z）。
+ */
+#define XMAKE_PROJECT_CONFIG_VERSION "${VERSION}"
+
+/**
+ * @brief 主版本号。
+ */
+#define XMAKE_PROJECT_CONFIG_VERSION_MAJOR ${VERSION_MAJOR}
+
+/**
+ * @brief 次版本号。
+ */
+#define XMAKE_PROJECT_CONFIG_VERSION_MINOR ${VERSION_MINOR}
+
+/**
+ * @brief 修订版本号。
+ * @details patch 和 alter 均可。Linux 内核的习惯是 patch，这里顺从 XMake 内置变量命名规则，即 alter。
+ */
+#define XMAKE_PROJECT_CONFIG_VERSION_ALTER ${VERSION_ALTER}
+
+/**
+ * @brief 构建模式，DEBUG 或 RELEASE。
+ */
+#define XMAKE_PROJECT_CONFIG_MODE ${MODE}
+
+/**
+ * @brief 构建模式是否为 DEBUG。
+ */
+#define XMAKE_PROJECT_CONFIG_DEBUG ${DEBUG}
+
+
+#endif

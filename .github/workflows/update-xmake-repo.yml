@@ -1,0 +1,29 @@
+name: Update xmake-repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Notify xmake-repo
+      uses: peter-evans/repository-dispatch@v3
+      with:
+        token: ${{ secrets.XMAKE_REPO_TOKEN }}
+        repository: davidingplus/xmake-repo
+        event-type: update-package
+        client-payload: |
+          {
+            "package": "${{ inputs.package_name }}",
+            "repo": "${{ github.repository }}",
+            "version": "${{ inputs.version }}"
+          }
