@@ -27,19 +27,20 @@ TEST(TimestampTest, Now)
     EXPECT_NEAR(ts.microSecondsSinceEpoch(), now, 1000000);
 }
 
-// 验证 toString() 的格式输出，当前只人工打印便于观察。
+// 验证 toString() 的格式输出，toString() 默认不显示微秒。
 TEST(TimestampTest, ToString)
 {
     Timestamp ts(0);
 
-    // Unix epoch：1970/01/01 08:00:00.000000000（北京时间）。
+    // Unix epoch 的日期会随运行环境时区变化，因此只验证不包含微秒。
     // 因为 GitHub CI 用的机器的时区可能不一样，暂时注释掉防止影响 CI 运行。
-    // EXPECT_EQ(ts.toString(), "1970/01/01 08:00:00.000000000");
+    // EXPECT_EQ(ts.toString(), "1970/01/01 08:00:00");
+    EXPECT_EQ(ts.toString().find('.'), std::string::npos);
 
     std::cout << ts.toString() << std::endl;
 }
 
-// 验证微秒值会保留在时间戳对象里并出现在字符串中。
+// 验证微秒值会保留在时间戳对象里，并通过 toFormattedString(true) 输出。
 TEST(TimestampTest, MicroSeconds)
 {
     Timestamp ts(123456);
@@ -47,7 +48,7 @@ TEST(TimestampTest, MicroSeconds)
     EXPECT_EQ(ts.microSecondsSinceEpoch(), 123456);
 
     // 微秒部分应该保留。
-    EXPECT_TRUE(std::string::npos != ts.toString().find(".123456"));
+    EXPECT_TRUE(std::string::npos != ts.toFormattedString(true).find(".123456"));
 }
 
 // 验证后一次 now() 的时间戳会大于前一次。

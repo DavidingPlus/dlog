@@ -20,7 +20,8 @@ public:
     // 返回当前时间戳对应的秒数。
     time_t secondsSinceEpoch() const { return static_cast<time_t>(m_microSecondsSinceEpoch / kMicroSecondsPerSecond); }
 
-    std::string toString() const;
+    // 按指定格式输出时间戳，不显示微秒。
+    std::string toString() const { return toFormattedString(false); }
 
     // 按指定格式输出时间戳，可选择是否显示微秒。
     std::string toFormattedString(bool showMicroseconds = false) const;
