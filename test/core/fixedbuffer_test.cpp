@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <type_traits>
 
@@ -14,6 +15,55 @@ namespace
     using TestBuffer = FixedBuffer<8>;
 
 } // namespace
+
+
+TEST(FixedBufferSizeTest, DefinesExpectedSmallAndLargeCapacities)
+{
+    EXPECT_EQ(kSmallBufferSize, 4000u);
+    EXPECT_EQ(kLargeBufferSize, 4000000u);
+    EXPECT_EQ(kLargeBufferSize, kSmallBufferSize * 1000u);
+}
+
+
+TEST(FixedBufferSizeTest, ConstantsCanBeUsedAsTemplateArguments)
+{
+    using SmallBuffer = FixedBuffer<kSmallBufferSize>;
+    using LargeBuffer = FixedBuffer<kLargeBufferSize>;
+
+    SmallBuffer smallBuffer;
+    auto largeBuffer = std::make_unique<LargeBuffer>();
+
+    EXPECT_EQ(smallBuffer.avail(), kSmallBufferSize);
+    EXPECT_EQ(largeBuffer->avail(), kLargeBufferSize);
+}
+
+
+TEST(FixedBufferSizeTest, SmallBufferUsesSmallCapacity)
+{
+    FixedBuffer<kSmallBufferSize> buffer;
+
+    buffer.append("small", 5);
+
+    EXPECT_EQ(buffer.length(), 5u);
+    EXPECT_EQ(buffer.avail(), kSmallBufferSize - 5u);
+    EXPECT_EQ(buffer.toString(), "small");
+}
+
+
+TEST(FixedBufferSizeTest, LargeBufferUsesLargeCapacityAndCanBeReused)
+{
+    using LargeBuffer = FixedBuffer<kLargeBufferSize>;
+    auto buffer = std::make_unique<LargeBuffer>();
+
+    buffer->append("large", 5);
+    EXPECT_EQ(buffer->length(), 5u);
+    EXPECT_EQ(buffer->avail(), kLargeBufferSize - 5u);
+    EXPECT_EQ(buffer->toString(), "large");
+
+    buffer->reset();
+    EXPECT_EQ(buffer->length(), 0u);
+    EXPECT_EQ(buffer->avail(), kLargeBufferSize);
+}
 
 
 TEST(FixedBufferTest, StartsEmpty)
