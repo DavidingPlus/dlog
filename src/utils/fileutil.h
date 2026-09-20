@@ -7,7 +7,7 @@
 
 
 // 文件工具类，用于处理文件的写入操作。该类封装了对文件的基本操作，包括写入数据和刷新缓冲区。
-class FileUtil
+class D_API_EXPORTED FileUtil
 {
 
     D_CLASS_NONCOPYABLE(FileUtil)
