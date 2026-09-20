@@ -7,12 +7,17 @@
 #include <cstring>
 
 
+// 日志系统预设的小缓冲区和大缓冲区容量。
+inline constexpr size_t kSmallBufferSize = 4000;
+inline constexpr size_t kLargeBufferSize = 1000 * kSmallBufferSize;
+
+
 // 缓冲区有两种常见设计：
 // 1. C 字符串缓冲区：必须预留一个字节存放 '\0'。例如 bufferSize 为 8 时，最多存放 7 个有效字符，并保证 data() 返回的内容可以直接作为 C 字符串使用。
 // 2. 带显式长度的字节缓冲区：不要求末尾存在 '\0'，有效数据范围由 data() 和 length() 共同确定。例如 bufferSize 为 8 时，可以存放 8 个有效字节，也可以正确保存中间包含 '\0' 的数据。
 // FixedBuffer 采用第二种设计。bufferSize 表示全部可用的有效数据容量，不包含额外的 '\0' 保留位。因此 data() 只返回数据起始地址，不保证返回 C 字符串；读取数据时必须同时使用 length()，或调用 toString()。使用 data() 时不要调用依赖 '\0' 结尾的接口（例如 printf("%s", data())）。append() 在剩余空间不足时不会写入数据，也不会通过返回值报告失败，调用方应先通过 avail() 确认空间；reset() 只清除逻辑写入状态，bzero() 只清零物理内存且不改变状态。
 // 使用模板参数指定缓冲区容量，使缓冲区大小在编译期确定，并将字符数组直接嵌入 FixedBuffer 对象中，避免缓冲区内部额外的动态内存分配（类似 std::array<>）。
-template <int bufferSize>
+template <size_t bufferSize>
 class FixedBuffer
 {
 
@@ -30,10 +35,10 @@ public:
     char *current() { return m_cur; }
 
     // 返回缓冲区中当前有效数据的长度。
-    int length() const { return m_size; }
+    size_t length() const { return m_size; }
 
     // 返回缓冲区中剩余可用空间的大小。
-    size_t avail() const { return static_cast<size_t>(bufferSize - m_size); }
+    size_t avail() const { return bufferSize - m_size; }
 
     // 按当前有效长度将缓冲区中的数据转换为 std::string 类型并返回。
     std::string toString() const { return std::string(m_data, length()); }
@@ -62,11 +67,11 @@ private:
     char *m_cur = nullptr;
 
     // 当前有效数据的长度。
-    int m_size = 0;
+    size_t m_size = 0;
 };
 
 
-template <int bufferSize>
+template <size_t bufferSize>
 void FixedBuffer<bufferSize>::append(const char *buf, size_t len)
 {
     if (len <= avail())
@@ -78,18 +83,18 @@ void FixedBuffer<bufferSize>::append(const char *buf, size_t len)
     }
 }
 
-template <int bufferSize>
+template <size_t bufferSize>
 void FixedBuffer<bufferSize>::reset()
 {
     m_cur = m_data;
     m_size = 0;
 }
 
-template <int bufferSize>
+template <size_t bufferSize>
 void FixedBuffer<bufferSize>::updateWriteState(size_t len)
 {
     m_cur += len;
-    m_size += static_cast<int>(len);
+    m_size += len;
 }
 
 
