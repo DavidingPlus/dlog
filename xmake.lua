@@ -69,10 +69,11 @@ target("dlog")
     add_packages("fmt", {public = true})
 
     if build_shared and is_current_win32() then
-        -- 参考：https://xmake.io/zh/api/description/builtin-rules.html#utils-symbols-export-all
-        -- 公共头文件包含 C++ 类、重载函数、静态数据和 thread_local 数据。为避免过滤器漏掉用户链接所需的符号，这里对 Windows DLL 使用完整自动导出。
-        -- TODO 但是这样可能会导出多余的符号，例如第三方库和一些我们不希望暴露的符号，目前暂不处理。
-        add_rules("utils.symbols.export_all", {export_classes = true})
+        -- D_BUILD_SHARED：使用动态库还是静态库。
+        add_defines("D_BUILD_SHARED", {public = true})
+
+        -- D_DLL_EXPORT：是否正在编译 DLL 本身。如果是，使用 __declspec(dllexport) 导出符号，否则是用户在使用 DLL 库，使用 __declspec(dllimport) 导入符号。
+        add_defines("D_DLL_EXPORT")
     end
 
     set_targetdir("$(builddir)/$(plat)/$(arch)/$(mode)/lib/")

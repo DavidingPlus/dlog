@@ -21,7 +21,7 @@ template <size_t bufferSize>
 class FixedBuffer
 {
 
-    CLASS_NONCOPYABLE(FixedBuffer)
+    D_CLASS_NONCOPYABLE(FixedBuffer)
 
 public:
 

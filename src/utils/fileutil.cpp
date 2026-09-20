@@ -18,9 +18,9 @@ namespace
 FileUtil::FileUtil(const std::string &fileName)
 {
     // Linux 使用 e 标志设置 close-on-exec；Windows 使用二进制模式（b），避免换行符被转换。
-#if defined(OS_WIN32)
+#if defined(D_OS_WIN32)
     m_file = std::fopen(fileName.c_str(), "ab");
-#elif defined(OS_LINUX)
+#elif defined(D_OS_LINUX)
     m_file = std::fopen(fileName.c_str(), "ae");
 #endif
 

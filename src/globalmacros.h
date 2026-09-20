@@ -3,15 +3,15 @@
 
 
 #ifdef _WIN32
-#define OS_WIN32
+#define D_OS_WIN32
 #elif __unix__
-#define OS_LINUX
+#define D_OS_LINUX
 #else
-#define OS_UNKNOWN
+#define D_OS_UNKNOWN
 #endif
 
 
-#define CLASS_NONCOPYABLE(ClassName)                       \
+#define D_CLASS_NONCOPYABLE(ClassName)                     \
                                                            \
 private:                                                   \
                                                            \
@@ -19,6 +19,17 @@ private:                                                   \
     ClassName(ClassName &&other) = delete;                 \
     ClassName &operator=(const ClassName &other) = delete; \
     ClassName &operator=(ClassName &&other) = delete;
+
+
+#if (defined D_OS_WIN32) && (defined D_BUILD_SHARED)
+#ifdef D_DLL_EXPORT
+#define D_API_EXPORTED __declspec(dllexport)
+#else
+#define D_API_EXPORTED __declspec(dllimport)
+#endif
+#else
+#define D_API_EXPORTED
+#endif
 
 
 #endif

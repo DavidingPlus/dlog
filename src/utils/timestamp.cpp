@@ -28,9 +28,9 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
     // 避免使用返回静态缓冲区的 std::localtime，减少线程间相互覆盖的风险。
     std::tm localTime{};
 
-#if defined(OS_WIN32)
+#if defined(D_OS_WIN32)
     localtime_s(&localTime, &time);
-#elif defined(OS_LINUX)
+#elif defined(D_OS_LINUX)
     localtime_r(&time, &localTime);
 #else
     throw std::runtime_error("Unsupported Operating System");

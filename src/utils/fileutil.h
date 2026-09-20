@@ -10,7 +10,7 @@
 class FileUtil
 {
 
-    CLASS_NONCOPYABLE(FileUtil)
+    D_CLASS_NONCOPYABLE(FileUtil)
 
 public:
 

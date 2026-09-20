@@ -8,9 +8,9 @@
 
 #include "globalmacros.h"
 
-#if defined(OS_WIN32)
+#if defined(D_OS_WIN32)
 #include <windows.h>
-#elif defined(OS_LINUX)
+#elif defined(D_OS_LINUX)
 #include <unistd.h>
 #endif
 
@@ -20,9 +20,9 @@ namespace
 
     int nativeTid()
     {
-#if defined(OS_WIN32)
+#if defined(D_OS_WIN32)
         return static_cast<int>(::GetCurrentThreadId());
-#elif defined(OS_LINUX)
+#elif defined(D_OS_LINUX)
         return static_cast<int>(::gettid());
 #endif
     }

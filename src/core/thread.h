@@ -14,7 +14,7 @@
 class Thread
 {
 
-    CLASS_NONCOPYABLE(Thread)
+    D_CLASS_NONCOPYABLE(Thread)
 
 public:
 

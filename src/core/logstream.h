@@ -17,7 +17,7 @@
 class LogStream
 {
 
-    CLASS_NONCOPYABLE(LogStream)
+    D_CLASS_NONCOPYABLE(LogStream)
 
     // 定义一个 Buffer 类型，使用固定大小的缓冲区。
     using Buffer = FixedBuffer<kSmallBufferSize>;
