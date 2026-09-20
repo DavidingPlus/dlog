@@ -26,6 +26,38 @@ public:
     // 重置缓冲区，将当前指针重置到缓冲区的起始位置。
     void resetBuffer() { m_buffer.reset(); }
 
+    LogStream &operator<<(bool express);
+
+    LogStream &operator<<(short number);
+
+    LogStream &operator<<(unsigned short number);
+
+    LogStream &operator<<(int number);
+
+    LogStream &operator<<(unsigned int number);
+
+    LogStream &operator<<(long number);
+
+    LogStream &operator<<(unsigned long number);
+
+    LogStream &operator<<(long long number);
+
+    LogStream &operator<<(unsigned long long number);
+
+    LogStream &operator<<(float number);
+
+    LogStream &operator<<(double number);
+
+    LogStream &operator<<(char str);
+
+    LogStream &operator<<(const char *str);
+
+    LogStream &operator<<(const unsigned char *str);
+
+    LogStream &operator<<(const std::string &str);
+
+    // LogStream &operator<<(const GeneralTemplate &g);
+
 
 private:
 
