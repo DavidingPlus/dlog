@@ -5,7 +5,6 @@
 #include <system_error>
 
 
-// TODO
 LogStream &LogStream::operator<<(bool express)
 {
     m_buffer.append(express ? "true" : "false", express ? 4 : 5);
@@ -68,19 +67,16 @@ LogStream &LogStream::operator<<(float number)
 
 LogStream &LogStream::operator<<(double number)
 {
-    char buffer[32];
+    // max_digits10 表示保证浮点值往返转换所需的有效十进制数字位数，它不是最终字符串的总长度。因此额外预留空间，用于负号、小数点、科学计数法中的 e、指数符号和指数数字。
+    constexpr size_t bufferSize = std::numeric_limits<double>::max_digits10 + 8;
+    char buffer[bufferSize];
 
-    const auto result = std::to_chars(
-        buffer,
-        buffer + sizeof(buffer),
-        number,
-        std::chars_format::general,
-        12);
+    // std::chars_format::general 会根据数值大小自动选择普通表示法或科学计数法。
+    // precision == 12 对应 "%.12g" 的格式意图，即保留约 12 位有效数字。
+    auto result = std::to_chars(buffer, buffer + sizeof(buffer), number, std::chars_format::general, 12);
 
-    if (result.ec == std::errc{})
-    {
-        m_buffer.append(buffer, static_cast<size_t>(result.ptr - buffer));
-    }
+    if (std::errc{} == result.ec) m_buffer.append(buffer, static_cast<size_t>(result.ptr - buffer));
+
 
     return *this;
 }
