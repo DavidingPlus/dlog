@@ -1,67 +1,11 @@
 #include "logstream.h"
 
-#include <charconv>
 #include <cstring>
-#include <system_error>
 
 
 LogStream &LogStream::operator<<(bool express)
 {
     m_buffer.append(express ? "true" : "false", express ? 4 : 5);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(short number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(unsigned short number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(int number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(unsigned int number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(long number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(unsigned long number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(long long number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(unsigned long long number)
-{
-    formatInteger(number);
-    return *this;
-}
-
-LogStream &LogStream::operator<<(float number)
-{
-    *this << static_cast<double>(number);
     return *this;
 }
 

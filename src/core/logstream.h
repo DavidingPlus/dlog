@@ -35,23 +35,23 @@ public:
 
     LogStream &operator<<(bool express);
 
-    LogStream &operator<<(short number);
+    LogStream &operator<<(short number) { return formatInteger(number); }
 
-    LogStream &operator<<(unsigned short number);
+    LogStream &operator<<(unsigned short number) { return formatInteger(number); }
 
-    LogStream &operator<<(int number);
+    LogStream &operator<<(int number) { return formatInteger(number); }
 
-    LogStream &operator<<(unsigned int number);
+    LogStream &operator<<(unsigned int number) { return formatInteger(number); }
 
-    LogStream &operator<<(long number);
+    LogStream &operator<<(long number) { return formatInteger(number); }
 
-    LogStream &operator<<(unsigned long number);
+    LogStream &operator<<(unsigned long number) { return formatInteger(number); }
 
-    LogStream &operator<<(long long number);
+    LogStream &operator<<(long long number) { return formatInteger(number); }
 
-    LogStream &operator<<(unsigned long long number);
+    LogStream &operator<<(unsigned long long number) { return formatInteger(number); }
 
-    LogStream &operator<<(float number);
+    LogStream &operator<<(float number) { return *this << static_cast<double>(number); }
 
     LogStream &operator<<(double number);
 
@@ -68,9 +68,9 @@ public:
 
 private:
 
-    // 模板函数。用于特殊格式化整型。
+    // 模板函数，用于特殊格式化整型。
     template <typename T>
-    void formatInteger(T num);
+    LogStream &formatInteger(T num);
 
 
     // 内部缓冲区对象。
@@ -79,7 +79,7 @@ private:
 
 
 template <typename T>
-void LogStream::formatInteger(T num)
+LogStream &LogStream::formatInteger(T num)
 {
     // 该函数只负责格式化整数。bool 虽然属于整型类别，但日志中有独立的 operator<<(bool) 实现，因此这里明确排除 bool，避免输出为 0/1。
     static_assert(std::is_integral_v<T> && !std::is_same_v<T, bool>, "formatInteger requires a non-bool integral type");
@@ -103,6 +103,9 @@ void LogStream::formatInteger(T num)
 
     // FixedBuffer 保存的是“起始地址 + 有效长度”，不要求末尾存在 '\0'。因此使用 ptr - buffer 得到实际字符数，避免调用 strlen 扫描缓冲区。
     if (std::errc{} == result.ec) m_buffer.append(buffer, static_cast<size_t>(result.ptr - buffer));
+
+
+    return *this;
 }
 
 
