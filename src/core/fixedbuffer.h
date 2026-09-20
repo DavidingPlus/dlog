@@ -7,6 +7,10 @@
 #include <cstring>
 
 
+// 缓冲区有两种常见设计：
+// 1. C 字符串缓冲区：必须预留一个字节存放 '\0'。例如 bufferSize 为 8 时，最多存放 7 个有效字符，并保证 data() 返回的内容可以直接作为 C 字符串使用。
+// 2. 带显式长度的字节缓冲区：不要求末尾存在 '\0'，有效数据范围由 data() 和 length() 共同确定。例如 bufferSize 为 8 时，可以存放 8 个有效字节，也可以正确保存中间包含 '\0' 的数据。
+// FixedBuffer 采用第二种设计。bufferSize 表示全部可用的有效数据容量，不包含额外的 '\0' 保留位。因此 data() 只返回数据起始地址，不保证返回 C 字符串；读取数据时必须同时使用 length()，或调用 toString()。使用 data() 时不要调用依赖 '\0' 结尾的接口（例如 printf("%s", data())）。append() 在剩余空间不足时不会写入数据，也不会通过返回值报告失败，调用方应先通过 avail() 确认空间；reset() 只清除逻辑写入状态，bzero() 只清零物理内存且不改变状态。
 // 使用模板参数指定缓冲区容量，使缓冲区大小在编译期确定，并将字符数组直接嵌入 FixedBuffer 对象中，避免缓冲区内部额外的动态内存分配（类似 std::array<>）。
 template <int bufferSize>
 class FixedBuffer
@@ -65,7 +69,7 @@ private:
 template <int bufferSize>
 void FixedBuffer<bufferSize>::append(const char *buf, size_t len)
 {
-    if (avail() > len)
+    if (len <= avail())
     {
         // 复制数据到缓冲区。
         std::memcpy(m_cur, buf, len);
