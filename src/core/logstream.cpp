@@ -1,7 +1,5 @@
 #include "logstream.h"
 
-#include <cstring>
-
 
 LogStream &LogStream::operator<<(bool express)
 {
@@ -25,26 +23,27 @@ LogStream &LogStream::operator<<(double number)
     return *this;
 }
 
-LogStream &LogStream::operator<<(char str)
-{
-    m_buffer.append(&str, 1);
-    return *this;
-}
-
 LogStream &LogStream::operator<<(const char *str)
 {
-    m_buffer.append(str, std::strlen(str));
-    return *this;
+    // const char* 表示以 '\0' 结尾的 C 字符串。转换为 string_view 时仍然由构造函数查找字符串长度，但最终追加统一走 string_view 重载。
+    if (!str) return *this;
+
+    return *this << std::string_view(str);
 }
 
 LogStream &LogStream::operator<<(const unsigned char *str)
 {
-    m_buffer.append(reinterpret_cast<const char *>(str), std::strlen(reinterpret_cast<const char *>(str)));
-    return *this;
+    // unsigned char* 不能隐式转换为 string_view，需要显式转换为 const char*。
+    // 这里仍按 '\0' 结尾的 C 字符串处理；二进制数据应使用带长度的 std::string_view(data, length) 调用，避免被嵌入式 '\0' 截断。
+    if (!str) return *this;
+
+    return *this << std::string_view(reinterpret_cast<const char *>(str));
 }
 
-LogStream &LogStream::operator<<(const std::string &str)
+LogStream &LogStream::operator<<(const std::string_view &sv)
 {
-    m_buffer.append(str.c_str(), str.size());
+    // string_view::size() 是数据的显式长度，不会像 strlen() 一样在遇到 '\0' 时提前停止。
+    // FixedBuffer 同样按照“地址 + 长度”保存数据，因此可以完整写入包含嵌入式 '\0' 的字符序列。
+    if (!sv.empty()) m_buffer.append(sv.data(), sv.size());
     return *this;
 }
