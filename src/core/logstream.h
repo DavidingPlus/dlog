@@ -17,6 +17,8 @@ class LogStream
 
 public:
 
+    LogStream() = default;
+
     // 将指定长度的字符数据追加到缓冲区。
     void append(const char *buffer, int len) { m_buffer.append(buffer, len); }
 
@@ -61,9 +63,20 @@ public:
 
 private:
 
+    // 模板函数。用于特殊格式化整型。
+    template <typename T>
+    void formatInteger(T num);
+
+
     // 内部缓冲区对象。
     Buffer m_buffer;
 };
+
+
+template <typename T>
+void LogStream::formatInteger(T num)
+{
+}
 
 
 #endif
