@@ -7,7 +7,7 @@ function define_win32_options()
 end
 
 function default_win32_build_shared()
-    return false
+    return true
 end
 
 function apply_win32_target_config()
