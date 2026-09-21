@@ -1,10 +1,12 @@
 #ifndef _DLOG_TIMESTAMP_H_
 #define _DLOG_TIMESTAMP_H_
 
+#include "globalmacros.h"
+
 #include <string>
 
 
-class Timestamp
+class D_API_EXPORTED Timestamp
 {
 
 public:

@@ -7,23 +7,13 @@
 namespace CurrentThread
 {
     // 保存 tid 缓存，因为系统调用非常耗时，拿到 tid 后将其保存。
-    extern thread_local int t_cachedTid;
+    // Windows 下 thread_local 变量的地址要在运行时根据当前线程和 TLS 区域确定，不能像普通全局变量一样通过 __declspec(dllimport/dllexport) 直接作为 DLL 数据接口导出，否则 MSVC 会报 C2492。因此实际的 thread_local 变量保留在 DLL 内部，对外通过函数访问当前线程对应的缓存变量的引用。
+    D_API_EXPORTED int &cachedTid() noexcept;
 
-    void cacheTid();
+    D_API_EXPORTED void cacheTid();
 
-    // 获取当前线程 tid。之所以定义为 inline，是因为该函数调用非常频繁（例如日志、线程库等），函数体又非常小，将其内联可以避免一次普通函数调用的开销。
-    // GCC/Clang 可以使用 __builtin_expect 优化热路径；MSVC 不提供该内建函数，因此在 MSVC 下直接使用普通条件判断。
-    inline int tid() noexcept
-    {
-#if defined(OS_WIN32)
-        if (0 == t_cachedTid) cacheTid();
-#elif defined(OS_LINUX)
-        // __builtin_expect(expr, expected) 是 GCC/Clang 提供的编译器内建函数，用于告诉编译器某个条件大概率是否成立。这里 __builtin_expect(t_cachedTid == 0, 0) 表示编译器认为 t_cachedTid == 0 这个条件大概率为 false。因为每个线程第一次调用 tid() 后就已经完成缓存，后续绝大多数调用都会直接返回缓存值，不再进入 cacheTid()。这样可以帮助编译器优化代码布局，提高 CPU 分支预测命中率，使最常执行的路径（直接返回缓存）成为 Hot Path。
-        //__builtin_expect(expr, expected)，expr：实际要判断的表达式，expected：你希望 expr 的值。
-        if (__builtin_expect(t_cachedTid == 0, false)) cacheTid();
-#endif
-        return t_cachedTid;
-    }
+    // 获取当前线程 tid。通过导出函数访问 DLL 内部的 thread_local 缓存，避免调用方直接导入 TLS 数据。
+    D_API_EXPORTED int tid() noexcept;
 }
 
 

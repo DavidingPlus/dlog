@@ -2,9 +2,7 @@
 
 #include "currentthread.h"
 
-#include <charconv>
 #include <future>
-#include <system_error>
 
 
 std::atomic_int Thread::m_numCreated(0);
@@ -55,15 +53,5 @@ void Thread::setDefaultName()
 {
     int num = ++m_numCreated;
 
-    if (m_name.empty())
-    {
-        char buffer[32];
-        const auto result = std::to_chars(buffer, buffer + sizeof(buffer), num);
-
-        if (result.ec == std::errc{})
-        {
-            m_name = "Thread";
-            m_name.append(buffer, static_cast<size_t>(result.ptr - buffer));
-        }
-    }
+    if (m_name.empty()) m_name = "Thread" + std::to_string(num);
 }

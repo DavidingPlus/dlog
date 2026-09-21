@@ -11,10 +11,10 @@
 #include <utility>
 
 
-class Thread
+class D_API_EXPORTED Thread
 {
 
-    CLASS_NONCOPYABLE(Thread)
+    D_CLASS_NONCOPYABLE(Thread)
 
 public:
 
