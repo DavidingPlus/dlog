@@ -11,7 +11,7 @@ namespace
 {
     // 每个线程各自独立拥有一份缓存。该变量不作为 DLL 数据符号导出，由下面的导出函数在 DLL 内部访问。
     thread_local int t_cachedTid = 0;
-}
+} // namespace
 
 
 int &CurrentThread::cachedTid() noexcept { return t_cachedTid; }
