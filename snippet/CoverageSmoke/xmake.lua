@@ -41,6 +41,10 @@ target("CoverageSmoke")
     if coverage_mode then
         -- clang-cl 的源代码覆盖率需要 LLVM profile runtime；
         -- XMake 的 mode.coverage 会追加 gcov 风格的 --coverage，不能直接用于这里。
+        -- VS 2019 自带的 LLVM 12 在覆盖率 runtime 与 /Zi 同时使用时，
+        -- 可能在进程退出写 profraw 时崩溃；coverage mapping 已经包含源码行信息，
+        -- 因此这个验证目标不需要额外的 PDB 调试信息。
+        set_symbols("none")
         --
         -- LLVM 的探测放在 on_load 中：根项目解析 xmake.lua 时不会因为
         -- coverage_smoke 没有被选中而要求当前终端必须已经加载 VS 环境。
@@ -67,6 +71,23 @@ target("CoverageSmoke")
             local vs_install_dir = os.getenv("VSINSTALLDIR")
             if vs_install_dir then
                 append_llvm_candidates(llvm_candidates, path.join(vs_install_dir, "VC", "Tools", "Llvm"))
+            end
+
+            -- 普通 PowerShell 通常没有 VS Native Tools 注入的这些环境变量。
+            -- VS Installer 自带的 vswhere 可以找到 VS 根目录，因此不需要把
+            -- 某台机器上的 D:\\... 安装路径写进项目配置。
+            local vswhere = path.join(os.getenv("ProgramFiles(x86)") or "",
+                "Microsoft Visual Studio", "Installer", "vswhere.exe")
+            if os.isfile(vswhere) then
+                local output = os.iorunv(vswhere, {
+                    "-latest",
+                    "-products", "*",
+                    "-property", "installationPath"
+                })
+                for installation_path in string.gmatch(output or "", "[^\r\n]+") do
+                    append_llvm_candidates(llvm_candidates,
+                        path.join(installation_path, "VC", "Tools", "Llvm"))
+                end
             end
 
             -- 独立版 LLVM 如果已经加入 PATH，也可以从 clang-cl.exe 反推出 LLVM 根目录。
@@ -111,22 +132,18 @@ target("CoverageSmoke")
 
         before_run(function (target)
             local targetdir = path.absolute(target:targetdir())
+            local profile_dir = path.join(targetdir, "coverage-data")
             os.mkdir(targetdir)
-            os.rm(path.join(targetdir, "coverage_smoke.profraw"))
-            os.rm(path.join(targetdir, "coverage_smoke.profdata"))
-            for _, profile in ipairs(os.files(path.join(targetdir, "**", "coverage_smoke*.profraw"))) do
-                os.rm(profile)
-            end
-            for _, profdata in ipairs(os.files(path.join(targetdir, "**", "coverage_smoke*.profdata"))) do
-                os.rm(profdata)
-            end
+            os.rm(profile_dir)
+            os.mkdir(profile_dir)
             os.rm(path.join(targetdir, "coverage-html"))
-            os.setenv("LLVM_PROFILE_FILE", path.join(targetdir, "coverage_smoke.profraw"))
+            os.setenv("LLVM_PROFILE_FILE", path.join(profile_dir, "coverage_smoke.profraw"))
         end)
 
         after_run(function (target)
             local targetdir = path.absolute(target:targetdir())
-            local profile = path.join(targetdir, "coverage_smoke.profraw")
+            local profile_dir = path.join(targetdir, "coverage-data")
+            local profile = path.join(profile_dir, "coverage_smoke.profraw")
             local html_dir = path.join(targetdir, "coverage-html")
 
             if not os.isfile(profile) then
@@ -140,7 +157,7 @@ target("CoverageSmoke")
             local llvm_bin = coverage_tools.llvm_bin
 
             os.execv(grcov, {
-                targetdir,
+                profile_dir,
                 "--source-dir", source_dir,
                 "--binary-path", binary_dir,
                 "--llvm-path", llvm_bin,

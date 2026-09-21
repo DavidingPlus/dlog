@@ -12,7 +12,13 @@ end
 
 function apply_win32_target_config()
     add_cxflags("/utf-8")
-    set_symbols("debug", "embed")
+
+    if is_mode("coverage") then
+        -- VS 2019 自带的 LLVM 12 在覆盖率 runtime 与 /Zi 同时使用时，可能在进程退出写 profraw 时崩溃；coverage mapping 已经提供源码行信息。
+        set_symbols("none")
+    else
+        set_symbols("debug", "embed")
+    end
 
     -- XMake 默认也是这样设置的。
     -- if get_config("runtimes") == nil then
