@@ -7,20 +7,14 @@
 #endif
 
 
-namespace CurrentThread
+namespace
 {
-    namespace
-    {
-        thread_local int t_cachedTid = 0;
-    }
+    // 每个线程各自独立拥有一份缓存。该变量不作为 DLL 数据符号导出，由下面的导出函数在 DLL 内部访问。
+    thread_local int t_cachedTid = 0;
 }
 
 
-int &CurrentThread::cachedTid() noexcept
-{
-    return t_cachedTid;
-}
-
+int &CurrentThread::cachedTid() noexcept { return t_cachedTid; }
 
 void CurrentThread::cacheTid()
 {
@@ -36,13 +30,18 @@ void CurrentThread::cacheTid()
 #endif
 }
 
-
 int CurrentThread::tid() noexcept
 {
+    // GCC/Clang 可以使用 __builtin_expect 优化热路径；MSVC 不提供该内建函数，因此在 MSVC 下直接使用普通条件判断。
+
 #if defined(D_OS_WIN32)
     if (0 == t_cachedTid) cacheTid();
 #elif defined(D_OS_LINUX)
+    // __builtin_expect(expr, expected) 是 GCC/Clang 提供的编译器内建函数，用于告诉编译器某个条件大概率是否成立。这里 __builtin_expect(t_cachedTid == 0, 0) 表示编译器认为 t_cachedTid == 0 这个条件大概率为 false。因为每个线程第一次调用 tid() 后就已经完成缓存，后续绝大多数调用都会直接返回缓存值，不再进入 cacheTid()。这样可以帮助编译器优化代码布局，提高 CPU 分支预测命中率，使最常执行的路径（直接返回缓存）成为 Hot Path。
+    //__builtin_expect(expr, expected)，expr：实际要判断的表达式，expected：你希望 expr 的值。
     if (__builtin_expect(t_cachedTid == 0, false)) cacheTid();
 #endif
+
+
     return t_cachedTid;
 }
