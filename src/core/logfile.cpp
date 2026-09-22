@@ -20,7 +20,26 @@ void LogFile::append(const char *data, int len)
 
 bool LogFile::rollFile()
 {
-    return true;
+    time_t now = 0;
+    std::string filename = GetLogFileName(m_basename, now);
+
+    if (now > m_lastRoll)
+    {
+        m_lastFlush = now;
+        m_lastRoll = now;
+        // now 是从 Unix 时间起点开始计算的秒数，kRollPerSeconds 表示一个日志周期的秒数（一天）。整除会得到当前属于第几个周期，乘回周期长度后得到这个周期的起始时间。例如：now = 3 * 86400 + 5 * 3600 时，start = 3 * 86400，表示第 3 天的起点。
+        m_startOfPeriod = (now / kRollPerSeconds) * kRollPerSeconds;
+
+        // 让 m_file 指向名为 filename 的文件。如果这个文件已经存在，FileUtil 以追加的方式打开该文件，不存在则创建。当前日志名字的命名规则下，精确到秒级，存在的概率不算大，所以大部分情况都是新建文件。
+        m_file.reset(new FileUtil(filename));
+
+
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 std::string LogFile::GetLogFileName(const std::string &basename, time_t &now)
