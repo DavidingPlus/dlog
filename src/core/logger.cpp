@@ -31,9 +31,9 @@ namespace
     // 默认的刷新函数，刷新标准输出流的缓冲区，确保日志及时输出，在发生错误或需要立即看到日志时会被调用。
     void defaultFlush() { std::fflush(stdout); }
 
-    Logger::OutputFunc g_output = defaultOutput;
+    Logger::OutputFunc g_outputCallback = defaultOutput;
 
-    Logger::FlushFunc g_flush = defaultFlush;
+    Logger::FlushFunc g_flushCallback = defaultFlush;
 
 } // namespace
 
@@ -63,18 +63,18 @@ Logger::~Logger()
     const LogStream::Buffer &buffer = stream().buffer();
 
     // 输出（默认项终端输出）。
-    g_output(buffer.data(), buffer.length());
+    g_outputCallback(buffer.data(), buffer.length());
     // 输出 FATAL 的情况，刷新缓冲区并终止程序。
     if (LogLevel::FATAL == m_impl.m_level)
     {
-        g_flush();
+        g_flushCallback();
         std::abort();
     }
 }
 
-void Logger::SetOutput(OutputFunc output) { g_output = output; }
+void Logger::SetOutput(OutputFunc output) { g_outputCallback = output; }
 
-void Logger::SetFlush(FlushFunc flush) { g_flush = flush; }
+void Logger::SetFlush(FlushFunc flush) { g_flushCallback = flush; }
 
 Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const char *filename, int line)
     : m_time(Timestamp::Now()), m_level(level), m_basename(filename), m_line(line)

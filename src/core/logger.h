@@ -31,6 +31,14 @@ private:
 };
 
 
+// Logger 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。
+// 一条日志的典型执行流程是：
+// 1. 创建 Logger 时，LoggerImpl 将时间、日志等级等前缀写入内部 LogStream；
+// 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到固定缓冲区；
+// 3. Logger 析构时调用 finish()，补充源文件名、行号和换行符；
+// 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
+// Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
+// 典型的临时对象用法如下：Logger(__FILE__, __LINE__, Logger::LogLevel::INFO).stream() << "server started"; 当前完整表达式结束后，临时 Logger 析构并输出整条日志。若先保存为命名对象，则会在对象离开作用域时输出。FATAL 日志在输出后还会调用 FlushFunc 刷新输出，并终止进程；因此不应在普通单元测试中直接触发 FATAL。
 class D_API_EXPORTED Logger
 {
 
@@ -52,14 +60,16 @@ public:
 
     ~Logger();
 
+    // 返回当前日志的内部流。后续的 operator<< 只会修改本条日志自己的固定缓冲区，真正输出发生在 Logger 析构时。
     LogStream &stream() { return m_impl.m_stream; }
 
-    // 输出函数。
+    // 输出函数。OutputFunc 使用显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。
     using OutputFunc = std::function<void(const char *msg, int len)>;
 
     // 刷新缓冲区的函数。
     using FlushFunc = std::function<void()>;
 
+    // 设置进程内共享的输出回调和刷新回调。应在多线程开始产生日志前完成设置，避免运行期间并发修改回调对象。
     static void SetOutput(OutputFunc);
 
     static void SetFlush(FlushFunc);
