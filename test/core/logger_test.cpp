@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <functional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include "logger.h"
 
@@ -14,6 +18,33 @@ namespace
     {
         auto separator = path.find_last_of("/\\");
         return std::string_view::npos == separator ? path : path.substr(separator + 1);
+    }
+
+    void restoreDefaultOutput()
+    {
+        Logger::SetOutput([](const char *data, int len)
+                          { std::fwrite(data, sizeof(char), static_cast<size_t>(len), stdout); });
+    }
+
+    void restoreDefaultFlush()
+    {
+        Logger::SetFlush([]
+                         { std::fflush(stdout); });
+    }
+
+    std::string captureOutput(const std::function<void()> &writeLog)
+    {
+        std::string output;
+
+        Logger::SetOutput([&output](const char *data, int len)
+                          { output.append(data, static_cast<size_t>(len)); });
+
+        writeLog();
+
+        restoreDefaultOutput();
+
+
+        return output;
     }
 
 } // namespace
@@ -142,4 +173,134 @@ TEST(FileNameViewTest, ViewCanOutliveATemporaryFileNameView)
 
     // FileNameView 临时对象已经销毁，但字符串字面量具有静态存储期，仍然有效。
     EXPECT_EQ(view, "Logger.cc");
+}
+
+TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
+{
+    std::string output;
+
+    Logger::SetOutput([&output](const char *data, int len)
+                      { output.append(data, static_cast<size_t>(len)); });
+
+    {
+        Logger logger(__FILE__, 123, Logger::LogLevel::INFO);
+        logger.stream() << "scope message";
+
+        EXPECT_TRUE(output.empty());
+    }
+
+    EXPECT_FALSE(output.empty());
+    EXPECT_NE(output.find("INFO scope message - logger_test.cpp:123\n"), std::string::npos);
+
+    restoreDefaultOutput();
+}
+
+TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
+{
+    const std::string output = captureOutput([]
+                                             { Logger(__FILE__, 456, Logger::LogLevel::INFO).stream() << "hello"; });
+
+    const std::regex pattern(R"(^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6} INFO hello - logger_test\.cpp:456\n$)");
+
+    EXPECT_TRUE(std::regex_match(output, pattern)) << output;
+}
+
+TEST(LoggerTest, FormatsEveryNonFatalLevel)
+{
+    const std::array<std::pair<Logger::LogLevel, const char *>, 5> levels{{
+        {Logger::LogLevel::TRACE, "TRACE"},
+        {Logger::LogLevel::DEBUG, "DEBUG"},
+        {Logger::LogLevel::INFO, "INFO"},
+        {Logger::LogLevel::WARN, "WARN"},
+        {Logger::LogLevel::ERROR, "ERROR"},
+    }};
+
+    for (const auto &[level, levelName] : levels)
+    {
+        const std::string output = captureOutput([&]
+                                                 { Logger(__FILE__, 789, level).stream() << "payload"; });
+
+        const std::string expected = std::string(levelName) + " payload - logger_test.cpp:789\n";
+        EXPECT_NE(output.find(expected), std::string::npos) << output;
+    }
+}
+
+TEST(LoggerMacroTest, QDebugStyleMacroFormatsAndOutputsOnFullExpressionEnd)
+{
+    const std::string output = captureOutput([]
+                                             { LOG_INFO() << "started " << 42; });
+
+    EXPECT_NE(output.find("INFO started 42 - logger_test.cpp:"), std::string::npos);
+    EXPECT_FALSE(output.empty());
+    EXPECT_EQ(output.back(), '\n');
+}
+
+TEST(LoggerMacroTest, SupportsAllListedMacros)
+{
+    const std::array<std::pair<const char *, std::function<void()>>, 4> loggers{{
+        {"DEBUG", []
+         { LOG_DEBUG() << "message"; }},
+        {"INFO", []
+         { LOG_INFO() << "message"; }},
+        {"WARN", []
+         { LOG_WARN() << "message"; }},
+        {"ERROR", []
+         { LOG_ERROR() << "message"; }},
+    }};
+
+    for (const auto &[levelName, writeLog] : loggers)
+    {
+        const std::string output = captureOutput(writeLog);
+        EXPECT_NE(output.find(std::string(levelName) + " message - logger_test.cpp:"), std::string::npos) << output;
+    }
+}
+
+TEST(LoggerOutputTest, PreservesEmbeddedNullCharactersThroughExplicitLength)
+{
+    constexpr char message[] = {'l', 'e', 'f', 't', '\0', 'r', 'i', 'g', 'h', 't'};
+
+    const std::string output = captureOutput([&]
+                                             { LOG_INFO() << std::string_view(message, sizeof(message)); });
+
+    const std::string expected(message, sizeof(message));
+    EXPECT_NE(output.find(expected), std::string::npos);
+}
+
+TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
+{
+    int callbackLength = -1;
+    std::string callbackData;
+
+    Logger::SetOutput([&](const char *data, int len)
+                      {
+        callbackLength = len;
+        callbackData.assign(data, static_cast<size_t>(len)); });
+
+    LOG_INFO() << "length check";
+
+    EXPECT_GE(callbackLength, 0);
+    EXPECT_EQ(static_cast<size_t>(callbackLength), callbackData.size());
+    EXPECT_NE(callbackData.find("INFO length check - logger_test.cpp:"), std::string::npos);
+
+    restoreDefaultOutput();
+}
+
+TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
+{
+    bool flushed = false;
+    Logger::SetFlush([&flushed]
+                     { flushed = true; });
+
+    const std::string output = captureOutput([]
+                                             { LOG_INFO() << "normal"; });
+
+    EXPECT_NE(output.find("INFO normal - logger_test.cpp:"), std::string::npos);
+    EXPECT_FALSE(flushed);
+
+    restoreDefaultFlush();
+}
+
+TEST(LoggerDeathTest, FatalLogAbortsTheProcess)
+{
+    EXPECT_DEATH({ LOG_FATAL() << "fatal message"; }, ".*");
 }
