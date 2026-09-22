@@ -65,4 +65,7 @@ void Logger::LoggerImpl::formatTime()
 
 void Logger::LoggerImpl::finish()
 {
+    // finish() 在日志对象生命周期结束时调用，负责补充调用位置和换行符，使缓冲区中的内容成为一条完整的日志。例如：2026/09/22 16:30:12.123456 INFO server started - main.cpp:42\n
+    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的固定缓冲区，因此这里只需要保证源文件名在 finish() 调用时仍有效。这里不执行真正的文件写入或 flush；后续由 Logger 的析构函数统一提交 m_stream 缓冲区。
+    m_stream << " - " << m_basename.view() << ':' << m_line << '\n';
 }

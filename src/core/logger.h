@@ -56,9 +56,10 @@ private:
 
         LoggerImpl(LogLevel level, int savedErrno, const char *filename, int line);
 
+        // 格式化一条 log 的时间部分。formatTime() 只修改 m_stream，不负责把缓冲区写入终端或日志文件。
         void formatTime();
 
-        // 添加一条 log 消息的后缀。
+        // 完成一条 log 消息：在用户正文后追加源文件名、行号和换行符。同 formatTime()，也只修改 m_stream。
         void finish();
 
 
