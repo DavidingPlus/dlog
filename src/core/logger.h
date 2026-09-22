@@ -62,14 +62,19 @@ private:
         void finish();
 
 
+        // 日志创建时的时间戳。
         Timestamp m_time;
 
+        // 日志的正文缓冲区。
         LogStream m_stream;
 
+        // 日志的严重程度。
         LogLevel m_level;
 
+        // 日志的源文件名，通常由 __FILE__ 宏传入。
         FileNameView m_basename;
 
+        // 产生日志的源代码行号，通常由 __LINE__ 宏传入。它和 m_basename 组成调用位置，例如：" - logger.cpp:42"，方便定位日志是从哪里产生的。
         int m_line;
     };
 

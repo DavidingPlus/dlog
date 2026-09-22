@@ -1,5 +1,26 @@
 #include "logger.h"
 
+#include <array>
+
+
+namespace
+{
+
+    // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
+    // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
+    constexpr std::array<std::string_view, static_cast<size_t>(Logger::LogLevel::LEVEL_COUNT)> kLevelNames{
+        "TRACE",
+        "DEBUG",
+        "INFO",
+        "WARN",
+        "ERROR",
+        "FATAL",
+    };
+
+    std::string_view levelName(Logger::LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
+
+} // namespace
+
 
 FileNameView::FileNameView(const char *path)
     : m_view(path)
@@ -20,9 +41,19 @@ FileNameView::FileNameView(const char *path)
 }
 
 Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const char *filename, int line)
+    : m_time(Timestamp::Now()), m_level(level), m_basename(filename), m_line(line)
 {
+    // 根据时区格式化当前时间字符串, 也是一条 log 消息的开头，作为整条日志的前缀。
+    formatTime();
+
+    // 写入日志等级。
+    m_stream << levelName(m_level) << ' ';
+
+    // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
+    if (savedErrno) m_stream << std::strerror(savedErrno) << " (errno=" << savedErrno << ") ";
 }
 
+// TODO
 void Logger::LoggerImpl::formatTime()
 {
 }
