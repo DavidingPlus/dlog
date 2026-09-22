@@ -47,7 +47,7 @@ public:
 
 
     // 1 秒 = 1000 * 1000 微秒。
-    static const int kMicroSecondsPerSecond;
+    static constexpr int kMicroSecondsPerSecond = 1000 * 1000;
 
 
 private:

@@ -9,9 +9,6 @@
 #include <fmt/chrono.h>
 
 
-const int Timestamp::kMicroSecondsPerSecond = 1000 * 1000;
-
-
 std::string Timestamp::toFormattedString(bool showMicroseconds) const
 {
     // 将保存的微秒时间戳转换成 system_clock::time_point。
