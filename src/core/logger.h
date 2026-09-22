@@ -8,6 +8,15 @@
 #include <functional>
 
 
+// 日志宏采用类似 Qt qDebug() 的函数式调用方式：LOG_INFO() << "server started" << port; 宏返回临时 Logger 内部的 LogStream 引用；当前完整表达式结束后，临时 Logger 析构并输出整条日志。
+
+#define LOG_DEBUG() (Logger(__FILE__, __LINE__, Logger::LogLevel::DEBUG).stream())
+#define LOG_INFO() (Logger(__FILE__, __LINE__, Logger::LogLevel::INFO).stream())
+#define LOG_WARN() (Logger(__FILE__, __LINE__, Logger::LogLevel::WARN).stream())
+#define LOG_ERROR() (Logger(__FILE__, __LINE__, Logger::LogLevel::ERROR).stream())
+#define LOG_FATAL() (Logger(__FILE__, __LINE__, Logger::LogLevel::FATAL).stream())
+
+
 // FileNameView 从路径中提取文件名，并以非拥有型视图的形式保存它。
 class D_API_EXPORTED FileNameView
 {
