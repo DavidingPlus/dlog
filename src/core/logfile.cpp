@@ -2,101 +2,149 @@
 
 #include "timestamp.h"
 
+#include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <sstream>
+#include <string_view>
 #include <stdexcept>
 
 
-LogFile::LogFile(const std::string &basename, int64_t rollsize, int flushInterval, int checkEveryN)
-    : m_basename(basename), m_rollsize(rollsize), m_flushInterval(flushInterval), m_checkEveryN(checkEveryN)
-{
-    // LogFile 构造时，m_file 还没有指向有效的当前日志文件对象。无论程序是首次启动还是进程重启，都需要先调用 rollFile() 初始化写入目标。rollFile() 会创建 FileUtil，并以追加方式创建或打开对应的日志文件，确保后续 append() 有可写的目标。
-    rollFile();
-}
-
 void LogFile::append(const char *data, int len)
 {
+    // TODO code review
+
     std::lock_guard<std::mutex> lock(m_mtx);
+
+    if (len < 0) throw std::invalid_argument("LogFile::append(): len must not be negative");
+
+    const time_t now = Timestamp::Now().secondsSinceEpoch();
+    const std::string currentDate = GetDateString(now);
+
+    // 每条日志通常来自一个临时 Logger，但它们共享同一个长期存在的 LogFile 后端。
+    // 因此先判断当前日志应该属于哪个文件，再把它追加到当前 m_file。
+    // 日期变化必须在写入前处理，否则跨天后的第一条日志仍会落到前一天的文件中。
+    const bool dateChanged = currentDate != m_currentDate;
+    const int64_t currentBytes = m_file->writtenBytes();
+    const int64_t incomingBytes = static_cast<int64_t>(len);
+
+    // 如果当前文件已有内容，并且追加这条日志后会超过大小限制，则提前切换文件。
+    // 当前文件为空时，即使单条日志本身超过限制，也先完整写入，避免创建空的轮转文件。
+    const bool sizeExceeded = currentBytes > 0 && incomingBytes > m_rollsize - currentBytes;
+
+    // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
+    if (sizeExceeded || dateChanged) rollFileInLock(now, currentDate);
 
     m_file->append(data, static_cast<size_t>(len));
 
-    time_t now = Timestamp::Now().secondsSinceEpoch();
-
-    ++m_count;
-
-    // 1. 判断是否需要轮转日志文件。
-
-    // 已经成功写入的字节数超过单个日志文件允许达到的大小。
-    if (m_file->writtenBytes() > m_rollsize)
-    {
-        m_count = 0;
-
-        rollFile();
-    }
-    // 写入次数已经达到阈值。
-    else if (m_count >= m_checkEveryN)
-    {
-        m_count = 0;
-
-        // 只有当前文件没有因大小超限而轮转时，才在达到检查次数后检查时间周期。
-        // 例如 15:30 创建的文件会一直写到当天结束；跨天后的第一次检查才会调用 rollFile()，切换到新的日期文件。
-        time_t currentPeriod = (now / kRollPerSeconds) * kRollPerSeconds;
-        if (currentPeriod != m_startOfPeriod) rollFile();
-    }
-
-    // 2. 判断是否需要刷新日志（独立的刷新逻辑）。
-    if (now - m_lastFlush > m_flushInterval)
+    // flush 与轮转相互独立：即使本次没有轮转，只要达到时间间隔也要刷新当前文件。
+    if (now - m_lastFlush >= m_flushInterval)
     {
         m_lastFlush = now;
         m_file->flush();
     }
 }
 
-bool LogFile::rollFile()
+void LogFile::flush()
 {
-    time_t now = 0;
-    std::string filename = GetLogFileName(m_basename, now);
-
-    if (now > m_lastRoll)
-    {
-        m_lastFlush = now;
-        m_lastRoll = now;
-        // now 是从 Unix 时间起点开始计算的秒数，kRollPerSeconds 表示一个日志周期的秒数（一天）。整除会得到当前属于第几个周期，乘回周期长度后得到这个周期的起始时间。例如：now = 3 * 86400 + 5 * 3600 时，m_startOfPeriod = 3 * 86400，表示第 3 天的起点。
-        m_startOfPeriod = (now / kRollPerSeconds) * kRollPerSeconds;
-
-        // 让 m_file 指向名为 filename 的文件。如果这个文件已经存在，FileUtil 以追加的方式打开该文件，不存在则创建。当前日志名字的命名规则下，精确到秒级，存在的概率不算大，所以大部分情况都是新建文件。
-        m_file.reset(new FileUtil(filename));
-
-
-        return true;
-    }
-    else
-    {
-        return false;
-    }
+    std::lock_guard<std::mutex> lock(m_mtx);
+    m_file->flush();
 }
 
-std::string LogFile::GetLogFileName(const std::string &basename, time_t &now)
+bool LogFile::rollFile()
 {
-    time_t currentTime = Timestamp::Now().secondsSinceEpoch();
-    now = currentTime;
+    std::lock_guard<std::mutex> lock(m_mtx);
 
+    const time_t now = Timestamp::Now().secondsSinceEpoch();
+    return rollFileInLock(now, GetDateString(now));
+}
+
+std::string LogFile::GetDateString(time_t time)
+{
     // 同 Timestamp::toFormattedString() 函数。
     std::tm localTime{};
 
 #if defined(D_OS_WIN32)
-    if (::localtime_s(&localTime, &currentTime)) throw std::runtime_error("LogFile::GetLogFileName(): localtime_s failed");
+    if (::localtime_s(&localTime, &time)) throw std::runtime_error("LogFile::GetDateString(): localtime_s failed");
 #elif defined(D_OS_LINUX)
-    if (!::localtime_r(&currentTime, &localTime)) throw std::runtime_error("LogFile::GetLogFileName(): localtime_r failed");
+    if (!::localtime_r(&time, &localTime)) throw std::runtime_error("LogFile::GetDateString(): localtime_r failed");
 #else
-    throw std::runtime_error("LogFile::GetLogFileName(): Unsupported Operating System");
+    throw std::runtime_error("LogFile::GetDateString(): Unsupported Operating System");
 #endif
 
 
-    // std::put_time 是 C++ 风格的时间格式化方式，输出格式保持为：basename.YYYYmmdd-HHMMSS.log。
-    return (std::ostringstream()
-            << basename << '.'
-            << std::put_time(&localTime, "%Y%m%d-%H%M%S")
-            << ".log")
-        .str();
+    return (std::ostringstream() << std::put_time(&localTime, "%Y%m%d")).str();
+}
+
+int LogFile::FindNextFileIndex(const std::string &basename, const std::string &date)
+{
+    // TODO code review
+
+    const std::filesystem::path basenamePath(basename);
+    const std::filesystem::path directory = basenamePath.has_parent_path() ? basenamePath.parent_path() : std::filesystem::path(".");
+    const std::string prefix = basenamePath.filename().string() + '.' + date + '.';
+    constexpr std::string_view suffix = ".log";
+
+    std::error_code error;
+    std::filesystem::directory_iterator entries(directory, error);
+    if (error) throw std::filesystem::filesystem_error("LogFile::FindNextFileIndex", directory, error);
+
+    int nextIndex = 0;
+    for (const std::filesystem::directory_entry &entry : entries)
+    {
+        const std::string filename = entry.path().filename().string();
+        if (filename.size() <= prefix.size() + suffix.size() || filename.compare(0, prefix.size(), prefix) != 0 ||
+            filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
+        {
+            continue;
+        }
+
+        const std::string indexText = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
+        if (indexText.empty() ||
+            !std::all_of(indexText.begin(), indexText.end(), [](unsigned char character)
+                         { return std::isdigit(character) != 0; }))
+        {
+            continue;
+        }
+
+        int index = 0;
+        const auto result = std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+        if (result.ec != std::errc{} || result.ptr != indexText.data() + indexText.size()) continue;
+        if (index == std::numeric_limits<int>::max()) throw std::overflow_error("LogFile file index overflow");
+
+        nextIndex = std::max(nextIndex, index + 1);
+    }
+
+    return nextIndex;
+}
+
+bool LogFile::rollFileInLock(time_t now, const std::string &date)
+{
+    // TODO code review
+
+    const bool firstFile = !m_file;
+    const bool dateChanged = date != m_currentDate;
+
+    int nextIndex = m_fileIndex;
+    if (firstFile || dateChanged)
+    {
+        // 首次创建或进入新日期时，扫描已有文件，选择当天最大已有序号之后的序号。
+        nextIndex = FindNextFileIndex(m_basename, date);
+    }
+    else
+    {
+        // 同一天因大小超限轮转时，直接使用下一个序号。
+        if (m_fileIndex == std::numeric_limits<int>::max()) throw std::overflow_error("LogFile file index overflow");
+        nextIndex = m_fileIndex + 1;
+    }
+
+    const std::string filename = GetLogFileName(m_basename, date, nextIndex);
+
+    // 先打开新文件，再替换旧的 FileUtil。新文件打开失败时，可以保留旧文件对象。
+    auto newFile = std::make_unique<FileUtil>(filename);
+    m_file = std::move(newFile);
+    m_currentDate = date;
+    m_fileIndex = nextIndex;
+    m_lastFlush = now;
+    return true;
 }
