@@ -33,7 +33,7 @@ void LogFile::append(const char *data, int len)
     const bool sizeExceeded = currentBytes > 0 && incomingBytes > m_rollsize - currentBytes;
 
     // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
-    if (sizeExceeded || dateChanged) rollFileInLock(now, currentDate);
+    if (sizeExceeded || dateChanged) rollFileImpl(now, currentDate);
 
     m_file->append(data, static_cast<size_t>(len));
 
@@ -48,6 +48,7 @@ void LogFile::append(const char *data, int len)
 void LogFile::flush()
 {
     std::lock_guard<std::mutex> lock(m_mtx);
+
     m_file->flush();
 }
 
@@ -55,8 +56,8 @@ bool LogFile::rollFile()
 {
     std::lock_guard<std::mutex> lock(m_mtx);
 
-    const time_t now = Timestamp::Now().secondsSinceEpoch();
-    return rollFileInLock(now, GetDateString(now));
+    time_t now = Timestamp::Now().secondsSinceEpoch();
+    return rollFileImpl(now, GetDateString(now));
 }
 
 std::string LogFile::GetDateString(time_t time)
@@ -118,7 +119,7 @@ int LogFile::FindNextFileIndex(const std::string &basename, const std::string &d
     return nextIndex;
 }
 
-bool LogFile::rollFileInLock(time_t now, const std::string &date)
+bool LogFile::rollFileImpl(time_t now, const std::string &date)
 {
     // TODO code review
 

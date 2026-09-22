@@ -48,8 +48,9 @@ private:
     // 扫描当天已有的日志文件，返回下一个未使用的序号。例如当天已有 .0 和 .1，则返回 2；没有已有文件时返回 0。
     static int FindNextFileIndex(const std::string &basename, const std::string &date);
 
-    // append() 已经持有 m_mtx 时使用，避免同一线程重复锁定 std::mutex。
-    bool rollFileInLock(time_t now, const std::string &date);
+    // 执行实际的轮转逻辑，但这是不加锁的内部版本。
+    // append() 发现需要轮转时已经持有 m_mtx，不能再次调用同样会加锁的公共 rollFile()，否则同一线程会重复锁定 std::mutex 并发生死锁。
+    bool rollFileImpl(time_t now, const std::string &date);
 
 
     // 保护当前文件、日期、序号和 flush 状态，保证多线程追加、flush 和轮转时不会相互冲突。
