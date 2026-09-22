@@ -2,10 +2,15 @@
 
 #include <array>
 #include <cstring>
+#include <mutex>
 
 
 namespace
 {
+
+    // TODO 目前先用一把进程内互斥锁保护 std::strerror()。
+    // std::strerror() 返回的字符指针可能指向 C 运行库内部的共享缓冲区，多个线程同时调用时，后一次调用可能覆盖前一次调用得到的错误信息。后续改用 strerror_r 或 strerror_s + thread_local 缓冲区后，这把锁可以移除。
+    std::mutex g_errnoMutex;
 
     // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
     // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
@@ -51,7 +56,21 @@ Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const cha
     m_stream << levelName(m_level) << ' ';
 
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
-    if (savedErrno) m_stream << std::strerror(savedErrno) << " (errno=" << savedErrno << ") ";
+    if (savedErrno)
+    {
+        // std::strerror(savedErrno) 返回的是字符指针，并不保证返回一份独立的字符串副本；这个指针可能指向 C 运行库内部的共享错误信息缓冲区。
+        // 因此，锁必须一直持有到 m_stream 完成字符复制，执行顺序应当是：
+        // 1. 加锁；
+        // 2. 调用 strerror() 获取错误信息指针；
+        // 3. 通过 m_stream << 立即复制错误信息；
+        // 4. 解锁。
+        // 如果在第 2 步之后提前解锁，其他线程可能调用 strerror() 并覆盖共享缓冲区，导致当前日志在第 3 步复制到错误的错误信息。
+
+        std::lock_guard<std::mutex> lock(g_errnoMutex);
+
+        // m_stream 属于当前 LoggerImpl，是当前日志独有的缓冲区，不是共享对象；这里的锁只保护 strerror() 返回的错误信息来源，不保护 m_stream 本身。
+        m_stream << std::strerror(savedErrno) << " (errno=" << savedErrno << ") ";
+    }
 }
 
 void Logger::LoggerImpl::formatTime()
