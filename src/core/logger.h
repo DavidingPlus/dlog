@@ -5,6 +5,7 @@
 #include "timestamp.h"
 
 #include <string_view>
+#include <functional>
 
 
 // FileNameView 从路径中提取文件名，并以非拥有型视图的形式保存它。
@@ -45,6 +46,23 @@ public:
         FATAL,       // 致命错误，通常会终止程序。
         LEVEL_COUNT, // 等级数量，不是真正的日志等级。
     };
+
+
+    Logger(const char *filename, int line, LogLevel level) : m_impl(level, 0, filename, line) {}
+
+    ~Logger();
+
+    LogStream &stream() { return m_impl.m_stream; }
+
+    // 输出函数。
+    using OutputFunc = std::function<void(const char *msg, int len)>;
+
+    // 刷新缓冲区的函数。
+    using FlushFunc = std::function<void()>;
+
+    static void SetOutput(OutputFunc);
+
+    static void SetFlush(FlushFunc);
 
 
 private:

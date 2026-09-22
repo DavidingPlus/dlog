@@ -25,6 +25,16 @@ namespace
 
     std::string_view levelName(Logger::LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
 
+    // 默认的日志输出函数，将日志内容写入标准输出流（stdout）。
+    void defaultOutput(const char *data, int len) { std::fwrite(data, len, sizeof(char), stdout); }
+
+    // 默认的刷新函数，刷新标准输出流的缓冲区，确保日志及时输出，在发生错误或需要立即看到日志时会被调用。
+    void defaultFlush() { std::fflush(stdout); }
+
+    Logger::OutputFunc g_output = defaultOutput;
+
+    Logger::FlushFunc g_flush = defaultFlush;
+
 } // namespace
 
 
@@ -45,6 +55,26 @@ FileNameView::FileNameView(const char *path)
     // 调用者必须保证 n <= m_view.size()；这里的 sepPos + 1 正好指向文件名的首字符，因此满足这个前提。例如："D:/src/logger/Logger.cc" -> "Logger.cc"。
     if (std::string_view::npos != sepPos) m_view.remove_prefix(sepPos + 1);
 }
+
+Logger::~Logger()
+{
+    m_impl.finish();
+
+    const LogStream::Buffer &buffer = stream().buffer();
+
+    // 输出（默认项终端输出）。
+    g_output(buffer.data(), buffer.length());
+    // 输出 FATAL 的情况，刷新缓冲区并终止程序。
+    if (LogLevel::FATAL == m_impl.m_level)
+    {
+        g_flush();
+        std::abort();
+    }
+}
+
+void Logger::SetOutput(OutputFunc output) { g_output = output; }
+
+void Logger::SetFlush(FlushFunc flush) { g_flush = flush; }
 
 Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const char *filename, int line)
     : m_time(Timestamp::Now()), m_level(level), m_basename(filename), m_line(line)

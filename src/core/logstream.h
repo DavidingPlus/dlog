@@ -19,10 +19,10 @@ class D_API_EXPORTED LogStream
 
     D_CLASS_NONCOPYABLE(LogStream)
 
+public:
+
     // 定义一个 Buffer 类型，使用固定大小的缓冲区。
     using Buffer = FixedBuffer<kSmallBufferSize>;
-
-public:
 
     LogStream() = default;
 
