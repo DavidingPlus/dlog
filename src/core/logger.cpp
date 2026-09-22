@@ -18,3 +18,15 @@ FileNameView::FileNameView(const char *path)
     // 调用者必须保证 n <= m_view.size()；这里的 sepPos + 1 正好指向文件名的首字符，因此满足这个前提。例如："D:/src/logger/Logger.cc" -> "Logger.cc"。
     if (std::string_view::npos != sepPos) m_view.remove_prefix(sepPos + 1);
 }
+
+Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const char *filename, int line)
+{
+}
+
+void Logger::LoggerImpl::formatTime()
+{
+}
+
+void Logger::LoggerImpl::finish()
+{
+}

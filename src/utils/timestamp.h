@@ -39,6 +39,8 @@ public:
     static Timestamp AddTime(const Timestamp &timestamp, double seconds);
 
 
+    // 这两个友元运算符虽然不是 Timestamp 的成员函数，但定义直接位于类体内，因此属于 inline 函数。调用方包含此头文件后会在自己的目标文件中编译它们，不需要从 DLL 导入，也不需要额外添加 D_API_EXPORTED。
+    // 如果以后只在这里声明，改为在 timestamp.cpp 中定义，则它们会成为 DLL 的非成员接口，需要在声明和定义对应的接口上显式添加 D_API_EXPORTED。
     friend bool operator==(const Timestamp &lhs, const Timestamp &rhs) { return lhs.m_microSecondsSinceEpoch == rhs.m_microSecondsSinceEpoch; }
 
     friend bool operator<(const Timestamp &lhs, const Timestamp &rhs) { return lhs.m_microSecondsSinceEpoch < rhs.m_microSecondsSinceEpoch; }
