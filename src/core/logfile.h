@@ -30,7 +30,9 @@ public:
 private:
 
 
-    static std::string GetLogFileName(const std::string &basename, time_t *now);
+    // 生成日志文件名，格式为 basename.YYYYmmdd-HHMMSS.log，例如：app.20260922-153012.log。
+    // now 是输出引用，返回生成文件名时的当前秒级时间戳。调用方用它更新 lastRoll、lastFlush 和 startOfPeriod 成员变量。
+    static std::string GetLogFileName(const std::string &basename, time_t &now);
 
 
     // 一个日志周期包含的秒数。当前按一天计算，用于判断是否跨过日志周期。

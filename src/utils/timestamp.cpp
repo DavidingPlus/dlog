@@ -28,12 +28,12 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
 
 #if defined(D_OS_WIN32)
     // Windows 版本：由调用方提供输出缓冲区 localTime，避免使用共享静态对象。
-    localtime_s(&localTime, &time);
+    if (::localtime_s(&localTime, &time)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_s failed");
 #elif defined(D_OS_LINUX)
     // Linux/POSIX 版本：与 localtime_s 的作用相同，结果写入调用方提供的 localTime。
-    localtime_r(&time, &localTime);
+    if (!::localtime_r(&time, &localTime)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_r failed");
 #else
-    throw std::runtime_error("Unsupported Operating System");
+    throw std::runtime_error("LogFile::GetLogFileName(): Unsupported Operating System");
 #endif
 
 
@@ -45,8 +45,7 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
 
 Timestamp Timestamp::Now()
 {
-    // 获取当前系统时间。
-    // 注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
+    // 获取当前系统时间。注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
     auto now = std::chrono::system_clock::now();
     // 获取从 Unix epoch (1970-01-01 00:00:00 UTC) 到当前时间经过的微秒数。
     auto microSeconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
