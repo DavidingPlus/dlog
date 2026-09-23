@@ -9,6 +9,35 @@
 #include <stdexcept>
 
 
+namespace
+{
+
+    // 尝试从文件名中解析日志序号。
+    // 例如 filename 为 "app.20260923.12.log"，prefix 为 "app.20260923."，suffix 为 ".log" 时，函数会解析出 index == 12。文件名结构不匹配、序号为空、序号包含非数字字符或超出 int 范围时返回 false。
+    // std::numeric_limits<int>::max() == index 仍然属于合法序号；是否还能继续生成下一个序号由调用方负责判断。
+    bool tryParseLogFileIndex(const std::string &filename, const std::string_view &prefix, const std::string_view &suffix, int &index)
+    {
+        // 先检查长度、前缀和后缀，保证下面计算序号区间时不会越界。
+        if (filename.size() <= prefix.size() + suffix.size() || filename.compare(0, prefix.size(), prefix) != 0 ||
+            filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
+
+        // 序号位于 prefix 和 suffix 之间，使用指针区间避免创建 substr 临时字符串。
+        const char *indexBegin = filename.data() + prefix.size();
+        const char *indexEnd = filename.data() + filename.size() - suffix.size();
+
+        // from_chars() 对有符号整数允许负号，而日志序号只接受非负十进制数字，因此先检查首字符。
+        // 后续字符是否全部被消费由 res.ptr == indexEnd 保证。
+        if (indexBegin == indexEnd || *indexBegin < '0' || *indexBegin > '9') return false;
+
+        auto res = std::from_chars(indexBegin, indexEnd, index);
+
+
+        return res.ec == std::errc{} && res.ptr == indexEnd;
+    }
+
+} // namespace
+
+
 void LogFile::append(const char *data, size_t len)
 {
     if (0 == len) return;
@@ -72,39 +101,33 @@ std::string LogFile::GetDateString(time_t time)
 
 int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &date)
 {
-    std::filesystem::path basePathObject(basePath);
-    std::filesystem::path directory = basePathObject.has_parent_path() ? basePathObject.parent_path() : std::filesystem::path(".");
-    std::string prefix = basePathObject.filename().string() + '.' + date + '.';
+    // 1. 把 basePath 拆成“扫描目录”和“文件名前缀”。
+    // 例如 basePath 为 "logs/app"、date 为 "20260923" 时：directory == "logs"，prefix == "app.20260923."，suffix == ".log"，最终只匹配 "app.20260923.<数字>.log"。
+    std::filesystem::path basePathObj(basePath);
+    std::filesystem::path directory = basePathObj.has_parent_path() ? basePathObj.parent_path() : std::filesystem::path(".");
+    std::string prefix = basePathObj.filename().string() + '.' + date + '.';
     std::string_view suffix = ".log";
 
+    // 2. 打开日志所在目录。
+    // 使用带 error_code 的构造函数，把目录不存在、无权限等错误转换成带路径上下文的异常。
     std::error_code error;
     std::filesystem::directory_iterator entries(directory, error);
     if (error) throw std::filesystem::filesystem_error("LogFile::FindNextFileIndex", directory, error);
 
+    // 3. 扫描所有目录项，维护“最大序号加一”。
+    // 注：这里返回的不是最小空缺序号。例如已有 .0 和 .2 时返回 3，避免重启后复用旧序号。
     int nextIndex = 0;
     for (auto &entry : entries)
     {
-        std::string filename = entry.path().filename().string();
-        if (filename.size() <= prefix.size() + suffix.size() || filename.compare(0, prefix.size(), prefix) != 0 ||
-            filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
-        {
-            continue;
-        }
-
-        std::string indexText = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
-        if (indexText.empty() ||
-            !std::all_of(indexText.begin(), indexText.end(), [](unsigned char character)
-                         { return std::isdigit(character) != 0; }))
-        {
-            continue;
-        }
-
+        // 4. 委托给解析函数筛选文件名并提取序号。
         int index = 0;
-        auto result = std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
-        if (result.ec != std::errc{} || result.ptr != indexText.data() + indexText.size()) continue;
-        if (index == std::numeric_limits<int>::max()) throw std::overflow_error("LogFile file index overflow");
+        if (!tryParseLogFileIndex(entry.path().filename().string(), prefix, suffix, index)) continue;
 
-        nextIndex = std::max(nextIndex, index + 1);
+        // std::numeric_limits<int>::max() 是合法的现有序号，但无法再生成 index + 1，因此不能继续轮转。
+        if (std::numeric_limits<int>::max() == index) throw std::overflow_error("LogFile::FindNextFileIndex(): LogFile file index overflow");
+
+        // 维护最大序号加一的返回值。
+        nextIndex = std::max(nextIndex, 1 + index);
     }
 
 
