@@ -20,17 +20,17 @@ namespace
 
     void testLogging()
     {
-        LOG_DEBUG() << "debug";
-        LOG_INFO() << "info";
-        LOG_WARN() << "warn";
-        LOG_ERROR() << "error";
+        DLOG_DEBUG() << "debug";
+        DLOG_INFO() << "info";
+        DLOG_WARN() << "warn";
+        DLOG_ERROR() << "error";
 
-        for (int i = 0; i < 10; ++i) LOG_INFO() << "Hello, " << i << " abc...xyz";
+        for (int i = 0; i < 10; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
     }
 
     void testAsyncLogging()
     {
-        for (int i = 0; i < 1024; ++i) LOG_INFO() << "Hello, " << i << " abc...xyz";
+        for (int i = 0; i < 1024; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
     }
 
 } // namespace
