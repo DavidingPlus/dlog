@@ -183,7 +183,7 @@ TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
                       { output.append(data, len); });
 
     {
-        Logger logger(__FILE__, 123, Logger::LogLevel::INFO);
+        Logger logger(__FILE__, 123, LogLevel::INFO);
         logger.stream() << "scope message";
 
         EXPECT_TRUE(output.empty());
@@ -198,7 +198,7 @@ TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
 TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
 {
     const std::string output = captureOutput([]
-                                             { Logger(__FILE__, 456, Logger::LogLevel::INFO).stream() << "hello"; });
+                                             { Logger(__FILE__, 456, LogLevel::INFO).stream() << "hello"; });
 
     const std::regex pattern(R"(^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6} INFO hello - logger_test\.cpp:456\n$)");
 
@@ -207,12 +207,12 @@ TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
 
 TEST(LoggerTest, FormatsEveryNonFatalLevel)
 {
-    const std::array<std::pair<Logger::LogLevel, const char *>, 5> levels{{
-        {Logger::LogLevel::TRACE, "TRACE"},
-        {Logger::LogLevel::DEBUG, "DEBUG"},
-        {Logger::LogLevel::INFO, "INFO"},
-        {Logger::LogLevel::WARN, "WARN"},
-        {Logger::LogLevel::ERROR, "ERROR"},
+    const std::array<std::pair<LogLevel, const char *>, 5> levels{{
+        {LogLevel::TRACE, "TRACE"},
+        {LogLevel::DEBUG, "DEBUG"},
+        {LogLevel::INFO, "INFO"},
+        {LogLevel::WARN, "WARN"},
+        {LogLevel::ERROR, "ERROR"},
     }};
 
     for (const auto &[level, levelName] : levels)

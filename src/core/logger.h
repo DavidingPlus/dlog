@@ -9,12 +9,12 @@
 
 
 // 日志宏采用类似 Qt qDebug() 的函数式调用方式：DLOG_INFO() << "server started" << port; 宏展开为临时 Logger 的 LogStream 引用，并捕获宏调用处的文件名和行号，当前完整表达式结束后，临时 Logger 析构并输出整条日志。
-#define DLOG_TRACE() (Logger(__FILE__, __LINE__, Logger::LogLevel::TRACE).stream())
-#define DLOG_DEBUG() (Logger(__FILE__, __LINE__, Logger::LogLevel::DEBUG).stream())
-#define DLOG_INFO() (Logger(__FILE__, __LINE__, Logger::LogLevel::INFO).stream())
-#define DLOG_WARN() (Logger(__FILE__, __LINE__, Logger::LogLevel::WARN).stream())
-#define DLOG_ERROR() (Logger(__FILE__, __LINE__, Logger::LogLevel::ERROR).stream())
-#define DLOG_FATAL() (Logger(__FILE__, __LINE__, Logger::LogLevel::FATAL).stream())
+#define DLOG_TRACE() (Logger(__FILE__, __LINE__, LogLevel::TRACE).stream())
+#define DLOG_DEBUG() (Logger(__FILE__, __LINE__, LogLevel::DEBUG).stream())
+#define DLOG_INFO() (Logger(__FILE__, __LINE__, LogLevel::INFO).stream())
+#define DLOG_WARN() (Logger(__FILE__, __LINE__, LogLevel::WARN).stream())
+#define DLOG_ERROR() (Logger(__FILE__, __LINE__, LogLevel::ERROR).stream())
+#define DLOG_FATAL() (Logger(__FILE__, __LINE__, LogLevel::FATAL).stream())
 
 
 // FileNameView 从路径中提取文件名，并以非拥有型视图的形式保存它。
@@ -40,6 +40,18 @@ private:
 };
 
 
+enum class LogLevel
+{
+    TRACE,       // 最详细的跟踪信息。
+    DEBUG,       // 调试信息。
+    INFO,        // 普通运行信息。
+    WARN,        // 警告，但程序通常还能继续运行。
+    ERROR,       // 错误，需要处理。
+    FATAL,       // 致命错误，通常会终止程序。
+    LEVEL_COUNT, // 等级数量，不是真正的日志等级。
+};
+
+
 // Logger 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。
 // 一条日志的典型执行流程是：
 // 1. 创建 Logger 时，LoggerImpl 将时间、日志等级等前缀写入内部 LogStream；
@@ -47,25 +59,13 @@ private:
 // 3. Logger 析构时调用 finish()，补充源文件名、行号和换行符；
 // 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
 // Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
-// 典型的临时对象用法如下：Logger(__FILE__, __LINE__, Logger::LogLevel::INFO).stream() << "server started"; 当前完整表达式结束后，临时 Logger 析构并输出整条日志。若先保存为命名对象，则会在对象离开作用域时输出。FATAL 日志在输出后还会调用 FlushFunc 刷新输出，并终止进程；因此不应在普通单元测试中直接触发 FATAL。
+// 典型的临时对象用法如下：Logger(__FILE__, __LINE__, LogLevel::INFO).stream() << "server started"; 当前完整表达式结束后，临时 Logger 析构并输出整条日志。若先保存为命名对象，则会在对象离开作用域时输出。FATAL 日志在输出后还会调用 FlushFunc 刷新输出，并终止进程；因此不应在普通单元测试中直接触发 FATAL。
 class D_API_EXPORTED Logger
 {
 
     D_CLASS_NONCOPYABLE(Logger)
 
 public:
-
-    enum class LogLevel
-    {
-        TRACE,       // 最详细的跟踪信息。
-        DEBUG,       // 调试信息。
-        INFO,        // 普通运行信息。
-        WARN,        // 警告，但程序通常还能继续运行。
-        ERROR,       // 错误，需要处理。
-        FATAL,       // 致命错误，通常会终止程序。
-        LEVEL_COUNT, // 等级数量，不是真正的日志等级。
-    };
-
 
     Logger(const char *filename, int line, LogLevel level) : m_impl(level, 0, filename, line) {}
 

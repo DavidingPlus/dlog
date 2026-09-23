@@ -14,7 +14,7 @@ namespace
 
     // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
     // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
-    constexpr std::array<std::string_view, static_cast<size_t>(Logger::LogLevel::LEVEL_COUNT)> kLevelNames{
+    constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLevelNames{
         "TRACE",
         "DEBUG",
         "INFO",
@@ -23,7 +23,7 @@ namespace
         "FATAL",
     };
 
-    std::string_view levelName(Logger::LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
+    std::string_view levelName(LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
 
     // 默认的日志输出函数，将日志内容写入标准输出流（stdout）。
     void defaultOutput(const char *data, size_t len) { std::fwrite(data, len, sizeof(char), stdout); }
@@ -76,7 +76,7 @@ void Logger::SetOutput(OutputFunc output) { g_outputCallback = output; }
 
 void Logger::SetFlush(FlushFunc flush) { g_flushCallback = flush; }
 
-Logger::LoggerImpl::LoggerImpl(Logger::LogLevel level, int savedErrno, const char *filename, int line)
+Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filename, int line)
     : m_time(Timestamp::Now()), m_level(level), m_basename(filename), m_line(line)
 {
     // 根据时区格式化当前时间字符串, 也是一条 log 消息的开头，作为整条日志的前缀。
