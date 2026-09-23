@@ -1,6 +1,8 @@
 #ifndef _DLOG_LOGCOLOR_H_
 #define _DLOG_LOGCOLOR_H_
 
+#include "globalmacros.h"
+
 #include <iostream>
 
 enum class LogLevel;
@@ -22,16 +24,16 @@ enum class LogLevel;
 #define LOG_COLOR_DEBUG "\033[34m"
 
 
-class LogColorGuard
+class D_API_EXPORTED LogColorGuard
 {
 
 public:
 
     // 构造时应用新传入等级对应的颜色。
-    explicit LogColorGuard(Logger::LogLevel level);
+    explicit LogColorGuard(LogLevel level);
 
     // 析构时自动恢复原始颜色。
-    ~LogColorGuard() { std::cout << LOG_COLOR_RESET; }
+    ~LogColorGuard() { std::cout << LOG_COLOR_RESET << std::flush; }
 };
 
 
