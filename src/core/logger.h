@@ -8,7 +8,7 @@
 #include <functional>
 
 
-// 日志宏采用类似 Qt qDebug() 的函数式调用方式：DLOG_INFO() << "server started" << port;宏展开为临时 Logger 的 LogStream 引用，并捕获宏调用处的文件名和行号，当前完整表达式结束后，临时 Logger 析构并输出整条日志。
+// 日志宏采用类似 Qt qDebug() 的函数式调用方式：DLOG_INFO() << "server started" << port; 宏展开为临时 Logger 的 LogStream 引用，并捕获宏调用处的文件名和行号，当前完整表达式结束后，临时 Logger 析构并输出整条日志。
 #define DLOG_TRACE() (Logger(__FILE__, __LINE__, Logger::LogLevel::TRACE).stream())
 #define DLOG_DEBUG() (Logger(__FILE__, __LINE__, Logger::LogLevel::DEBUG).stream())
 #define DLOG_INFO() (Logger(__FILE__, __LINE__, Logger::LogLevel::INFO).stream())
