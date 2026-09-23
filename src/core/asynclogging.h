@@ -18,7 +18,7 @@ class D_API_EXPORTED AsyncLogging
 
 public:
 
-    AsyncLogging(const std::string &basePath, int64_t rollSize, int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_currentBuffer(std::make_unique<LargeBuffer>()), m_nextBuffer(std::make_unique<LargeBuffer>()) { m_buffers.reserve(16); }
+    AsyncLogging(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_currentBuffer(std::make_unique<LargeBuffer>()), m_nextBuffer(std::make_unique<LargeBuffer>()) { m_buffers.reserve(16); }
 
     ~AsyncLogging();
 
@@ -58,7 +58,7 @@ private:
     int64_t m_rollSize = 0;
 
     // 后台定时等待/刷新的间隔，单位为秒。
-    int m_flushInterval = 0;
+    unsigned int m_flushInterval = 0;
 
     // 后台写盘线程，入口函数绑定到 threadFunc()。
     Thread m_thread;

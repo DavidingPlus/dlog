@@ -25,7 +25,7 @@ class D_API_EXPORTED LogFile
 public:
 
     // 构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
-    LogFile(const std::string &basePath, int64_t rollsize, int flushInterval = 3) : m_basePath(basePath), m_rollsize(rollsize), m_flushInterval(flushInterval) { rollFile(); }
+    LogFile(const std::string &basePath, int64_t rollsize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollsize(rollsize), m_flushInterval(flushInterval) { rollFile(); }
 
     ~LogFile() = default;
 
@@ -76,7 +76,7 @@ private:
     int64_t m_rollsize = 0;
 
     // 两次 flush() 之间允许经过的最长时间，单位是秒，默认 3 秒。
-    int m_flushInterval = 0;
+    unsigned int m_flushInterval = 0;
 
     // 当前文件所属的本地日期，例如：20260922。日期变化时会为新日期选择下一个可用序号。
     std::string m_currentDate;
