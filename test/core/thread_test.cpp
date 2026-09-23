@@ -54,6 +54,66 @@ TEST(ThreadTest, StartRunsCallbackAndPublishesKernelTid)
     EXPECT_EQ(future.get(), thread.tid());
 
     thread.join();
+    EXPECT_FALSE(thread.started());
+}
+
+// 验证同一个 Thread 对象在上一轮 join 后可以再次启动并执行回调。
+TEST(ThreadTest, CanRestartAfterJoin)
+{
+    std::atomic<int> callbackCount{0};
+    Thread thread([&callbackCount]()
+                  { ++callbackCount; });
+
+    EXPECT_FALSE(thread.started());
+
+    thread.start();
+    EXPECT_TRUE(thread.started());
+    thread.join();
+    EXPECT_FALSE(thread.started());
+    EXPECT_EQ(callbackCount.load(), 1);
+
+    thread.start();
+    EXPECT_TRUE(thread.started());
+    thread.join();
+    EXPECT_FALSE(thread.started());
+    EXPECT_EQ(callbackCount.load(), 2);
+}
+
+// 验证当前一轮线程尚未 join 时重复 start 不会再创建一条工作线程。
+TEST(ThreadTest, RepeatedStartBeforeJoinDoesNotStartAnotherCallback)
+{
+    std::atomic<int> callbackCount{0};
+    std::promise<void> callbackFinished;
+    auto callbackFinishedFuture = callbackFinished.get_future();
+
+    Thread thread([&callbackCount, &callbackFinished]()
+                  {
+                      if (0 == callbackCount.fetch_add(1)) callbackFinished.set_value(); });
+
+    thread.start();
+    callbackFinishedFuture.wait();
+    EXPECT_TRUE(thread.started());
+
+    // 回调即使已经执行完，std::thread 在 join 前仍是 joinable，因此此调用应被忽略。
+    thread.start();
+    thread.join();
+
+    EXPECT_EQ(callbackCount.load(), 1);
+    EXPECT_FALSE(thread.started());
+}
+
+// 验证未启动时 join 和重复 join 都安全返回。
+TEST(ThreadTest, JoinBeforeStartAndRepeatedJoinAreNoOps)
+{
+    Thread thread([]() {});
+
+    EXPECT_NO_THROW(thread.join());
+    EXPECT_FALSE(thread.started());
+
+    thread.start();
+    EXPECT_NO_THROW(thread.join());
+    EXPECT_FALSE(thread.started());
+    EXPECT_NO_THROW(thread.join());
 }
 
 // 验证 join() 会等待线程回调执行完毕。
@@ -77,6 +137,7 @@ TEST(ThreadTest, JoinWaitsForCallbackCompletion)
     thread.join();
 
     EXPECT_TRUE(finished.load());
+    EXPECT_FALSE(thread.started());
 }
 
 // 验证析构时未 join 的线程会被分离，但仍会继续运行结束。
