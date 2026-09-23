@@ -26,7 +26,7 @@ public:
     explicit FileNameView(const char *path);
 
     // 返回文件名视图，例如："Logger.cc"。
-    const std::string_view &view() const noexcept { return m_view; }
+    std::string_view view() const noexcept { return m_view; }
 
 
 private:

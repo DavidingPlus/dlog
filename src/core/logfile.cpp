@@ -3,7 +3,6 @@
 #include "timestamp.h"
 
 #include <filesystem>
-#include <iomanip>
 #include <limits>
 #include <string_view>
 #include <stdexcept>
@@ -14,8 +13,7 @@ namespace
 
     // 尝试从文件名中解析日志序号。
     // 例如 filename 为 "app.20260923.12.log"，prefix 为 "app.20260923."，suffix 为 ".log" 时，函数会解析出 index == 12。文件名结构不匹配、序号为空、序号包含非数字字符或超出 int 范围时返回 false。
-    // std::numeric_limits<int>::max() == index 仍然属于合法序号；是否还能继续生成下一个序号由调用方负责判断。
-    bool tryParseLogFileIndex(const std::string &filename, const std::string_view &prefix, const std::string_view &suffix, int &index)
+    bool tryParseLogFileIndex(std::string_view filename, std::string_view prefix, std::string_view suffix, int &index)
     {
         // 文件名必须满足：prefix + 至少一个序号字符 + suffix。使用 <= 可以同时排除文件名过短、以及 prefix 和 suffix 之间没有序号的情况。
         bool tooShort = filename.size() <= prefix.size() + suffix.size();
@@ -45,7 +43,7 @@ namespace
         auto res = std::from_chars(indexText.data(), indexText.data() + indexText.size(), parsedIndex, 10);
         // 1. std::errc{} != res：表示解析发生错误。
         // 2. indexText.data() + indexText.size() != res.ptr：判断整个字符串是否都被解析。例如 12abc 可能只解析出 12，res.ptr 会停在 a 前面。
-        // 3. parsedIndex > static_cast<unsigned int>(std::numeric_limits<int>::max())：解析出的数字超过 int 最大值。
+        // 3. parsedIndex > static_cast<unsigned int>(std::numeric_limits<int>::max())：解析出的数字超过 int 最大值。注：std::numeric_limits<int>::max() == index 仍然属于合法序号；是否还能继续生成下一个序号由调用方负责判断。
         if (std::errc{} != res.ec || indexText.data() + indexText.size() != res.ptr || parsedIndex > static_cast<unsigned int>(std::numeric_limits<int>::max()))
         {
             return false;
@@ -125,9 +123,14 @@ int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &d
 {
     // 1. 把 basePath 拆成“扫描目录”和“文件名前缀”。
     // 例如 basePath 为 "logs/app"、date 为 "20260923" 时：directory == "logs"，prefix == "app.20260923."，suffix == ".log"，最终只匹配 "app.20260923.<数字>.log"。
+
+    // path 对象保存并管理 basePath 对应的路径文本；这里后续需要从它提取父目录和文件名。
     std::filesystem::path basePathObj(basePath);
+    // directory 是实际需要扫描的目录：basePath 含目录时使用其父目录，否则使用当前工作目录。
     std::filesystem::path directory = basePathObj.has_parent_path() ? basePathObj.parent_path() : std::filesystem::path(".");
+    // prefix 是运行时拼接得到的完整前缀，右侧表达式会创建临时 std::string，必须由 std::string 持有数据，不能直接声明为 std::string_view，否则语句结束后会悬空。
     std::string prefix = basePathObj.filename().string() + '.' + date + '.';
+    // suffix 直接指向字符串字面量；字符串字面量具有静态存储期，使用不拥有数据的 std::string_view 是安全的。
     std::string_view suffix = ".log";
 
     // 2. 打开日志所在目录。

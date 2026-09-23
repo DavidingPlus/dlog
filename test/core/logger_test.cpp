@@ -54,7 +54,7 @@ TEST(FileNameViewTest, ExposesAStringView)
 {
     FileNameView file("Logger.cc");
 
-    static_assert(std::is_same_v<decltype(file.view()), const std::string_view &>);
+    static_assert(std::is_same_v<decltype(file.view()), std::string_view>);
     static_assert(noexcept(file.view()));
 
     EXPECT_EQ(file.view(), "Logger.cc");

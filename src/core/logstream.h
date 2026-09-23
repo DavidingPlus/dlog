@@ -67,7 +67,7 @@ public:
 
     // 写入带显式长度的字符数据。和参考实现 https://github.com/youngyangyang04/kamaLog/blob/main/logger/LogStream.h 的 GeneralTemplate 作用一致。
     // std::string_view 不拥有数据，只保存数据地址和长度，因此可以处理：不以 '\0' 结尾的数据；中间包含 '\0' 的数据；字符串的一部分，而不需要额外构造 std::string。
-    LogStream &operator<<(const std::string_view &sv);
+    LogStream &operator<<(std::string_view sv);
 
 
 private:
