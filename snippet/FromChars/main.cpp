@@ -39,12 +39,12 @@ void check(std::string_view text)
 
 int main()
 {
-    check("0");
-    check("0012");
-    check("-1");
-    check("+1");
-    check("12x");
-    check("2147483647");
-    check("2147483648");
-    check("");
+    check("0");          // accepted
+    check("0012");       // accepted
+    check("-1");         // rejected
+    check("+1");         // rejected
+    check("12x");        // rejected
+    check("2147483647"); // accepted
+    check("2147483648"); // rejected
+    check("");           // rejected
 }
