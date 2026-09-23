@@ -18,7 +18,7 @@ class D_API_EXPORTED AsyncLogging
 
 public:
 
-    AsyncLogging(const std::string &basePath, int64_t rollSize, int flushInterval = 3);
+    AsyncLogging(const std::string &basePath, int64_t rollSize, int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_currentBuffer(std::make_unique<LargeBuffer>()), m_nextBuffer(std::make_unique<LargeBuffer>()) { m_buffers.reserve(16); }
 
     ~AsyncLogging();
 
@@ -33,34 +33,49 @@ public:
 
 private:
 
+    // 单块日志缓冲区，容量在编译期由 kLargeBufferSize 固定。
     using LargeBuffer = FixedBuffer<kLargeBufferSize>;
+
+    // 缓冲区的独占所有权指针；队列交换和缓冲区轮换时移动指针即可。
     using BufferPtr = std::unique_ptr<LargeBuffer>;
+
+    // 待写缓冲区队列的动态数组类型。
     using BufferVector = std::vector<BufferPtr>;
+
 
     // 后台线程入口。
     void threadFunc();
 
 
-    // 当前是否允许后台线程继续运行。
+    // 后台线程的运行标志。
     std::atomic_bool m_running{false};
 
-    // 日志文件配置。
+    // 日志文件的基础路径。
     std::string m_basePath;
+
+    // 单个日志文件的轮转阈值，单位为字节。
     int64_t m_rollSize = 0;
+
+    // 后台定时等待/刷新的间隔，单位为秒。
     int m_flushInterval = 0;
 
-    // 后台写盘线程。
+    // 后台写盘线程，入口函数绑定到 threadFunc()。
     Thread m_thread;
 
-    // 保护前端缓冲区和待写缓冲区队列。
+    // 保护当前/备用缓冲区及待写队列，协调前台 append() 与后台批量取队列。
     std::mutex m_mutex;
-    std::condition_variable m_condition;
 
-    // 前端当前写入的缓冲区和备用缓冲区。
+    // 前台移交新批次后唤醒后台线程；后台线程也可配合定时等待。
+    std::condition_variable m_cond;
+
+    // 前台正在追加日志的缓冲区；空间不足时移入 m_buffers，再切换到备用缓冲区。
     BufferPtr m_currentBuffer;
+
+    // 预备缓冲区，优先用于替换已移交的当前缓冲区，以减少运行中的动态分配。
     BufferPtr m_nextBuffer;
 
-    // 已经交给后台线程、等待写盘的缓冲区队列。
+    // 前台已经填充并移交、等待后台写盘的缓冲区队列。
+    // 构造函数中 reserve(16) 预留至少 16 个元素的容量，不限制队列长度。
     BufferVector m_buffers;
 };
 
