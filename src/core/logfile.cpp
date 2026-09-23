@@ -45,12 +45,12 @@ void LogFile::flush()
     m_file->flush();
 }
 
-bool LogFile::rollFile()
+void LogFile::rollFile()
 {
     std::lock_guard<std::mutex> lock(m_mtx);
 
     time_t now = Timestamp::Now().secondsSinceEpoch();
-    return rollFileImpl(now, GetDateString(now));
+    rollFileImpl(now, GetDateString(now));
 }
 
 std::string LogFile::GetDateString(time_t time)
@@ -112,33 +112,33 @@ int LogFile::FindNextFileIndex(const std::string &basename, const std::string &d
     return nextIndex;
 }
 
-bool LogFile::rollFileImpl(time_t now, const std::string &date)
+void LogFile::rollFileImpl(time_t now, const std::string &date)
 {
-    // TODO code review
+    bool firstFile = !m_file;
+    bool dateChanged = date != m_currentDate;
 
-    const bool firstFile = !m_file;
-    const bool dateChanged = date != m_currentDate;
-
-    int nextIndex = m_fileIndex;
+    int nextIndex = 0;
+    // 首次创建或日期变化。
     if (firstFile || dateChanged)
     {
-        // 首次创建或进入新日期时，扫描已有文件，选择当天最大已有序号之后的序号。
+        // 扫描已有文件，选择当天最大已有序号之后的序号。
         nextIndex = FindNextFileIndex(m_basename, date);
     }
+    // 否则是大小超限。
     else
     {
-        // 同一天因大小超限轮转时，直接使用下一个序号。
-        if (m_fileIndex == std::numeric_limits<int>::max()) throw std::overflow_error("LogFile file index overflow");
-        nextIndex = m_fileIndex + 1;
+        if (std::numeric_limits<int>::max() == m_fileIndex) throw std::overflow_error("LogFile::rollFileImpl(): LogFile file index overflow");
+        // 使用下一个序号。
+        nextIndex = 1 + m_fileIndex;
     }
 
-    const std::string filename = GetLogFileName(m_basename, date, nextIndex);
+    std::string filename = GetLogFileName(m_basename, date, nextIndex);
 
     // 先打开新文件，再替换旧的 FileUtil。新文件打开失败时，可以保留旧文件对象。
     auto newFile = std::make_unique<FileUtil>(filename);
     m_file = std::move(newFile);
+
     m_currentDate = date;
     m_fileIndex = nextIndex;
     m_lastFlush = now;
-    return true;
 }

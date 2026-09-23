@@ -38,8 +38,8 @@ public:
     // 将当前日志文件对象内部缓冲区的数据刷新到当前文件，不会创建或切换日志文件。
     void flush();
 
-    // 创建并切换到下一个日志文件。构造时用于初始化当前文件，运行中用于响应大小或日期轮转。返回 true 表示成功创建并切换了文件。
-    bool rollFile();
+    // 创建并切换到下一个日志文件。构造时用于初始化当前文件，运行中用于响应大小或日期轮转。成功正常返回，失败抛出异常。
+    void rollFile();
 
 
 private:
@@ -56,7 +56,7 @@ private:
 
     // 执行实际的轮转逻辑，但这是不加锁的内部版本。
     // append() 发现需要轮转时已经持有 m_mtx，不能再次调用同样会加锁的公共 rollFile()，否则同一线程会重复锁定 std::mutex 并发生死锁。
-    bool rollFileImpl(time_t now, const std::string &date);
+    void rollFileImpl(time_t now, const std::string &date);
 
 
     // 保护当前文件、日期、序号和 flush 状态，保证多线程追加、flush 和轮转时不会相互冲突。
