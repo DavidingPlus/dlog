@@ -18,7 +18,7 @@ class D_API_EXPORTED AsyncLogging
 
 public:
 
-    AsyncLogging(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_currentBuffer(std::make_unique<LargeBuffer>()), m_nextBuffer(std::make_unique<LargeBuffer>()) { m_buffers.reserve(16); }
+    AsyncLogging(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeBuffer>()) { m_pendingBuffers.reserve(16); }
 
     ~AsyncLogging();
 
@@ -63,21 +63,17 @@ private:
     // 后台写盘线程，入口函数绑定到 threadFunc()。
     Thread m_thread;
 
-    // 保护当前/备用缓冲区及待写队列，协调前台 append() 与后台批量取队列。
-    std::mutex m_mutex;
+    // 保护前台生产者缓冲区和待处理队列，协调 append() 与后台批量取队列。
+    std::mutex m_mtx;
 
     // 前台移交新批次后唤醒后台线程；后台线程也可配合定时等待。
     std::condition_variable m_cond;
 
-    // 前台正在追加日志的缓冲区；空间不足时移入 m_buffers，再切换到备用缓冲区。
-    BufferPtr m_currentBuffer;
+    // 前台生产者正在追加日志的缓冲区；写满后移入 m_pendingBuffers，并分配新缓冲区继续接收。
+    BufferPtr m_producerBuffer;
 
-    // 预备缓冲区，优先用于替换已移交的当前缓冲区，以减少运行中的动态分配。
-    BufferPtr m_nextBuffer;
-
-    // 前台已经填充并移交、等待后台写盘的缓冲区队列。
-    // 构造函数中 reserve(16) 预留至少 16 个元素的容量，不限制队列长度。
-    BufferVector m_buffers;
+    // 前台已经填充并移交、等待后台线程处理的缓冲区队列。
+    BufferVector m_pendingBuffers;
 };
 
 

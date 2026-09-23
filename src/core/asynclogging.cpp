@@ -19,7 +19,7 @@ void AsyncLogging::append(const char *data, size_t length)
 
     {
         // 持锁完成整条日志的分段追加，避免并发调用把不同日志交错到缓冲区中。
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::mutex> lock(m_mtx);
 
         // currentData 指向这条日志中“接下来要复制的位置”。
         const char *currentData = data;
@@ -29,21 +29,21 @@ void AsyncLogging::append(const char *data, size_t length)
         while (remaining > 0)
         {
             // chunkLength 取“待复制字节数”和“剩余空间”中较小的那个，保证这次不会写过缓冲区边界。
-            size_t chunkLength = std::min(remaining, m_currentBuffer->avail());
+            size_t chunkLength = std::min(remaining, m_producerBuffer->avail());
 
             // 单条日志可能大于一个 LargeBuffer；分段写入并按顺序入队，避免 FixedBuffer 丢弃超容量数据。
-            m_currentBuffer->append(currentData, chunkLength);
+            m_producerBuffer->append(currentData, chunkLength);
             currentData += chunkLength;
             remaining -= chunkLength;
 
             // 如果本次追加导致缓冲区装满。
-            if (0 == m_currentBuffer->avail())
+            if (0 == m_producerBuffer->avail())
             {
-                // 使用 std::move 把 m_currentBuffer 这块缓冲区的所有权交给 m_buffers 队列，供后台线程写盘。
-                m_buffers.emplace_back(std::move(m_currentBuffer));
+                // 使用 std::move 把生产者缓冲区交给待处理队列，供后台线程写盘。
+                m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
 
-                // 有备用缓冲区就拿来用；没有就新建一块。循环继续处理这条日志剩余的字节。
-                m_currentBuffer = m_nextBuffer ? std::move(m_nextBuffer) : std::make_unique<LargeBuffer>();
+                // 写满后分配新块，继续处理剩余字节（本版本暂不预留备用缓冲区）。
+                m_producerBuffer = std::make_unique<LargeBuffer>();
 
                 queuedBuffer = true;
             }
@@ -74,67 +74,60 @@ void AsyncLogging::stop()
 
 void AsyncLogging::threadFunc()
 {
-    // TODO code review
+    LogFile logFile(m_basePath, m_rollSize, m_flushInterval);
 
-    LogFile output(m_basePath, m_rollSize, m_flushInterval);
+    // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
+    BufferPtr replaceBuffer = std::make_unique<LargeBuffer>();
 
-    // newBuffer1 用于替换前台当前缓冲区，newBuffer2 用于补充前台备用缓冲区。它们写完一批日志后会从 buffersToWrite 中回收，减少反复分配大块内存。
-    BufferPtr newBuffer1 = std::make_unique<LargeBuffer>(), newBuffer2 = std::make_unique<LargeBuffer>();
-
+    // 后台在每批次中要写盘的缓冲区，实际过程中和前台 m_pendingBuffers 进行交换获得数据。
     BufferVector buffersToWrite;
     buffersToWrite.reserve(16);
 
     while (true)
     {
-        bool stopping = false;
-
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            std::unique_lock<std::mutex> lock(m_mtx);
 
-            // 有完整缓冲区时由 append() 通知；只有部分日志时定时醒来，将当前缓冲区也纳入本批。
-            m_cond.wait_for(lock, std::chrono::seconds(m_flushInterval), [this]
-                            { return !m_buffers.empty() || !m_running.load(); });
+            // m_flushInterval 为 0 会让 wait_for 立即返回并造成空转，保证至少等待 1 秒。
+            // wait_for()：最多等 interval 这么久；如果待写队列有数据，或者线程已停止，就提前结束等待。
+            m_cond.wait_for(lock, std::chrono::seconds(m_flushInterval > 0 ? m_flushInterval : 1), [this]
+                            { return !m_pendingBuffers.empty() || !m_running; });
 
-            // 把前台当前缓冲区交给后台，并立即给前台换一块新的。
-            m_buffers.emplace_back(std::move(m_currentBuffer));
-            m_currentBuffer = newBuffer1 ? std::move(newBuffer1) : std::make_unique<LargeBuffer>();
+            // m_running == false 只表示收到停止请求，不表示日志已经写完。
+            // 停止时仍需排空两处数据：m_pendingBuffers 中已交出的整块缓冲区，以及 m_producerBuffer 中未写满的尾部数据。上一轮的 buffersToWrite 在回到这里前已经写入 LogFile、清空并 flush，因此无需在退出条件中检查它。只有停止请求已到且这两处都为空时才退出；否则继续交接、写入，直到排空。
+            // break 以后 lock 会自动释放。这里的 std::unique_lock 是局部对象；break 会退出整个 while 循环，离开它所在的作用域时，unique_lock 析构并自动解锁。
+            if (!m_running && m_pendingBuffers.empty() && 0 == m_producerBuffer->length()) break;
 
-            // 前台若已用掉备用缓冲区，就补上一块，避免生产线程因后台写盘而等待分配。
-            if (!m_nextBuffer) m_nextBuffer = newBuffer2 ? std::move(newBuffer2) : std::make_unique<LargeBuffer>();
+            // 把生产者缓冲区交给后台，并尝试用 replaceBuffer 立即给前台换一块新的。
+            m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
+            m_producerBuffer = replaceBuffer ? std::move(replaceBuffer) : std::make_unique<LargeBuffer>();
 
-            // 交换所有权而非复制日志字节。解锁后前台可以继续填充新的 m_buffers。
-            buffersToWrite.swap(m_buffers);
-            stopping = !m_running.load();
+            // 把待处理队列交给后台本地批次。解锁后前台可以继续填充新的 m_pendingBuffers。
+            buffersToWrite.swap(m_pendingBuffers);
         }
 
         // 磁盘写入放在锁外，避免阻塞前台 append()。
         for (auto &buffer : buffersToWrite)
         {
-            if (buffer && buffer->length() > 0) output.append(buffer->data(), buffer->length());
+            if (buffer && buffer->length() > 0) logFile.append(buffer->data(), buffer->length());
         }
 
-        // 本批已写完；最多保留两块缓冲区作为后台备用，其余释放，避免突发日志造成内存长期膨胀。
-        if (buffersToWrite.size() > 2) buffersToWrite.resize(2);
+        // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。
+        if (buffersToWrite.size() > 1) buffersToWrite.resize(1);
 
-        if (!newBuffer1 && !buffersToWrite.empty())
+        if (!replaceBuffer && !buffersToWrite.empty())
         {
-            newBuffer1 = std::move(buffersToWrite.back());
+            replaceBuffer = std::move(buffersToWrite.back());
             buffersToWrite.pop_back();
-            newBuffer1->reset();
+            replaceBuffer->reset();
         }
-        if (!newBuffer2 && !buffersToWrite.empty())
-        {
-            newBuffer2 = std::move(buffersToWrite.back());
-            buffersToWrite.pop_back();
-            newBuffer2->reset();
-        }
+
         buffersToWrite.clear();
 
-        // 每批写完后刷新；stop() 唤醒线程后也会走完这一轮，再退出循环。
-        output.flush();
-        if (stopping) break;
+        // 每批写完后刷新；stop() 唤醒线程后会继续处理，直到待处理数据全部清空。
+        logFile.flush();
     }
 
-    // 退出前再做一次最终刷新。
-    output.flush();
+    // 退出前再做一次最终刷新，将 LogFile 内部缓冲中的数据提交到文件层。
+    logFile.flush();
 }
