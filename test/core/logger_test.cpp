@@ -228,7 +228,7 @@ TEST(LoggerTest, FormatsEveryNonFatalLevel)
 TEST(LoggerMacroTest, QDebugStyleMacroFormatsAndOutputsOnFullExpressionEnd)
 {
     const std::string output = captureOutput([]
-                                             { LOG_INFO() << "started " << 42; });
+                                             { DLOG_INFO() << "started " << 42; });
 
     EXPECT_NE(output.find("INFO started 42 - logger_test.cpp:"), std::string::npos);
     EXPECT_FALSE(output.empty());
@@ -237,15 +237,17 @@ TEST(LoggerMacroTest, QDebugStyleMacroFormatsAndOutputsOnFullExpressionEnd)
 
 TEST(LoggerMacroTest, SupportsAllListedMacros)
 {
-    const std::array<std::pair<const char *, std::function<void()>>, 4> loggers{{
+    const std::array<std::pair<const char *, std::function<void()>>, 5> loggers{{
+        {"TRACE", []
+         { DLOG_TRACE() << "message"; }},
         {"DEBUG", []
-         { LOG_DEBUG() << "message"; }},
+         { DLOG_DEBUG() << "message"; }},
         {"INFO", []
-         { LOG_INFO() << "message"; }},
+         { DLOG_INFO() << "message"; }},
         {"WARN", []
-         { LOG_WARN() << "message"; }},
+         { DLOG_WARN() << "message"; }},
         {"ERROR", []
-         { LOG_ERROR() << "message"; }},
+         { DLOG_ERROR() << "message"; }},
     }};
 
     for (const auto &[levelName, writeLog] : loggers)
@@ -260,7 +262,7 @@ TEST(LoggerOutputTest, PreservesEmbeddedNullCharactersThroughExplicitLength)
     constexpr char message[] = {'l', 'e', 'f', 't', '\0', 'r', 'i', 'g', 'h', 't'};
 
     const std::string output = captureOutput([&]
-                                             { LOG_INFO() << std::string_view(message, sizeof(message)); });
+                                             { DLOG_INFO() << std::string_view(message, sizeof(message)); });
 
     const std::string expected(message, sizeof(message));
     EXPECT_NE(output.find(expected), std::string::npos);
@@ -276,7 +278,7 @@ TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
         callbackLength = len;
         callbackData.assign(data, len); });
 
-    LOG_INFO() << "length check";
+    DLOG_INFO() << "length check";
 
     EXPECT_EQ(callbackLength, callbackData.size());
     EXPECT_NE(callbackData.find("INFO length check - logger_test.cpp:"), std::string::npos);
@@ -291,7 +293,7 @@ TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
                      { flushed = true; });
 
     const std::string output = captureOutput([]
-                                             { LOG_INFO() << "normal"; });
+                                             { DLOG_INFO() << "normal"; });
 
     EXPECT_NE(output.find("INFO normal - logger_test.cpp:"), std::string::npos);
     EXPECT_FALSE(flushed);
@@ -301,5 +303,5 @@ TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
 
 TEST(LoggerDeathTest, FatalLogAbortsTheProcess)
 {
-    EXPECT_DEATH({ LOG_FATAL() << "fatal message"; }, ".*");
+    EXPECT_DEATH({ DLOG_FATAL() << "fatal message"; }, ".*");
 }
