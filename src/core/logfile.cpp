@@ -17,22 +17,44 @@ namespace
     // std::numeric_limits<int>::max() == index 仍然属于合法序号；是否还能继续生成下一个序号由调用方负责判断。
     bool tryParseLogFileIndex(const std::string &filename, const std::string_view &prefix, const std::string_view &suffix, int &index)
     {
-        // 先检查长度、前缀和后缀，保证下面计算序号区间时不会越界。
-        if (filename.size() <= prefix.size() + suffix.size() || filename.compare(0, prefix.size(), prefix) != 0 ||
-            filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
+        // 文件名必须满足：prefix + 至少一个序号字符 + suffix。使用 <= 可以同时排除文件名过短、以及 prefix 和 suffix 之间没有序号的情况。
+        bool tooShort = filename.size() <= prefix.size() + suffix.size();
+        if (tooShort) return false;
 
-        // 序号位于 prefix 和 suffix 之间，使用指针区间避免创建 substr 临时字符串。
-        const char *indexBegin = filename.data() + prefix.size();
-        const char *indexEnd = filename.data() + filename.size() - suffix.size();
+        // 长度检查通过后，filename.size() - suffix.size() 才是安全的后缀起始位置。
+        // compare(pos, count, other)，返回 0 表示两段字符串相等。
+        // 1. pos：从 filename 的哪个下标开始比较。
+        // 2. count：从 filename 中取多少个字符。
+        // 3. other：与这段字符比较的目标字符串，可以是 std::string 或 std::string_view。
+        bool wrongPrefix = 0 != filename.compare(0, prefix.size(), prefix);
+        bool wrongSuffix = 0 != filename.compare(filename.size() - suffix.size(), suffix.size(), suffix);
+        if (wrongPrefix || wrongSuffix) return false;
 
-        // from_chars() 对有符号整数允许负号，而日志序号只接受非负十进制数字，因此先检查首字符。
-        // 后续字符是否全部被消费由 res.ptr == indexEnd 保证。
-        if (indexBegin == indexEnd || *indexBegin < '0' || *indexBegin > '9') return false;
+        // 序号位于 prefix 和 suffix 之间。
+        const std::string_view indexText(filename.data() + prefix.size(), filename.size() - prefix.size() - suffix.size());
 
-        auto res = std::from_chars(indexBegin, indexEnd, index);
+        // std::from_chars() 会根据目标类型决定允许的语法。
+        // 对于整数版本：
+        // 1. 目标类型是有符号类型，例如 int：允许负号，例如 -1；
+        // 2. 目标类型是无符号类型，例如 unsigned int：不允许负号；
+        // 3. + 号通常也不接受；
+        // 4. 不会像强制类型转换那样先解析成 -1 再转换成很大的无符号数。
 
-
-        return res.ec == std::errc{} && res.ptr == indexEnd;
+        // res.ptr == indexEnd 保证整个序号文本都被消费，避免只解析前缀数字，例如把 "12x" 当成 12。
+        unsigned int parsedIndex = 0;
+        auto res = std::from_chars(indexText.data(), indexText.data() + indexText.size(), parsedIndex, 10);
+        // 1. std::errc{} != res：表示解析发生错误。
+        // 2. indexText.data() + indexText.size() != res.ptr：判断整个字符串是否都被解析。例如 12abc 可能只解析出 12，res.ptr 会停在 a 前面。
+        // 3. parsedIndex > static_cast<unsigned int>(std::numeric_limits<int>::max())：解析出的数字超过 int 最大值。
+        if (std::errc{} != res.ec || indexText.data() + indexText.size() != res.ptr || parsedIndex > static_cast<unsigned int>(std::numeric_limits<int>::max()))
+        {
+            return false;
+        }
+        else
+        {
+            index = static_cast<int>(parsedIndex);
+            return true;
+        }
     }
 
 } // namespace
