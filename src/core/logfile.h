@@ -20,6 +20,8 @@
 class D_API_EXPORTED LogFile
 {
 
+    D_CLASS_NONCOPYABLE(LogFile)
+
 public:
 
     // 构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。

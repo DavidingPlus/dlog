@@ -51,6 +51,8 @@ private:
 class D_API_EXPORTED Logger
 {
 
+    D_CLASS_NONCOPYABLE(Logger)
+
 public:
 
     enum class LogLevel
