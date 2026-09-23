@@ -15,17 +15,17 @@
 namespace
 {
 
-    std::filesystem::path makeTempBasename()
+    std::filesystem::path makeTempBasePath()
     {
         const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path() / ("dlog_logfile_test_" + std::to_string(suffix));
     }
 
-    std::vector<std::filesystem::path> findLogFiles(const std::filesystem::path &basename)
+    std::vector<std::filesystem::path> findLogFiles(const std::filesystem::path &basePath)
     {
         std::vector<std::filesystem::path> files;
-        const std::filesystem::path directory = basename.has_parent_path() ? basename.parent_path() : std::filesystem::path(".");
-        const std::string prefix = basename.filename().string() + '.';
+        const std::filesystem::path directory = basePath.has_parent_path() ? basePath.parent_path() : std::filesystem::path(".");
+        const std::string prefix = basePath.filename().string() + '.';
 
         for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(directory))
         {
@@ -54,11 +54,11 @@ namespace
 
     protected:
 
-        void SetUp() override { m_basename = makeTempBasename(); }
+        void SetUp() override { m_basePath = makeTempBasePath(); }
 
         void TearDown() override
         {
-            for (const auto &file : findLogFiles(m_basename))
+            for (const auto &file : findLogFiles(m_basePath))
             {
                 std::error_code error;
                 std::filesystem::remove(file, error);
@@ -66,7 +66,7 @@ namespace
             }
         }
 
-        std::filesystem::path m_basename;
+        std::filesystem::path m_basePath;
     };
 
 } // namespace
@@ -75,12 +75,12 @@ namespace
 TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
 {
     {
-        LogFile logFile(m_basename.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024, 60);
         logFile.append("first\n", 6);
         logFile.flush();
     }
 
-    const auto files = findLogFiles(m_basename);
+    const auto files = findLogFiles(m_basePath);
     ASSERT_EQ(files.size(), 1u);
     EXPECT_NE(files.front().filename().string().find(".0.log"), std::string::npos);
     EXPECT_EQ(readFile(files.front()), "first\n");
@@ -89,14 +89,14 @@ TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
 TEST_F(LogFileTest, IncrementsIndexBeforeWritingWhenFileSizeWouldBeExceeded)
 {
     {
-        LogFile logFile(m_basename.string(), 1, 60);
+        LogFile logFile(m_basePath.string(), 1, 60);
         logFile.append("a", 1);
         logFile.append("b", 1); // 当前文件再写入 1 字节会超限，因此先切换到序号 1 的文件。
         logFile.append("c", 1);
         logFile.flush();
     }
 
-    const auto files = findLogFiles(m_basename);
+    const auto files = findLogFiles(m_basePath);
     ASSERT_EQ(files.size(), 3u);
     EXPECT_EQ(readFile(files[0]), "a");
     EXPECT_EQ(readFile(files[1]), "b");
@@ -109,18 +109,18 @@ TEST_F(LogFileTest, IncrementsIndexBeforeWritingWhenFileSizeWouldBeExceeded)
 TEST_F(LogFileTest, UsesNextIndexAfterRestart)
 {
     {
-        LogFile logFile(m_basename.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024, 60);
         logFile.append("first run\n", 10);
         logFile.flush();
     }
 
     {
-        LogFile logFile(m_basename.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024, 60);
         logFile.append("second run\n", 11);
         logFile.flush();
     }
 
-    const auto files = findLogFiles(m_basename);
+    const auto files = findLogFiles(m_basePath);
     ASSERT_EQ(files.size(), 2u);
     EXPECT_EQ(readFile(files[0]), "first run\n");
     EXPECT_EQ(readFile(files[1]), "second run\n");

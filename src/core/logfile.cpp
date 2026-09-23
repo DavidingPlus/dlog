@@ -70,30 +70,28 @@ std::string LogFile::GetDateString(time_t time)
     return (std::ostringstream() << std::put_time(&localTime, "%Y%m%d")).str();
 }
 
-int LogFile::FindNextFileIndex(const std::string &basename, const std::string &date)
+int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &date)
 {
-    // TODO code review
-
-    const std::filesystem::path basenamePath(basename);
-    const std::filesystem::path directory = basenamePath.has_parent_path() ? basenamePath.parent_path() : std::filesystem::path(".");
-    const std::string prefix = basenamePath.filename().string() + '.' + date + '.';
-    constexpr std::string_view suffix = ".log";
+    std::filesystem::path basePathObject(basePath);
+    std::filesystem::path directory = basePathObject.has_parent_path() ? basePathObject.parent_path() : std::filesystem::path(".");
+    std::string prefix = basePathObject.filename().string() + '.' + date + '.';
+    std::string_view suffix = ".log";
 
     std::error_code error;
     std::filesystem::directory_iterator entries(directory, error);
     if (error) throw std::filesystem::filesystem_error("LogFile::FindNextFileIndex", directory, error);
 
     int nextIndex = 0;
-    for (const std::filesystem::directory_entry &entry : entries)
+    for (auto &entry : entries)
     {
-        const std::string filename = entry.path().filename().string();
+        std::string filename = entry.path().filename().string();
         if (filename.size() <= prefix.size() + suffix.size() || filename.compare(0, prefix.size(), prefix) != 0 ||
             filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
         {
             continue;
         }
 
-        const std::string indexText = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
+        std::string indexText = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
         if (indexText.empty() ||
             !std::all_of(indexText.begin(), indexText.end(), [](unsigned char character)
                          { return std::isdigit(character) != 0; }))
@@ -102,12 +100,13 @@ int LogFile::FindNextFileIndex(const std::string &basename, const std::string &d
         }
 
         int index = 0;
-        const auto result = std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+        auto result = std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
         if (result.ec != std::errc{} || result.ptr != indexText.data() + indexText.size()) continue;
         if (index == std::numeric_limits<int>::max()) throw std::overflow_error("LogFile file index overflow");
 
         nextIndex = std::max(nextIndex, index + 1);
     }
+
 
     return nextIndex;
 }
@@ -122,7 +121,7 @@ void LogFile::rollFileImpl(time_t now, const std::string &date)
     if (firstFile || dateChanged)
     {
         // 扫描已有文件，选择当天最大已有序号之后的序号。
-        nextIndex = FindNextFileIndex(m_basename, date);
+        nextIndex = FindNextFileIndex(m_basePath, date);
     }
     // 否则是大小超限。
     else
@@ -132,7 +131,7 @@ void LogFile::rollFileImpl(time_t now, const std::string &date)
         nextIndex = 1 + m_fileIndex;
     }
 
-    std::string filename = GetLogFileName(m_basename, date, nextIndex);
+    std::string filename = GetLogFileName(m_basePath, date, nextIndex);
 
     // 先打开新文件，再替换旧的 FileUtil。新文件打开失败时，可以保留旧文件对象。
     auto newFile = std::make_unique<FileUtil>(filename);
