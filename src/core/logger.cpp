@@ -14,7 +14,7 @@ namespace
 
     // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
     // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
-    constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLevelNames{
+    constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLogLevelNames{
         "TRACE",
         "DEBUG",
         "INFO",
@@ -23,7 +23,7 @@ namespace
         "FATAL",
     };
 
-    std::string_view levelName(LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
+    std::string_view logLevelName(LogLevel level) noexcept { return kLogLevelNames[static_cast<size_t>(level)]; }
 
     // 默认的日志输出函数，将日志内容写入标准输出流（stdout）。
     void defaultOutput(const char *data, size_t len) { std::fwrite(data, len, sizeof(char), stdout); }
@@ -83,7 +83,7 @@ Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filen
     formatTime();
 
     // 写入日志等级。
-    m_stream << levelName(m_level) << ' ';
+    m_stream << logLevelName(m_level) << ' ';
 
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
     if (savedErrno)

@@ -3,8 +3,7 @@
 
 #include "globalmacros.h"
 
-#include <iostream>
-
+class LogStream;
 enum class LogLevel;
 
 
@@ -33,13 +32,20 @@ enum class LogLevel;
 class D_API_EXPORTED LogColorGuard
 {
 
+    D_CLASS_NONCOPYABLE(LogColorGuard)
+
 public:
 
     // 构造时应用新传入等级对应的颜色。
-    explicit LogColorGuard(LogLevel level);
+    explicit LogColorGuard(LogStream &stream, LogLevel level);
 
     // 析构时自动恢复原始颜色。
-    ~LogColorGuard() { std::cout << DLOG_COLOR_RESET << std::flush; }
+    ~LogColorGuard();
+
+
+private:
+
+    LogStream &m_stream;
 };
 
 

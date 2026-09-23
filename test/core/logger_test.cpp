@@ -215,12 +215,12 @@ TEST(LoggerTest, FormatsEveryNonFatalLevel)
         {LogLevel::ERROR, "ERROR"},
     }};
 
-    for (const auto &[level, levelName] : levels)
+    for (const auto &[level, logLevelName] : levels)
     {
         const std::string output = captureOutput([&]
                                                  { Logger(__FILE__, 789, level).stream() << "payload"; });
 
-        const std::string expected = std::string(levelName) + " payload - logger_test.cpp:789\n";
+        const std::string expected = std::string(logLevelName) + " payload - logger_test.cpp:789\n";
         EXPECT_NE(output.find(expected), std::string::npos) << output;
     }
 }
@@ -250,10 +250,10 @@ TEST(LoggerMacroTest, SupportsAllListedMacros)
          { DLOG_ERROR() << "message"; }},
     }};
 
-    for (const auto &[levelName, writeLog] : loggers)
+    for (const auto &[logLevelName, writeLog] : loggers)
     {
         const std::string output = captureOutput(writeLog);
-        EXPECT_NE(output.find(std::string(levelName) + " message - logger_test.cpp:"), std::string::npos) << output;
+        EXPECT_NE(output.find(std::string(logLevelName) + " message - logger_test.cpp:"), std::string::npos) << output;
     }
 }
 
