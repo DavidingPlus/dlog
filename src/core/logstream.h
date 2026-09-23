@@ -27,7 +27,7 @@ public:
     LogStream() = default;
 
     // 将指定长度的字符数据追加到缓冲区。
-    void append(const char *buffer, int len) { m_buffer.append(buffer, len); }
+    void append(const char *buffer, size_t len) { m_buffer.append(buffer, len); }
 
     // 返回当前缓冲区的常量引用。
     const Buffer &buffer() const { return m_buffer; }

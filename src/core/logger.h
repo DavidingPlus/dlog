@@ -72,8 +72,8 @@ public:
     // 返回当前日志的内部流。后续的 operator<< 只会修改本条日志自己的固定缓冲区，真正输出发生在 Logger 析构时。
     LogStream &stream() { return m_impl.m_stream; }
 
-    // 输出函数。OutputFunc 使用显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。
-    using OutputFunc = std::function<void(const char *msg, int len)>;
+    // 输出函数。OutputFunc 使用 size_t 表示显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。
+    using OutputFunc = std::function<void(const char *msg, size_t len)>;
 
     // 刷新缓冲区的函数。
     using FlushFunc = std::function<void()>;

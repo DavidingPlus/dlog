@@ -5,37 +5,30 @@
 #include <filesystem>
 #include <iomanip>
 #include <limits>
-#include <sstream>
 #include <string_view>
 #include <stdexcept>
 
 
-void LogFile::append(const char *data, int len)
+void LogFile::append(const char *data, size_t len)
 {
-    // TODO code review
+    if (0 == len) return;
 
     std::lock_guard<std::mutex> lock(m_mtx);
 
-    if (len < 0) throw std::invalid_argument("LogFile::append(): len must not be negative");
+    time_t now = Timestamp::Now().secondsSinceEpoch();
+    std::string currentDate = GetDateString(now);
 
-    const time_t now = Timestamp::Now().secondsSinceEpoch();
-    const std::string currentDate = GetDateString(now);
+    // 处理策略见函数声明。
 
-    // 每条日志通常来自一个临时 Logger，但它们共享同一个长期存在的 LogFile 后端。
-    // 因此先判断当前日志应该属于哪个文件，再把它追加到当前 m_file。
-    // 日期变化必须在写入前处理，否则跨天后的第一条日志仍会落到前一天的文件中。
-    const bool dateChanged = currentDate != m_currentDate;
-    const int64_t currentBytes = m_file->writtenBytes();
-    const int64_t incomingBytes = static_cast<int64_t>(len);
-
-    // 如果当前文件已有内容，并且追加这条日志后会超过大小限制，则提前切换文件。
-    // 当前文件为空时，即使单条日志本身超过限制，也先完整写入，避免创建空的轮转文件。
-    const bool sizeExceeded = currentBytes > 0 && incomingBytes > m_rollsize - currentBytes;
+    // 处理日期。
+    bool dateChanged = currentDate != m_currentDate;
+    // 处理大小。
+    bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollsize;
 
     // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
     if (sizeExceeded || dateChanged) rollFileImpl(now, currentDate);
 
-    m_file->append(data, static_cast<size_t>(len));
+    m_file->append(data, len);
 
     // flush 与轮转相互独立：即使本次没有轮转，只要达到时间间隔也要刷新当前文件。
     if (now - m_lastFlush >= m_flushInterval)

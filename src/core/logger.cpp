@@ -26,7 +26,7 @@ namespace
     std::string_view levelName(Logger::LogLevel level) noexcept { return kLevelNames[static_cast<size_t>(level)]; }
 
     // 默认的日志输出函数，将日志内容写入标准输出流（stdout）。
-    void defaultOutput(const char *data, int len) { std::fwrite(data, len, sizeof(char), stdout); }
+    void defaultOutput(const char *data, size_t len) { std::fwrite(data, len, sizeof(char), stdout); }
 
     // 默认的刷新函数，刷新标准输出流的缓冲区，确保日志及时输出，在发生错误或需要立即看到日志时会被调用。
     void defaultFlush() { std::fflush(stdout); }

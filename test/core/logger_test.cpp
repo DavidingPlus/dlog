@@ -22,8 +22,8 @@ namespace
 
     void restoreDefaultOutput()
     {
-        Logger::SetOutput([](const char *data, int len)
-                          { std::fwrite(data, sizeof(char), static_cast<size_t>(len), stdout); });
+        Logger::SetOutput([](const char *data, size_t len)
+                          { std::fwrite(data, sizeof(char), len, stdout); });
     }
 
     void restoreDefaultFlush()
@@ -36,8 +36,8 @@ namespace
     {
         std::string output;
 
-        Logger::SetOutput([&output](const char *data, int len)
-                          { output.append(data, static_cast<size_t>(len)); });
+        Logger::SetOutput([&output](const char *data, size_t len)
+                          { output.append(data, len); });
 
         writeLog();
 
@@ -179,8 +179,8 @@ TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
 {
     std::string output;
 
-    Logger::SetOutput([&output](const char *data, int len)
-                      { output.append(data, static_cast<size_t>(len)); });
+    Logger::SetOutput([&output](const char *data, size_t len)
+                      { output.append(data, len); });
 
     {
         Logger logger(__FILE__, 123, Logger::LogLevel::INFO);
@@ -268,18 +268,17 @@ TEST(LoggerOutputTest, PreservesEmbeddedNullCharactersThroughExplicitLength)
 
 TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
 {
-    int callbackLength = -1;
+    size_t callbackLength = 0;
     std::string callbackData;
 
-    Logger::SetOutput([&](const char *data, int len)
+    Logger::SetOutput([&](const char *data, size_t len)
                       {
         callbackLength = len;
-        callbackData.assign(data, static_cast<size_t>(len)); });
+        callbackData.assign(data, len); });
 
     LOG_INFO() << "length check";
 
-    EXPECT_GE(callbackLength, 0);
-    EXPECT_EQ(static_cast<size_t>(callbackLength), callbackData.size());
+    EXPECT_EQ(callbackLength, callbackData.size());
     EXPECT_NE(callbackData.find("INFO length check - logger_test.cpp:"), std::string::npos);
 
     restoreDefaultOutput();
