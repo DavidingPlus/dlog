@@ -5,11 +5,6 @@
 #include <chrono>
 
 
-AsyncLogging::~AsyncLogging()
-{
-    if (m_running) stop();
-}
-
 void AsyncLogging::append(const char *data, size_t length)
 {
     if (!data || 0 == length) return;
@@ -56,20 +51,32 @@ void AsyncLogging::append(const char *data, size_t length)
 
 void AsyncLogging::start()
 {
+    // 已经运行时重复 start() 不再创建第二个后台线程，stop() 完成后可再次启动。
+    if (m_running) return;
+
+    // Thread::start() 创建线程时可能抛异常，catch 是为了回滚状态。如果没有回滚，m_running 会留在 true，之后再调用 start() 会误以为后台线程已经启动。
     m_running = true;
-    m_thread.start();
+    try
+    {
+        m_thread.start();
+    }
+    catch (...)
+    {
+        m_running = false, throw;
+    }
 }
 
 void AsyncLogging::stop()
 {
-    // TODO code review
-
+    // m_running.exchange(false) 原子地把运行标志设为 false，并返回它原来的值。
+    // 1. 原来是 true：这是一次有效的停止请求，继续执行。
+    // 2. 原来已经是 false：直接返回，避免重复通知和 join()。
     if (!m_running.exchange(false)) return;
 
     m_cond.notify_one();
 
-    // 等待后台线程取完剩余缓冲区并完成最后一次 flush，避免对象析构后线程继续访问 this。
-    if (m_thread.started()) m_thread.join();
+    // 等待后台线程取完剩余缓冲区并完成最后一次 flush，然后回收后台线程。
+    m_thread.join();
 }
 
 void AsyncLogging::threadFunc()

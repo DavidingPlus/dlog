@@ -20,13 +20,14 @@ public:
 
     AsyncLogging(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeBuffer>()) { m_pendingBuffers.reserve(16); }
 
-    ~AsyncLogging();
+    ~AsyncLogging() { stop(); }
 
     // 将一段已经格式化的日志字节复制到 AsyncLogging 的内存缓冲区。
     // 使用互斥锁保护并发调用。若一条数据超过当前缓冲区的剩余空间，会按顺序分段写入；每块缓冲区写满后移入待写队列，并在释放互斥锁后唤醒后台线程，然后继续循环直到写完数据。
     void append(const char *data, size_t length);
 
     // 启动和停止后台写盘线程。
+    // 调用方应串行调用，不要并发调用 start() 和 stop()（一般也遇不到这种神人情况）。
     void start();
 
     void stop();
