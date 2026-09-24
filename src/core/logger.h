@@ -9,12 +9,15 @@
 
 
 // 日志宏采用类似 Qt qDebug() 的函数式调用方式：DLOG_INFO() << "server started" << port; 宏展开为临时 Logger 的 LogStream 引用，并捕获宏调用处的文件名和行号，当前完整表达式结束后，临时 Logger 析构并输出整条日志。
+// 系统错误日志由调用方传入已经保存的 errno；应在确认系统调用失败后立即保存，避免后续调用改写 errno。示例：const int savedErrno = errno; DLOG_SYS_ERROR(savedErrno) << "open file failed";
 #define DLOG_TRACE() (Logger(__FILE__, __LINE__, LogLevel::TRACE).stream())
 #define DLOG_DEBUG() (Logger(__FILE__, __LINE__, LogLevel::DEBUG).stream())
 #define DLOG_INFO() (Logger(__FILE__, __LINE__, LogLevel::INFO).stream())
 #define DLOG_WARN() (Logger(__FILE__, __LINE__, LogLevel::WARN).stream())
 #define DLOG_ERROR() (Logger(__FILE__, __LINE__, LogLevel::ERROR).stream())
 #define DLOG_FATAL() (Logger(__FILE__, __LINE__, LogLevel::FATAL).stream())
+#define DLOG_SYS_ERROR(savedErrno) (Logger(__FILE__, __LINE__, LogLevel::ERROR, (savedErrno)).stream())
+#define DLOG_SYS_FATAL(savedErrno) (Logger(__FILE__, __LINE__, LogLevel::FATAL, (savedErrno)).stream())
 
 
 // FileNameView 从路径中提取文件名，并以非拥有型视图的形式保存它。
@@ -76,7 +79,8 @@ class D_API_EXPORTED Logger
 
 public:
 
-    Logger(const char *filename, int line, LogLevel level) : m_impl(level, 0, filename, line) {}
+    // savedErrno 是调用方在系统错误发生时保存的 errno 快照；0 表示不附带系统错误信息。
+    Logger(const char *filename, int line, LogLevel level, int savedErrno = 0) : m_impl(level, savedErrno, filename, line) {}
 
     ~Logger();
 
