@@ -3,15 +3,12 @@
 #include "logcolorguard.h"
 
 #include <array>
-#include <cstring>
-#include <mutex>
+#include <string>
+#include <system_error>
 
 
 namespace
 {
-
-    // TODO 目前用进程内互斥锁保护 std::strerror() 返回的错误信息，直到 LoggerImpl 将它复制进当前日志缓冲区。如果后续改用 strerror_r 或 strerror_s 配合线程独立缓冲区，可以移除这把锁。
-    std::mutex g_errnoMutex;
 
     // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
     // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
@@ -106,18 +103,11 @@ Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filen
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
     if (savedErrno)
     {
-        // std::strerror(savedErrno) 返回的是字符指针，并不保证返回一份独立的字符串副本；这个指针可能指向 C 运行库内部的共享错误信息缓冲区。
-        // 因此，锁必须一直持有到 m_stream 完成字符复制，执行顺序应当是：
-        // 1. 加锁；
-        // 2. 调用 strerror() 获取错误信息指针；
-        // 3. 通过 m_stream << 立即复制错误信息；
-        // 4. 解锁。
-        // 如果在第 2 步之后提前解锁，其他线程可能调用 strerror() 并覆盖共享缓冲区，导致当前日志在第 3 步复制到错误的错误信息。
-
-        std::lock_guard<std::mutex> lock(g_errnoMutex);
-
-        // m_stream 属于当前 LoggerImpl，是当前日志独有的缓冲区，不是共享对象；这里的锁只保护 strerror() 返回的错误信息来源，不保护 m_stream 本身。
-        m_stream << std::strerror(savedErrno) << " (errno=" << savedErrno << ") ";
+        // std::error_code(value, category) 用数值和错误类别共同标识一个错误；这里的 savedErrno 是 errno 风格的错误码。
+        // std::generic_category() 返回标准通用错误类别，用于解释 errno 这类通用错误码；std::system_category() 则用于平台原生错误码。
+        // message() 根据这对错误码和类别生成可读描述，并按值返回独立的 std::string。
+        // 标准库负责 std::error_code 内部的并发安全（可能在内部加了锁），因此这里不需要进程内互斥锁。如果将来需要直接使用 strerror 系列接口，可封装 strerror_r/strerror_s，并用线程专用缓冲区（例如局部缓冲区或 thread_local 缓冲区）接收结果。
+        m_stream << std::error_code(savedErrno, std::generic_category()).message() << " (errno=" << savedErrno << ") ";
     }
 }
 

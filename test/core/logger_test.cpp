@@ -1,14 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
 #include <functional>
 #include <mutex>
 #include <regex>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -288,7 +286,7 @@ TEST(LoggerSystemErrorTest, OmitsSystemErrorWhenSavedErrnoIsZero)
 TEST(LoggerSystemErrorTest, ConstructorFormatsTheProvidedErrorNumberAndDescription)
 {
     constexpr int savedErrno = EINVAL;
-    const std::string errorDescription = std::strerror(savedErrno);
+    const std::string errorDescription = std::error_code(savedErrno, std::generic_category()).message();
 
     const std::string output = captureOutput([savedErrno]
                                              { Logger(__FILE__, 903, LogLevel::ERROR, savedErrno).stream() << "explicit system error"; });
@@ -302,7 +300,7 @@ TEST(LoggerSystemErrorMacroTest, SysErrorUsesErrorLevelAndTheCallerSavedErrno)
     const int savedErrno = EACCES;
     errno = ENOENT;
     ASSERT_NE(savedErrno, errno);
-    const std::string expectedErrorDescription = std::strerror(savedErrno);
+    const std::string expectedErrorDescription = std::error_code(savedErrno, std::generic_category()).message();
 
     const std::string output = captureOutput([savedErrno]
                                              { DLOG_SYS_ERROR(savedErrno) << "open file failed"; });
@@ -330,8 +328,8 @@ TEST(LoggerSystemErrorTest, ConcurrentLogsKeepEachErrorNumberWithItsMessage)
     std::array<std::string, errorNumbers.size()> errorDescriptions;
     for (size_t i = 0; i < errorNumbers.size(); ++i)
     {
-        // 预先取得期望文本，避免测试线程同时调用 strerror()。
-        errorDescriptions[i] = std::strerror(errorNumbers[i]);
+        // 使用与 Logger 相同的错误类别生成期望文本，避免依赖 strerror 的平台措辞。
+        errorDescriptions[i] = std::error_code(errorNumbers[i], std::generic_category()).message();
     }
 
     std::string output;
