@@ -35,6 +35,16 @@ namespace
         for (int i = 0; i < 1024; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
     }
 
+    void testRollover()
+    {
+        // 每块大小等于一个 LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
+        std::string firstBuffer(kLargeBufferSize, 'A');
+        std::string secondBuffer(kLargeBufferSize, 'B');
+
+        g_asyncLog->append(firstBuffer.data(), firstBuffer.size());
+        g_asyncLog->append(secondBuffer.data(), secondBuffer.size());
+    }
+
 } // namespace
 
 
@@ -56,6 +66,11 @@ int main()
 
     testLogging();
     testAsyncLogging();
+
+    // 先结束普通日志批次，再重启写盘线程，使滚动演示从空生产者缓冲区开始。
+    logging.stop();
+    logging.start();
+    testRollover();
 
     // stop() 会排空生产者缓冲区、写出剩余日志并完成最终 flush。
     logging.stop();
