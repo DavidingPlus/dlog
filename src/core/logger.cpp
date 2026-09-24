@@ -19,8 +19,8 @@ namespace
     constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLogLevelNames{
         "[TRACE] ",
         "[DEBUG] ",
-        "[INFO] ",
-        "[WARN] ",
+        "[INFO ] ",
+        "[WARN ] ",
         "[ERROR] ",
         "[FATAL] ",
     };
