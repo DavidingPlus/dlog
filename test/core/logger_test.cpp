@@ -193,7 +193,7 @@ TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
     }
 
     EXPECT_FALSE(output.empty());
-    EXPECT_NE(output.find("INFO scope message - logger_test.cpp:123\n"), std::string::npos);
+    EXPECT_NE(output.find("[INFO] [logger_test.cpp:123] scope message\n"), std::string::npos);
 
     restoreDefaultOutput();
 }
@@ -203,7 +203,7 @@ TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
     const std::string output = captureOutput([]
                                              { Logger(__FILE__, 456, LogLevel::INFO).stream() << "hello"; });
 
-    const std::regex pattern(R"(^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6} INFO hello - logger_test\.cpp:456\n$)");
+    const std::regex pattern(R"(^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\] \[INFO\] \[logger_test\.cpp:456\] hello\n$)");
 
     EXPECT_TRUE(std::regex_match(output, pattern)) << output;
 }
@@ -223,7 +223,7 @@ TEST(LoggerTest, FormatsEveryNonFatalLevel)
         const std::string output = captureOutput([&]
                                                  { Logger(__FILE__, 789, level).stream() << "payload"; });
 
-        const std::string expected = std::string(logLevelName) + " payload - logger_test.cpp:789\n";
+        const std::string expected = "[" + std::string(logLevelName) + "] [logger_test.cpp:789] payload\n";
         EXPECT_NE(output.find(expected), std::string::npos) << output;
     }
 }
@@ -233,7 +233,8 @@ TEST(LoggerMacroTest, QDebugStyleMacroFormatsAndOutputsOnFullExpressionEnd)
     const std::string output = captureOutput([]
                                              { DLOG_INFO() << "started " << 42; });
 
-    EXPECT_NE(output.find("INFO started 42 - logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("[INFO] [logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("] started 42\n"), std::string::npos);
     EXPECT_FALSE(output.empty());
     EXPECT_EQ(output.back(), '\n');
 }
@@ -256,7 +257,8 @@ TEST(LoggerMacroTest, SupportsAllListedMacros)
     for (const auto &[logLevelName, writeLog] : loggers)
     {
         const std::string output = captureOutput(writeLog);
-        EXPECT_NE(output.find(std::string(logLevelName) + " message - logger_test.cpp:"), std::string::npos) << output;
+        EXPECT_NE(output.find("[" + std::string(logLevelName) + "] [logger_test.cpp:"), std::string::npos) << output;
+        EXPECT_NE(output.find("] message\n"), std::string::npos) << output;
     }
 }
 
@@ -285,7 +287,8 @@ TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
     DLOG_INFO() << "length check";
 
     EXPECT_EQ(callbackLength, callbackData.size());
-    EXPECT_NE(callbackData.find("INFO length check - logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(callbackData.find("[INFO] [logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(callbackData.find("] length check\n"), std::string::npos);
 
     restoreDefaultOutput();
 }
@@ -304,11 +307,11 @@ TEST(LoggerColorOutputTest, EmitsColorByDefaultForEveryNonFatalLevel)
     DLOG_ERROR() << "colored";
 
     const std::array<const char *, 5> expectedColors{{
-        "\x1b[37mTRACE\x1b[0m",
-        "\x1b[36mDEBUG\x1b[0m",
-        "\x1b[32mINFO\x1b[0m",
-        "\x1b[33m\x1b[1mWARN\x1b[0m",
-        "\x1b[31m\x1b[1mERROR\x1b[0m",
+        "\x1b[37m[TRACE] \x1b[0m",
+        "\x1b[36m[DEBUG] \x1b[0m",
+        "\x1b[32m[INFO] \x1b[0m",
+        "\x1b[33m\x1b[1m[WARN] \x1b[0m",
+        "\x1b[31m\x1b[1m[ERROR] \x1b[0m",
     }};
 
     for (const char *expectedColor : expectedColors)
@@ -325,7 +328,8 @@ TEST(LoggerColorOutputTest, OmitsColorWhenModeIsOff)
                                              { DLOG_INFO() << "plain"; },
                                              LogLevelColorMode::OFF);
 
-    EXPECT_NE(output.find("INFO plain - logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("[INFO] [logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("] plain\n"), std::string::npos);
     EXPECT_EQ(output.find('\x1b'), std::string::npos);
 }
 
@@ -338,7 +342,8 @@ TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
     const std::string output = captureOutput([]
                                              { DLOG_INFO() << "normal"; });
 
-    EXPECT_NE(output.find("INFO normal - logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("[INFO] [logger_test.cpp:"), std::string::npos);
+    EXPECT_NE(output.find("] normal\n"), std::string::npos);
     EXPECT_FALSE(flushed);
 
     restoreDefaultFlush();
@@ -354,5 +359,5 @@ TEST(LoggerDeathTest, FatalLogWritesColorBeforeAborting)
                              { std::fflush(stderr); });
             DLOG_FATAL() << "fatal message";
         },
-        "\x1b\\[1m\x1b\\[41mFATAL\x1b\\[0m fatal message");
+        "\x1b\\[1m\x1b\\[41m\\[FATAL\\] \x1b\\[0m.*fatal message");
 }

@@ -17,12 +17,12 @@ namespace
     // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
     // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
     constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLogLevelNames{
-        "TRACE",
-        "DEBUG",
-        "INFO",
-        "WARN",
-        "ERROR",
-        "FATAL",
+        "[TRACE] ",
+        "[DEBUG] ",
+        "[INFO] ",
+        "[WARN] ",
+        "[ERROR] ",
+        "[FATAL] ",
     };
 
     std::string_view logLevelName(LogLevel level) noexcept { return kLogLevelNames[static_cast<size_t>(level)]; }
@@ -100,7 +100,9 @@ Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filen
     {
         m_stream << logLevelName(m_level);
     }
-    m_stream << ' ';
+
+    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的固定缓冲区，因此这里只需要保证源文件名在调用时仍有效。
+    m_stream << "[" << m_basename.view() << ':' << m_line << "] ";
 
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
     if (savedErrno)
@@ -124,14 +126,7 @@ void Logger::LoggerImpl::formatTime()
 {
     // m_time 在 LoggerImpl 构造时已经保存，是当前这条日志的时间戳。这里直接使用 m_time，而不是再次调用 Timestamp::Now()，这样可以避免一次额外的取时操作，并保证日志前缀表示 LoggerImpl 创建时的时间。
 
-    // toFormattedString(true) 返回一个独立拥有字符数据的 std::string，例如："2026/09/22 15:30:12.123456"。LogStream 会在本次 operator<< 调用中把它复制到自己的固定缓冲区，因此临时字符串在这条语句结束后销毁不会造成悬空引用。
+    // toFormattedString(true) 返回一个独立拥有字符数据的 std::string，例如："[2026/09/22 15:30:12.123456]"。LogStream 会在本次 operator<< 调用中把它复制到自己的固定缓冲区，因此临时字符串在这条语句结束后销毁不会造成悬空引用。
     // 多个线程分别格式化各自日志时，toFormattedString() 这条路径是线程安全的。但线程安全不等于没有开销：每条日志仍需要做时间格式化，并可能创建临时 std::string；如果后续日志频率很高，可以再使用 thread_local 缓存每秒不变的日期部分进行优化。
-    m_stream << m_time.toFormattedString(true) << ' ';
-}
-
-void Logger::LoggerImpl::finish()
-{
-    // finish() 在日志对象生命周期结束时调用，负责补充调用位置和换行符，使缓冲区中的内容成为一条完整的日志。例如：2026/09/22 16:30:12.123456 INFO server started - main.cpp:42\n
-    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的固定缓冲区，因此这里只需要保证源文件名在 finish() 调用时仍有效。这里不执行真正的文件写入或 flush；后续由 Logger 的析构函数统一提交 m_stream 缓冲区。
-    m_stream << " - " << m_basename.view() << ':' << m_line << '\n';
+    m_stream << "[" << m_time.toFormattedString(true) << "] ";
 }
