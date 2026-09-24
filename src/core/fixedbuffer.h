@@ -100,4 +100,16 @@ void FixedBuffer<bufferSize>::updateWriteState(size_t len)
 }
 
 
+// SmallBuffer 用于 LogStream 格式化单条日志，容量为 4,000 字节。
+// LargeBuffer 用于 AsyncLogging 的生产者缓冲区和待写缓冲块，容量为 4,000,000 字节，即 SmallBuffer 的 1,000 倍。
+// using 为对应的 FixedBuffer 特化提供语义名称的别名。它既不创建新的派生类型，也不负责生成模板代码。
+using SmallBuffer = FixedBuffer<kSmallBufferSize>;
+using LargeBuffer = FixedBuffer<kLargeBufferSize>;
+
+
+// 模板显式实例化声明：这两个常用特化的非内联模板成员由 .cpp 提供，其他翻译单元无需重复隐式实例化。因为模板定义仍保留在本头文件中，因此调用方仍可使用 FixedBuffer<8> 等其他容量；未列出的特化照常按需实例化。
+extern template class FixedBuffer<kSmallBufferSize>;
+extern template class FixedBuffer<kLargeBufferSize>;
+
+
 #endif
