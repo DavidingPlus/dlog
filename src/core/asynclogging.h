@@ -35,9 +35,6 @@ public:
 
 private:
 
-    // 单块日志缓冲区，容量在编译期由 kLargeBufferSize 固定。
-    using LargeBuffer = FixedBuffer<kLargeBufferSize>;
-
     // 缓冲区的独占所有权指针；队列交换和缓冲区轮换时移动指针即可。
     using BufferPtr = std::unique_ptr<LargeBuffer>;
 

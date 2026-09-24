@@ -64,7 +64,7 @@ Logger::~Logger()
 {
     m_impl.finish();
 
-    const LogStream::Buffer &buffer = stream().buffer();
+    const SmallBuffer &buffer = stream().buffer();
 
     // 输出（默认项终端输出）。
     g_outputCallback(buffer.data(), buffer.length());

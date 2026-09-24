@@ -21,16 +21,13 @@ class D_API_EXPORTED LogStream
 
 public:
 
-    // 定义一个 Buffer 类型，使用固定大小的缓冲区。
-    using Buffer = FixedBuffer<kSmallBufferSize>;
-
     LogStream() = default;
 
     // 将指定长度的字符数据追加到缓冲区。
     void append(const char *buffer, size_t len) { m_buffer.append(buffer, len); }
 
     // 返回当前缓冲区的常量引用。
-    const Buffer &buffer() const { return m_buffer; }
+    const SmallBuffer &buffer() const { return m_buffer; }
 
     // 重置缓冲区，将当前指针重置到缓冲区的起始位置。
     void resetBuffer() { m_buffer.reset(); }
@@ -78,7 +75,7 @@ private:
 
 
     // 内部缓冲区对象。
-    Buffer m_buffer;
+    SmallBuffer m_buffer;
 };
 
 

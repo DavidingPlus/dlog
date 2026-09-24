@@ -31,7 +31,7 @@ namespace
             stream << "FATAL (spdlog CRITICAL, bold on red) color sample";
         }
 
-        const LogStream::Buffer &buffer = stream.buffer();
+        const SmallBuffer &buffer = stream.buffer();
         std::fwrite(buffer.data(), sizeof(char), buffer.length(), stdout);
         std::fputc('\n', stdout);
         std::fflush(stdout);
