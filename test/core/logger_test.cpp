@@ -1,10 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <functional>
+#include <mutex>
 #include <regex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -262,6 +267,109 @@ TEST(LoggerMacroTest, SupportsAllListedMacros)
     }
 }
 
+TEST(LoggerSystemErrorTest, OmitsSystemErrorWhenSavedErrnoIsZero)
+{
+    const std::array<std::function<void()>, 2> writeLogs{{
+        []
+        { Logger(__FILE__, 901, LogLevel::ERROR).stream() << "default errno"; },
+        []
+        { Logger(__FILE__, 902, LogLevel::ERROR, 0).stream() << "explicit zero errno"; },
+    }};
+
+    for (const auto &writeLog : writeLogs)
+    {
+        const std::string output = captureOutput(writeLog);
+
+        EXPECT_EQ(output.find("(errno="), std::string::npos) << output;
+        EXPECT_NE(output.find("[ERROR] [logger_test.cpp:"), std::string::npos) << output;
+    }
+}
+
+TEST(LoggerSystemErrorTest, ConstructorFormatsTheProvidedErrorNumberAndDescription)
+{
+    constexpr int savedErrno = EINVAL;
+    const std::string errorDescription = std::strerror(savedErrno);
+
+    const std::string output = captureOutput([savedErrno]
+                                             { Logger(__FILE__, 903, LogLevel::ERROR, savedErrno).stream() << "explicit system error"; });
+
+    EXPECT_NE(output.find("[ERROR] [logger_test.cpp:903] "), std::string::npos) << output;
+    EXPECT_NE(output.find(errorDescription + " (errno=" + std::to_string(savedErrno) + ") explicit system error\n"), std::string::npos) << output;
+}
+
+TEST(LoggerSystemErrorMacroTest, SysErrorUsesErrorLevelAndTheCallerSavedErrno)
+{
+    const int savedErrno = EACCES;
+    errno = ENOENT;
+    ASSERT_NE(savedErrno, errno);
+    const std::string expectedErrorDescription = std::strerror(savedErrno);
+
+    const std::string output = captureOutput([savedErrno]
+                                             { DLOG_SYS_ERROR(savedErrno) << "open file failed"; });
+
+    EXPECT_NE(output.find("[ERROR] [logger_test.cpp:"), std::string::npos) << output;
+    EXPECT_NE(output.find(expectedErrorDescription + " (errno=" + std::to_string(savedErrno) + ") open file failed\n"), std::string::npos) << output;
+    EXPECT_EQ(output.find("(errno=" + std::to_string(ENOENT) + ")"), std::string::npos) << output;
+}
+
+TEST(LoggerSystemErrorMacroTest, EvaluatesTheSavedErrnoArgumentOnce)
+{
+    int evaluationCount = 0;
+
+    const std::string output = captureOutput([&]
+                                             { DLOG_SYS_ERROR((++evaluationCount, EINVAL)) << "single evaluation"; });
+
+    EXPECT_EQ(evaluationCount, 1);
+    EXPECT_NE(output.find("single evaluation\n"), std::string::npos) << output;
+}
+
+TEST(LoggerSystemErrorTest, ConcurrentLogsKeepEachErrorNumberWithItsMessage)
+{
+    constexpr std::array<int, 4> errorNumbers{{EINVAL, EACCES, ENOENT, ERANGE}};
+    constexpr size_t logsPerThread = 32;
+    std::array<std::string, errorNumbers.size()> errorDescriptions;
+    for (size_t i = 0; i < errorNumbers.size(); ++i)
+    {
+        // 预先取得期望文本，避免测试线程同时调用 strerror()。
+        errorDescriptions[i] = std::strerror(errorNumbers[i]);
+    }
+
+    std::string output;
+    std::mutex outputMutex;
+    Logger::SetOutput([&](const char *data, size_t len)
+                      {
+        std::lock_guard<std::mutex> lock(outputMutex);
+        output.append(data, len); },
+                      LogLevelColorMode::OFF);
+
+    std::array<std::thread, errorNumbers.size()> workers;
+    for (size_t workerIndex = 0; workerIndex < workers.size(); ++workerIndex)
+    {
+        workers[workerIndex] = std::thread([&, workerIndex]
+                                           {
+            for (size_t messageIndex = 0; messageIndex < logsPerThread; ++messageIndex)
+            {
+                DLOG_SYS_ERROR(errorNumbers[workerIndex])
+                    << "worker=" << workerIndex << " message=" << messageIndex;
+            } });
+    }
+
+    for (auto &worker : workers)
+    {
+        worker.join();
+    }
+    restoreDefaultOutput();
+
+    for (size_t workerIndex = 0; workerIndex < errorNumbers.size(); ++workerIndex)
+    {
+        for (size_t messageIndex = 0; messageIndex < logsPerThread; ++messageIndex)
+        {
+            const std::string expectedRecord = errorDescriptions[workerIndex] + " (errno=" + std::to_string(errorNumbers[workerIndex]) + ") worker=" + std::to_string(workerIndex) + " message=" + std::to_string(messageIndex) + "\n";
+            EXPECT_NE(output.find(expectedRecord), std::string::npos) << "Missing record: " << expectedRecord;
+        }
+    }
+}
+
 TEST(LoggerOutputTest, PreservesEmbeddedNullCharactersThroughExplicitLength)
 {
     constexpr char message[] = {'l', 'e', 'f', 't', '\0', 'r', 'i', 'g', 'h', 't'};
@@ -360,4 +468,23 @@ TEST(LoggerDeathTest, FatalLogWritesColorBeforeAborting)
             DLOG_FATAL() << "fatal message";
         },
         "\x1b\\[1m\x1b\\[41m\\[FATAL\\] \x1b\\[0m.*fatal message");
+}
+
+TEST(LoggerDeathTest, SysFatalWritesSavedErrnoFlushesAndAborts)
+{
+    EXPECT_DEATH(
+        {
+            Logger::SetOutput([](const char *data, size_t len)
+                              {
+                // 去掉末尾换行，使死亡断言的匹配内容保持在同一行。
+                if (len > 0 && data[len - 1] == '\n') --len;
+                std::fwrite(data, sizeof(char), len, stderr); },
+                              LogLevelColorMode::OFF);
+            Logger::SetFlush([]
+                             {
+                std::fputs(" <flush-called>", stderr);
+                std::fflush(stderr); });
+            DLOG_SYS_FATAL(1234567) << "fatal system error";
+        },
+        R"(\[FATAL\].*\(errno=1234567\) fatal system error <flush-called>)");
 }

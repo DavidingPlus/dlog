@@ -1,6 +1,7 @@
 #include "asynclogging.h"
 #include "logger.h"
 
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -24,6 +25,7 @@ namespace
         DLOG_INFO() << "info";
         DLOG_WARN() << "warn";
         DLOG_ERROR() << "error";
+        DLOG_SYS_ERROR(ENOENT);
 
         for (int i = 0; i < 10; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
     }

@@ -1,6 +1,7 @@
 #include "logcolorguard.h"
 #include "logger.h"
 
+#include <cerrno>
 #include <array>
 #include <cstdio>
 #include <string_view>
@@ -51,6 +52,7 @@ int main()
     }};
 
     for (const LogLevelExample &example : examples) showLoggerColor(example);
+    DLOG_SYS_ERROR(ENOENT);
 
     showFatalColor();
 }
