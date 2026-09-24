@@ -10,7 +10,7 @@
 namespace
 {
 
-    // TODO 目前先用一把进程内互斥锁保护 std::strerror()。
+    // TODO 目前先用一把进程内互斥锁保护 std::strerror()。有个问题，savedErrno 的作用到底是什么？Logger 的构造函数里面没有要求传入 savedErrno 啊，而是直接指定为 0 了。
     // std::strerror() 返回的字符指针可能指向 C 运行库内部的共享缓冲区，多个线程同时调用时，后一次调用可能覆盖前一次调用得到的错误信息。后续改用 strerror_r 或 strerror_s + thread_local 缓冲区后，这把锁可以移除。
     std::mutex g_errnoMutex;
 
