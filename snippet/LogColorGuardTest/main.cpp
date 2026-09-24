@@ -1,4 +1,4 @@
-#include "logcolor.h"
+#include "logcolorguard.h"
 #include "logger.h"
 
 #include <array>

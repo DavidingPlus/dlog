@@ -1,6 +1,6 @@
 #include "logger.h"
 
-#include "logcolor.h"
+#include "logcolorguard.h"
 
 #include <array>
 #include <cstring>

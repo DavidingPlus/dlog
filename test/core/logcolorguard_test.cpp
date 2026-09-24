@@ -6,7 +6,7 @@
 #include <type_traits>
 
 #include "logger.h"
-#include "logcolor.h"
+#include "logcolorguard.h"
 
 
 namespace

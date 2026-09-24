@@ -1,5 +1,5 @@
-#ifndef _DLOG_LOGCOLOR_H_
-#define _DLOG_LOGCOLOR_H_
+#ifndef _DLOG_LOGCOLORGUARD_H_
+#define _DLOG_LOGCOLORGUARD_H_
 
 #include "globalmacros.h"
 
