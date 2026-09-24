@@ -32,12 +32,14 @@ namespace
                          { std::fflush(stdout); });
     }
 
-    std::string captureOutput(const std::function<void()> &writeLog)
+    std::string captureOutput(const std::function<void()> &writeLog, LogLevelColorMode colorMode = LogLevelColorMode::OFF)
     {
         std::string output;
 
+        // 旧格式测试验证纯文本布局；颜色行为由单独的 LoggerColorTest 覆盖。
         Logger::SetOutput([&output](const char *data, size_t len)
-                          { output.append(data, len); });
+                          { output.append(data, len); },
+                          colorMode);
 
         writeLog();
 
@@ -180,7 +182,8 @@ TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
     std::string output;
 
     Logger::SetOutput([&output](const char *data, size_t len)
-                      { output.append(data, len); });
+                      { output.append(data, len); },
+                      LogLevelColorMode::OFF);
 
     {
         Logger logger(__FILE__, 123, LogLevel::INFO);
@@ -276,7 +279,8 @@ TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
     Logger::SetOutput([&](const char *data, size_t len)
                       {
         callbackLength = len;
-        callbackData.assign(data, len); });
+        callbackData.assign(data, len); },
+                      LogLevelColorMode::OFF);
 
     DLOG_INFO() << "length check";
 
@@ -284,6 +288,45 @@ TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
     EXPECT_NE(callbackData.find("INFO length check - logger_test.cpp:"), std::string::npos);
 
     restoreDefaultOutput();
+}
+
+TEST(LoggerColorOutputTest, EmitsColorByDefaultForEveryNonFatalLevel)
+{
+    std::string output;
+
+    Logger::SetOutput([&output](const char *data, size_t len)
+                      { output.append(data, len); });
+
+    DLOG_TRACE() << "colored";
+    DLOG_DEBUG() << "colored";
+    DLOG_INFO() << "colored";
+    DLOG_WARN() << "colored";
+    DLOG_ERROR() << "colored";
+
+    const std::array<const char *, 5> expectedColors{{
+        "\x1b[37mTRACE\x1b[0m",
+        "\x1b[36mDEBUG\x1b[0m",
+        "\x1b[32mINFO\x1b[0m",
+        "\x1b[33m\x1b[1mWARN\x1b[0m",
+        "\x1b[31m\x1b[1mERROR\x1b[0m",
+    }};
+
+    for (const char *expectedColor : expectedColors)
+    {
+        EXPECT_NE(output.find(expectedColor), std::string::npos) << output;
+    }
+
+    restoreDefaultOutput();
+}
+
+TEST(LoggerColorOutputTest, OmitsColorWhenModeIsOff)
+{
+    const std::string output = captureOutput([]
+                                             { DLOG_INFO() << "plain"; },
+                                             LogLevelColorMode::OFF);
+
+    EXPECT_NE(output.find("INFO plain - logger_test.cpp:"), std::string::npos);
+    EXPECT_EQ(output.find('\x1b'), std::string::npos);
 }
 
 TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
@@ -301,7 +344,15 @@ TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
     restoreDefaultFlush();
 }
 
-TEST(LoggerDeathTest, FatalLogAbortsTheProcess)
+TEST(LoggerDeathTest, FatalLogWritesColorBeforeAborting)
 {
-    EXPECT_DEATH({ DLOG_FATAL() << "fatal message"; }, ".*");
+    EXPECT_DEATH(
+        {
+            Logger::SetOutput([](const char *data, size_t len)
+                              { std::fwrite(data, sizeof(char), len, stderr); });
+            Logger::SetFlush([]
+                             { std::fflush(stderr); });
+            DLOG_FATAL() << "fatal message";
+        },
+        "\x1b\\[1m\x1b\\[41mFATAL\x1b\\[0m fatal message");
 }
