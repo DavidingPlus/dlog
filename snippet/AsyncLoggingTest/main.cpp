@@ -50,7 +50,7 @@ int main()
     // AsyncLogging 对象和回调目标先准备好，再启动后台线程并切换 Logger 输出。
     g_asyncLog = &logging;
     logging.start();
-    Logger::SetOutput(asyncLog);
+    Logger::SetOutput(asyncLog, LogLevelColorMode::OFF);
 
     testLogging();
     testAsyncLogging();

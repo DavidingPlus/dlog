@@ -1,5 +1,7 @@
 #include "logger.h"
 
+#include "logcolor.h"
+
 #include <array>
 #include <cstring>
 #include <mutex>
@@ -34,6 +36,8 @@ namespace
     Logger::OutputFunc g_outputCallback = defaultOutput;
 
     Logger::FlushFunc g_flushCallback = defaultFlush;
+
+    LogLevelColorMode g_colorMode = LogLevelColorMode::ON;
 
 } // namespace
 
@@ -72,7 +76,11 @@ Logger::~Logger()
     }
 }
 
-void Logger::SetOutput(OutputFunc output) { g_outputCallback = output; }
+void Logger::SetOutput(OutputFunc output, LogLevelColorMode colorMode)
+{
+    g_outputCallback = output;
+    g_colorMode = colorMode;
+}
 
 void Logger::SetFlush(FlushFunc flush) { g_flushCallback = flush; }
 
@@ -82,8 +90,17 @@ Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filen
     // 根据时区格式化当前时间字符串, 也是一条 log 消息的开头，作为整条日志的前缀。
     formatTime();
 
-    // 写入日志等级。
-    m_stream << logLevelName(m_level) << ' ';
+    // 按当前颜色模式写入日志等级。
+    if (LogLevelColorMode::ON == g_colorMode)
+    {
+        LogColorGuard color(m_stream, m_level);
+        m_stream << logLevelName(m_level);
+    }
+    else
+    {
+        m_stream << logLevelName(m_level);
+    }
+    m_stream << ' ';
 
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
     if (savedErrno)

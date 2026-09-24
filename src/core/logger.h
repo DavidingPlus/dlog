@@ -40,6 +40,7 @@ private:
 };
 
 
+// 日志等级。
 enum class LogLevel
 {
     TRACE,       // 最详细的跟踪信息。
@@ -52,13 +53,21 @@ enum class LogLevel
 };
 
 
+// 日志等级文字的颜色模式。
+enum class LogLevelColorMode
+{
+    ON,  // 输出带颜色的日志等级。
+    OFF, // 输出纯文本日志等级。
+};
+
+
 // Logger 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。
 // 一条日志的典型执行流程是：
 // 1. 创建 Logger 时，LoggerImpl 将时间、日志等级等前缀写入内部 LogStream；
 // 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到固定缓冲区；
 // 3. Logger 析构时调用 finish()，补充源文件名、行号和换行符；
 // 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
-// Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
+// Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。颜色由 SetOutput() 的 LogLevelColorMode 参数控制，默认 ON；文件后端需要纯文本时应传入 LogLevelColorMode::OFF。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
 // 典型的临时对象用法如下：Logger(__FILE__, __LINE__, LogLevel::INFO).stream() << "server started"; 当前完整表达式结束后，临时 Logger 析构并输出整条日志。若先保存为命名对象，则会在对象离开作用域时输出。FATAL 日志在输出后还会调用 FlushFunc 刷新输出，并终止进程；因此不应在普通单元测试中直接触发 FATAL。
 class D_API_EXPORTED Logger
 {
@@ -80,8 +89,8 @@ public:
     // 刷新缓冲区的函数。
     using FlushFunc = std::function<void()>;
 
-    // 设置进程内共享的输出回调和刷新回调。应在多线程开始产生日志前完成设置，避免运行期间并发修改回调对象。
-    static void SetOutput(OutputFunc);
+    // 设置进程内共享的输出回调和颜色模式。默认启用颜色；应在开始产生日志前完成设置，避免运行期间并发修改配置，或在 Logger 对象存活期间切换配置。
+    static void SetOutput(OutputFunc, LogLevelColorMode colorMode = LogLevelColorMode::ON);
 
     static void SetFlush(FlushFunc);
 
