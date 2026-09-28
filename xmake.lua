@@ -2,7 +2,7 @@ includes("config.lua")
 
 
 local project_name = "dlog"
-local version = "1.0.0"
+local version = "1.0.1"
 local export_headers_module = "export-headers"
 local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = true}
 
