@@ -115,6 +115,14 @@ jobs:
 
         xmake f $args -y
 
+    - name: Upload package metadata
+      if: matrix.os == 'windows' && matrix.runtime == 'MD' && matrix.shared == false
+      uses: actions/upload-artifact@v4
+      with:
+        name: package-metadata
+        path: build/package-metadata.json
+        if-no-files-found: error
+
     - name: Build Targets
       working-directory: ${{github.workspace}}
       run: xmake build
@@ -228,6 +236,12 @@ jobs:
     - name: Display Release Assets
       run: tree assets -a
 
+    - name: Read package metadata
+      id: package_metadata
+      shell: bash
+      run: |
+        echo "package_metadata=$(jq -c . assets/package-metadata.json)" >> "$GITHUB_OUTPUT"
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
@@ -240,6 +254,5 @@ jobs:
         token: ${{ secrets.XMAKE_REPO_TOKEN }}
         inputs: |
           {
-            "package_name": "${{ env.PACKAGE_NAME }}",
-            "version": "${{ github.ref_name }}"
+            "package_metadata": ${{ toJSON(steps.package_metadata.outputs.package_metadata) }}
           }
