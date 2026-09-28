@@ -8,7 +8,7 @@
 #include <stdexcept>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 namespace
@@ -110,9 +110,9 @@ std::string LogFile::GetDateString(time_t time)
     // 同 Timestamp::toFormattedString() 函数。
     std::tm localTime{};
 
-#if defined(D_OS_WIN32)
+#if defined(DLOG_OS_WIN32)
     if (::localtime_s(&localTime, &time)) throw std::runtime_error("LogFile::GetDateString(): localtime_s failed");
-#elif defined(D_OS_LINUX)
+#elif defined(DLOG_OS_LINUX)
     if (!::localtime_r(&time, &localTime)) throw std::runtime_error("LogFile::GetDateString(): localtime_r failed");
 #else
     throw std::runtime_error("LogFile::GetDateString(): Unsupported Operating System");
@@ -194,4 +194,4 @@ void LogFile::rollFileImpl(time_t now, const std::string &date)
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

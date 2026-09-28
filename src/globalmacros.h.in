@@ -1,0 +1,57 @@
+/**
+ * @file globalmacros.h.in
+ * @author DavidingPlus (davidingplus@qq.com)
+ * @brief 同 config.h.in，生成配置文件 globalmacros.h 的模板文件。请勿手动修改或格式化!!!
+ *
+ * Copyright (c) 2026 电子科技大学 刘治学
+ *
+ */
+
+#ifndef _${MACRO_PREFIX}_GLOBALMACROS_H_
+#define _${MACRO_PREFIX}_GLOBALMACROS_H_
+
+
+#ifdef _WIN32
+#define ${MACRO_PREFIX}_OS_WIN32
+#elif __unix__
+#define ${MACRO_PREFIX}_OS_LINUX
+#else
+#define ${MACRO_PREFIX}_OS_UNKNOWN
+#endif
+
+
+#define ${MACRO_PREFIX}_CLASS_NONCOPYABLE(ClassName)             \
+                                                               \
+private:                                                       \
+                                                               \
+    ClassName(const ClassName &other) = delete;                \
+    ClassName(ClassName &&other) = delete;                     \
+    ClassName &operator=(const ClassName &other) = delete;     \
+    ClassName &operator=(ClassName &&other) = delete;
+
+
+// Windows DLL 的导出/导入宏：
+// 1. ${MACRO_PREFIX}_BUILD_SHARED 由目标及其使用方共同定义，表示当前使用的是 DLL；
+// 2. ${MACRO_PREFIX}_DLL_EXPORT 只在编译 DLL 本身时定义，此时导出符号；
+// 3. 使用方不会定义 ${MACRO_PREFIX}_DLL_EXPORT，因此导入 DLL 符号；
+// 4. 静态库构建和非 Windows 平台不需要 DLL 修饰。
+
+#if (defined ${MACRO_PREFIX}_OS_WIN32) && (defined ${MACRO_PREFIX}_BUILD_SHARED)
+#ifdef ${MACRO_PREFIX}_DLL_EXPORT
+#define ${MACRO_PREFIX}_API_EXPORTED __declspec(dllexport)
+#else
+#define ${MACRO_PREFIX}_API_EXPORTED __declspec(dllimport)
+#endif
+#else
+#define ${MACRO_PREFIX}_API_EXPORTED
+#endif
+
+
+// 命名空间包装宏。
+
+#define ${MACRO_PREFIX}_NAMESPACE_BEGIN(name) namespace name {
+
+#define ${MACRO_PREFIX}_NAMESPACE_END }
+
+
+#endif

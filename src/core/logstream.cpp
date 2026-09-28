@@ -1,7 +1,7 @@
 #include "logstream.h"
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 LogStream &LogStream::operator<<(bool express)
@@ -52,4 +52,4 @@ LogStream &LogStream::operator<<(std::string_view sv)
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

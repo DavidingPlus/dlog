@@ -9,7 +9,7 @@
 #include <fmt/chrono.h>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 std::string Timestamp::toFormattedString(bool showMicroseconds) const
@@ -29,10 +29,10 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
     // 这里每次调用都使用自己的局部 tm 对象，再通过 localtime_s/localtime_r 把转换结果写入这个对象。
     std::tm localTime{};
 
-#if defined(D_OS_WIN32)
+#if defined(DLOG_OS_WIN32)
     // Windows 版本：由调用方提供输出缓冲区 localTime，避免使用共享静态对象。
     if (::localtime_s(&localTime, &time)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_s failed");
-#elif defined(D_OS_LINUX)
+#elif defined(DLOG_OS_LINUX)
     // Linux/POSIX 版本：与 localtime_s 的作用相同，结果写入调用方提供的 localTime。
     if (!::localtime_r(&time, &localTime)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_r failed");
 #else
@@ -66,4 +66,4 @@ Timestamp Timestamp::AddTime(const Timestamp &timestamp, double seconds)
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

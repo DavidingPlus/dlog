@@ -26,7 +26,7 @@
 #define DLOG_COLOR_FATAL "\033[1m\033[41m"
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 class LogStream;
@@ -35,10 +35,10 @@ enum class LogLevel;
 
 // 以 RAII 方式在 LogStream 中标记一段带颜色的内容。构造时向指定流写入等级对应的 ANSI 颜色码；调用方在 guard 存活期间继续向同一流写入日志文字；析构时再向该流写入重置码。用法类似 std::lock_guard：对象的作用域决定颜色标记的范围，正常离开作用域或异常展开时都会执行析构重置。
 // LogColorGuard 只写入颜色控制码，不负责加锁或线程同步；它保存的 LogStream 必须比 guard 活得更久。
-class D_API_EXPORTED LogColorGuard
+class DLOG_API_EXPORTED LogColorGuard
 {
 
-    D_CLASS_NONCOPYABLE(LogColorGuard)
+    DLOG_CLASS_NONCOPYABLE(LogColorGuard)
 
 public:
 
@@ -56,7 +56,7 @@ private:
 };
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
 
 
 #endif

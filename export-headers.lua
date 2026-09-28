@@ -12,6 +12,19 @@ local function get_public_header_prefix(target)
     return target:name()
 end
 
+-- 配置头由 XMake 从 src/*.h.in 生成，与源码树中的 public header 不同，但发布时仍作为普通的 public header 一起进入同一份清单。
+local function add_generated_public_header(manifest, public_header_prefix, filename)
+    local entry = {
+        relative = filename,
+        source = "$(builddir)/config/" .. filename,
+        install = (public_header_prefix .. "/" .. filename):gsub("\\", "/"),
+        generated = true,
+    }
+
+    manifest.by_basename[filename] = entry
+    table.insert(manifest.entries, entry)
+end
+
 -- 构造 public header 清单。这里记录三类索引：
 -- 1. entries：顺序遍历用，导出时逐个生成文件。
 -- 2. by_source：源码绝对路径 -> 导出条目。用于按“真正解析到的头文件”做精确映射。
@@ -62,6 +75,10 @@ local function get_public_header_manifest(target)
         end
     end
 
+    -- config.h 和 globalmacros.h 都由 XMake 生成，和 src/**.h 一样通过清单导出。
+    add_generated_public_header(manifest, public_header_prefix, "config.h")
+    add_generated_public_header(manifest, public_header_prefix, "globalmacros.h")
+
     public_header_manifest = manifest
     return manifest
 end
@@ -97,15 +114,8 @@ local function resolve_public_header_entry(manifest, header, include_text)
 end
 
 -- 只重写 quoted include，不碰系统头和第三方头。例如：#include <string>，#include <fmt/format.h> 这两类不应该被发布脚本介入。
-local function rewrite_public_header_content(target, manifest, header, content)
-    local public_header_prefix = get_public_header_prefix(target)
-
+local function rewrite_public_header_content(manifest, header, content)
     return (content:gsub('([ \t]*#include[ \t]+")([^"]+)(")', function(prefix, include_text, suffix)
-        -- config.h 不是源码树里的静态头文件，而是构建阶段生成出来的。因此导出头文件里如果还保留：#include "config.h"，发布后就会丢失上下文。这里统一改成：#include "<target-name>/config.h"。让安装包和发布包里的 logger.h 等公共头都能稳定引用到它。
-        if include_text == "config.h" then
-            return prefix .. public_header_prefix .. "/config.h" .. suffix
-        end
-
         local entry = resolve_public_header_entry(manifest, header, include_text)
         if entry then
             return prefix .. entry.install .. suffix
@@ -126,10 +136,11 @@ end
 -- 生成导出头文件树。产物形态大致如下：
 --   export-headers/
 --     include/
---       muduo-core/
+--       <target-name>/
 --         core/...
 --         utils/...
 --         config.h
+--         globalmacros.h
 local function export_public_headers(target)
     local manifest = get_public_header_manifest(target)
     local public_header_prefix = get_public_header_prefix(target)
@@ -141,14 +152,16 @@ local function export_public_headers(target)
     os.mkdir(export_include_root)
 
     for _, entry in ipairs(manifest.entries) do
-        local rewritten = rewrite_public_header_content(target, manifest, entry.source, io.readfile(entry.source))
         local output = path.join(export_include_root, entry.relative)
         os.mkdir(path.directory(output))
-        io.writefile(output, rewritten)
-    end
 
-    -- 把构建生成的 config.h 一起并入发布头文件树，供重写后的公共头引用。
-    os.cp("$(builddir)/config/config.h", path.join(export_include_root, "config.h"))
+        if entry.generated then
+            os.cp(entry.source, output)
+        else
+            local rewritten = rewrite_public_header_content(manifest, entry.source, io.readfile(entry.source))
+            io.writefile(output, rewritten)
+        end
+    end
 
     return {
         root = export_root,

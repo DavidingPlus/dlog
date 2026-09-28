@@ -7,7 +7,7 @@
 #include <system_error>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 namespace
@@ -124,4 +124,4 @@ void Logger::LoggerImpl::formatTime()
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
