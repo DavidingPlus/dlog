@@ -1,6 +1,7 @@
 includes("config.lua")
 
 
+local project_name = "dlog"
 local version = "1.0.0"
 local export_headers_module = "export-headers"
 local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = true}
@@ -19,7 +20,7 @@ local package_dependencies = {
 set_version(version)
 
 set_xmakever("3.0.9")
-set_project("dlog")
+set_project(project_name)
 set_description("A Simple Log System.")
 set_languages("cxx17")
 
@@ -73,7 +74,7 @@ option_end()
 option("build_shared")
     set_default(default_build_shared_for_current_platform())
     set_showmenu(true)
-    set_description("Build the dlog library as a shared library.")
+    set_description("Build the " .. project_name .. " library as a shared library.")
 option_end()
 
 
@@ -97,7 +98,7 @@ if install_in_place then
 end
 
 
-target("dlog")
+target(project_name)
     set_kind(build_shared and "shared" or "static")
 
     apply_current_platform_target_config()
