@@ -37,7 +37,7 @@ namespace
 
     void testRollover()
     {
-        // 每块大小等于一个 LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
+        // 每块大小等于一个 dlog::LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
         std::string firstBuffer(dlog::kLargeBufferSize, 'A');
         std::string secondBuffer(dlog::kLargeBufferSize, 'B');
 
@@ -56,10 +56,10 @@ int main()
     std::string logBasePath = (logDirectory / "AsyncLoggingTest").string();
     dlog::AsyncLogging logging(logBasePath, kRollSize);
 
-    // 先使用 Logger 的默认输出，确认日志格式化与异步输出切换前的行为。
+    // 先使用 dlog::Logger 的默认输出，确认日志格式化与异步输出切换前的行为。
     testLogging();
 
-    // AsyncLogging 对象和回调目标先准备好，再启动后台线程并切换 Logger 输出。
+    // dlog::AsyncLogging 对象和回调目标先准备好，再启动后台线程并切换 dlog::Logger 输出。
     g_asyncLog = &logging;
     logging.start();
     dlog::Logger::SetOutput(asyncLog, dlog::LogLevelColorMode::OFF);

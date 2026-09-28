@@ -61,7 +61,7 @@ dlog::Logger::SetOutput(
 
 ## 异步文件输出
 
-`dlog::AsyncLogging` 可通过输出回调接收 Logger 格式化后的日志。日志目录需预先创建；停止时应先停止产生日志的线程，再切回其他输出，最后停止异步后端：
+`dlog::AsyncLogging` 可通过输出回调接收 `dlog::Logger` 格式化后的日志。日志目录需预先创建；停止时应先停止产生日志的线程，再切回其他输出，最后停止异步后端：
 
 ```cpp
 #include <cstdio>
