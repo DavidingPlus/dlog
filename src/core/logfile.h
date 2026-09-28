@@ -10,7 +10,7 @@
 #include <sstream>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 // LogFile 通常是一个长期存在的共享日志后端，而不是每条日志都重新创建的对象。Logger 可以在每条 LOG_INFO() 语句中临时创建，但最终都会把数据交给同一个 LogFile::append()。因此，普通 append() 会持续写入当前文件；只有文件大小超限或本地日期变化时才会轮转。
@@ -20,10 +20,10 @@ D_NAMESPACE_BEGIN(dlog)
 //   app.20260922.2.log  // 同一天再次大小超限后创建。
 //   app.20260923.0.log  // 日期变化后，序号重新从 0 开始。
 // 程序重启时会扫描当天已有的序号。例如已经存在 .0 和 .1，就从 .2 开始，避免覆盖旧日志。
-class D_API_EXPORTED LogFile
+class DLOG_API_EXPORTED LogFile
 {
 
-    D_CLASS_NONCOPYABLE(LogFile)
+    DLOG_CLASS_NONCOPYABLE(LogFile)
 
 public:
 
@@ -92,7 +92,7 @@ private:
 };
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
 
 
 #endif

@@ -5,7 +5,7 @@
 #include <future>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 std::atomic_int Thread::m_numCreated{0};
@@ -65,4 +65,4 @@ void Thread::setDefaultName()
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

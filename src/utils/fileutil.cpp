@@ -7,7 +7,7 @@
 #include <system_error>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 namespace
@@ -21,9 +21,9 @@ namespace
 FileUtil::FileUtil(const std::string &fileName)
 {
     // Linux 使用 e 标志设置 close-on-exec；Windows 使用二进制模式（b），避免换行符被转换。
-#if defined(D_OS_WIN32)
+#if defined(DLOG_OS_WIN32)
     m_file = std::fopen(fileName.c_str(), "ab");
-#elif defined(D_OS_LINUX)
+#elif defined(DLOG_OS_LINUX)
     m_file = std::fopen(fileName.c_str(), "ae");
 #endif
 
@@ -97,4 +97,4 @@ size_t FileUtil::write(const char *data, size_t len) noexcept
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

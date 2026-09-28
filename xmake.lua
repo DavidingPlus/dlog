@@ -2,6 +2,7 @@ includes("config.lua")
 
 
 local project_name = "dlog"
+local macro_prefix = "DLOG"
 local version = "1.0.2"
 local export_headers_module = "export-headers"
 local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = true}
@@ -26,10 +27,9 @@ set_languages("cxx17")
 
 add_rules("mode.debug", "mode.release")
 
+set_configvar("MACRO_PREFIX", macro_prefix)
 set_configdir("$(builddir)/config/")
-add_configfiles("src/config.h.in")
-
-add_includedirs("$(builddir)/config/")
+add_configfiles("src/config.h.in", "src/globalmacros.h.in")
 
 
 -- 依赖表是对外包依赖的唯一声明源。配置当前平台时只启用 common 和当前平台的依赖；metadata 会记录整张表。
@@ -139,11 +139,11 @@ target(project_name)
     end)
 
     if build_shared and is_current_win32() then
-        -- D_BUILD_SHARED：使用动态库还是静态库。
-        add_defines("D_BUILD_SHARED", {public = true})
+        -- <前缀>_BUILD_SHARED：使用动态库还是静态库。
+        add_defines(macro_prefix .. "_BUILD_SHARED", {public = true})
 
-        -- D_DLL_EXPORT：是否正在编译 DLL 本身。如果是，使用 __declspec(dllexport) 导出符号，否则是用户在使用 DLL 库，使用 __declspec(dllimport) 导入符号。
-        add_defines("D_DLL_EXPORT")
+        -- <前缀>_DLL_EXPORT：是否正在编译 DLL 本身。如果是，使用 __declspec(dllexport) 导出符号，否则是用户在使用 DLL 库，使用 __declspec(dllimport) 导入符号。
+        add_defines(macro_prefix .. "_DLL_EXPORT")
     end
 
     set_targetdir("$(builddir)/$(plat)/$(arch)/$(mode)/lib/")
@@ -151,6 +151,7 @@ target(project_name)
     -- 会将 src 根目录和所有子目录一起匹配。
     add_files("src/**.cpp")
 
+    add_includedirs("$(builddir)/config/", {public = true})
     add_includedirs("src", os.dirs("src/**"), {public = true})
 
     before_build(function (target)

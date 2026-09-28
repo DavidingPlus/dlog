@@ -10,14 +10,14 @@
 #include <condition_variable>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 // AsyncLogging 将日志生产和日志写盘分离：前端线程只负责把日志追加到内存缓冲区，后台线程负责批量写入 LogFile。
-class D_API_EXPORTED AsyncLogging
+class DLOG_API_EXPORTED AsyncLogging
 {
 
-    D_CLASS_NONCOPYABLE(AsyncLogging)
+    DLOG_CLASS_NONCOPYABLE(AsyncLogging)
 
 public:
 
@@ -78,7 +78,7 @@ private:
 };
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
 
 
 #endif

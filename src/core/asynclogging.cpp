@@ -5,7 +5,7 @@
 #include <chrono>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 void AsyncLogging::append(const char *data, size_t length)
@@ -143,4 +143,4 @@ void AsyncLogging::threadFunc()
 }
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END

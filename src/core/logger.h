@@ -20,11 +20,11 @@
 #define DLOG_SYS_FATAL(savedErrno) (::dlog::Logger(__FILE__, __LINE__, ::dlog::LogLevel::FATAL, (savedErrno)).stream())
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 // FileNameView 从路径中提取文件名，并以非拥有型视图的形式保存它。
-class D_API_EXPORTED FileNameView
+class DLOG_API_EXPORTED FileNameView
 {
 
 public:
@@ -75,10 +75,10 @@ enum class LogLevelColorMode
 // 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
 // Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。颜色由 SetOutput() 的 LogLevelColorMode 参数控制，默认 ON；文件后端需要纯文本时应传入 LogLevelColorMode::OFF。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
 // 典型的临时对象用法如下：Logger(__FILE__, __LINE__, LogLevel::INFO).stream() << "server started"; 当前完整表达式结束后，临时 Logger 析构并输出整条日志。若先保存为命名对象，则会在对象离开作用域时输出。FATAL 日志在输出后还会调用 FlushFunc 刷新输出，并终止进程；因此不应在普通单元测试中直接触发 FATAL。
-class D_API_EXPORTED Logger
+class DLOG_API_EXPORTED Logger
 {
 
-    D_CLASS_NONCOPYABLE(Logger)
+    DLOG_CLASS_NONCOPYABLE(Logger)
 
 public:
 
@@ -139,7 +139,7 @@ private:
 };
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
 
 
 #endif

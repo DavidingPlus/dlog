@@ -11,12 +11,13 @@
 #include <utility>
 
 
-D_NAMESPACE_BEGIN(dlog)
+DLOG_NAMESPACE_BEGIN(dlog)
 
-class D_API_EXPORTED Thread
+
+class DLOG_API_EXPORTED Thread
 {
 
-    D_CLASS_NONCOPYABLE(Thread)
+    DLOG_CLASS_NONCOPYABLE(Thread)
 
 public:
 
@@ -67,6 +68,7 @@ private:
 };
 
 
-D_NAMESPACE_END
+DLOG_NAMESPACE_END
+
 
 #endif
