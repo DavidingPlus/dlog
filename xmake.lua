@@ -1,15 +1,26 @@
 includes("config.lua")
 
 
+local project_name = "dlog"
 local version = "1.0.0"
 local export_headers_module = "export-headers"
 local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = true}
+
+-- 对外包依赖的唯一清单，每项填写 XMake 依赖规格字符串，例如 "fmt >=10.2.1"。common 对所有平台生效；windows 和 linux 分别只在对应目标平台生效。
+-- 此表同时驱动 add_requires、target 的 add_packages 和发布 metadata；新增依赖只需在这里登记。
+local package_dependencies = {
+    common = {
+        "fmt"
+    },
+    windows = {},
+    linux = {}
+}
 
 
 set_version(version)
 
 set_xmakever("3.0.9")
-set_project("dlog")
+set_project(project_name)
 set_description("A Simple Log System.")
 set_languages("cxx17")
 
@@ -20,7 +31,32 @@ add_configfiles("src/config.h.in")
 
 add_includedirs("$(builddir)/config/")
 
-add_requires("fmt")
+
+-- 依赖表是对外包依赖的唯一声明源。配置当前平台时只启用 common 和当前平台的依赖；metadata 会记录整张表。
+local active_package_dependencies = {}
+
+local function enable_package_dependencies(requirements)
+    for _, requirement in ipairs(requirements) do
+        add_requires(requirement)
+        table.insert(active_package_dependencies, requirement)
+    end
+end
+
+local function package_name_from_spec(requirement)
+    local name = requirement:match("^%s*([^%s<>=~!]+)")
+    if not name then
+        os.raise("invalid package requirement: %s", requirement)
+    end
+    return name
+end
+
+enable_package_dependencies(package_dependencies.common)
+
+if is_plat("windows") then
+    enable_package_dependencies(package_dependencies.windows)
+elseif is_plat("linux") then
+    enable_package_dependencies(package_dependencies.linux)
+end
 
 
 option("with_gtest")
@@ -38,7 +74,7 @@ option_end()
 option("build_shared")
     set_default(default_build_shared_for_current_platform())
     set_showmenu(true)
-    set_description("Build the dlog library as a shared library.")
+    set_description("Build the " .. project_name .. " library as a shared library.")
 option_end()
 
 
@@ -61,12 +97,46 @@ if install_in_place then
     set_installdir("$(builddir)/$(plat)/$(arch)/$(mode)/install")
 end
 
-target("dlog")
+
+target(project_name)
     set_kind(build_shared and "shared" or "static")
 
     apply_current_platform_target_config()
 
-    add_packages("fmt", {public = true})
+    for _, requirement in ipairs(active_package_dependencies) do
+        add_packages(package_name_from_spec(requirement), {public = true})
+    end
+
+    on_config(function (target)
+        local json = import("core.base.json")
+        local repository = os.getenv("GITHUB_REPOSITORY")
+        local release_version = os.getenv("GITHUB_REF_NAME")
+
+        local function dependency_specs(dependencies)
+            local specs = {}
+
+            for _, requirement in ipairs(dependencies) do
+                table.insert(specs, requirement)
+            end
+
+            table.sort(specs)
+            return json.mark_as_array(specs)
+        end
+
+        local manifest_path = path.join(os.projectdir(), "build", "package-metadata.json")
+        os.mkdir(path.directory(manifest_path))
+
+        io.writefile(manifest_path, json.encode({
+            repo = repository,
+            package = target:name(),
+            version = release_version,
+            dependencies = {
+                common = dependency_specs(package_dependencies.common),
+                windows = dependency_specs(package_dependencies.windows),
+                linux = dependency_specs(package_dependencies.linux)
+            }
+        }) .. "\n")
+    end)
 
     if build_shared and is_current_win32() then
         -- D_BUILD_SHARED：使用动态库还是静态库。
