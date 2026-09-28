@@ -3,7 +3,7 @@ includes("config.lua")
 
 local project_name = "dlog"
 local macro_prefix = "DLOG"
-local version = "1.0.2"
+local version = "1.0.3"
 local export_headers_module = "export-headers"
 local export_headers_import_options = {rootdir = os.scriptdir(), anonymous = true}
 
