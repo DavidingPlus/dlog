@@ -4,6 +4,9 @@
 #include "globalmacros.h"
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace CurrentThread
 {
     // 保存 tid 缓存，因为系统调用非常耗时，拿到 tid 后将其保存。
@@ -15,6 +18,9 @@ namespace CurrentThread
     // 获取当前线程 tid。通过导出函数访问 DLL 内部的 thread_local 缓存，避免调用方直接导入 TLS 数据。
     D_API_EXPORTED int tid() noexcept;
 }
+
+
+D_NAMESPACE_END
 
 
 #endif

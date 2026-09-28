@@ -1,6 +1,9 @@
 #include "logstream.h"
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 LogStream &LogStream::operator<<(bool express)
 {
     m_buffer.append(express ? "true" : "false", express ? 4 : 5);
@@ -47,3 +50,6 @@ LogStream &LogStream::operator<<(std::string_view sv)
     if (!sv.empty()) m_buffer.append(sv.data(), sv.size());
     return *this;
 }
+
+
+D_NAMESPACE_END

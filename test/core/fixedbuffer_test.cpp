@@ -9,6 +9,9 @@
 #include "fixedbuffer.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 

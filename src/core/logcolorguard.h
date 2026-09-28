@@ -3,8 +3,9 @@
 
 #include "globalmacros.h"
 
-class LogStream;
-enum class LogLevel;
+
+class dlog::LogStream;
+enum class dlog::LogLevel;
 
 
 // 重置为默认颜色。
@@ -29,6 +30,9 @@ enum class LogLevel;
 #define DLOG_COLOR_FATAL "\033[1m\033[41m"
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // 以 RAII 方式在 LogStream 中标记一段带颜色的内容。构造时向指定流写入等级对应的 ANSI 颜色码；调用方在 guard 存活期间继续向同一流写入日志文字；析构时再向该流写入重置码。用法类似 std::lock_guard：对象的作用域决定颜色标记的范围，正常离开作用域或异常展开时都会执行析构重置。
 // LogColorGuard 只写入颜色控制码，不负责加锁或线程同步；它保存的 LogStream 必须比 guard 活得更久。
 class D_API_EXPORTED LogColorGuard
@@ -50,6 +54,9 @@ private:
     // 非拥有引用，指向构造函数传入的目标流。构造和析构都向这同一个流追加控制码；调用方必须保证该流在 guard 销毁前仍然存活。
     LogStream &m_stream;
 };
+
+
+D_NAMESPACE_END
 
 
 #endif

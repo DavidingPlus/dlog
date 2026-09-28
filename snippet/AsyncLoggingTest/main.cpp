@@ -11,7 +11,7 @@ namespace
 {
     constexpr int64_t kRollSize = 1LL * 1024 * 1024;
 
-    AsyncLogging *g_asyncLog = nullptr;
+    dlog::AsyncLogging *g_asyncLog = nullptr;
 
 
     void asyncLog(const char *message, size_t length)
@@ -38,8 +38,8 @@ namespace
     void testRollover()
     {
         // 每块大小等于一个 LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
-        std::string firstBuffer(kLargeBufferSize, 'A');
-        std::string secondBuffer(kLargeBufferSize, 'B');
+        std::string firstBuffer(dlog::kLargeBufferSize, 'A');
+        std::string secondBuffer(dlog::kLargeBufferSize, 'B');
 
         g_asyncLog->append(firstBuffer.data(), firstBuffer.size());
         g_asyncLog->append(secondBuffer.data(), secondBuffer.size());
@@ -54,7 +54,7 @@ int main()
     std::filesystem::create_directories(logDirectory);
 
     std::string logBasePath = (logDirectory / "AsyncLoggingTest").string();
-    AsyncLogging logging(logBasePath, kRollSize);
+    dlog::AsyncLogging logging(logBasePath, kRollSize);
 
     // 先使用 Logger 的默认输出，确认日志格式化与异步输出切换前的行为。
     testLogging();
@@ -62,7 +62,7 @@ int main()
     // AsyncLogging 对象和回调目标先准备好，再启动后台线程并切换 Logger 输出。
     g_asyncLog = &logging;
     logging.start();
-    Logger::SetOutput(asyncLog, LogLevelColorMode::OFF);
+    dlog::Logger::SetOutput(asyncLog, dlog::LogLevelColorMode::OFF);
 
     testLogging();
     testAsyncLogging();

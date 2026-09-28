@@ -6,6 +6,9 @@
 #include <string>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 class D_API_EXPORTED Timestamp
 {
 
@@ -54,6 +57,9 @@ private:
 
     int64_t m_microSecondsSinceEpoch = static_cast<int64_t>(0);
 };
+
+
+D_NAMESPACE_END
 
 
 #endif

@@ -10,6 +10,9 @@
 #include <condition_variable>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // AsyncLogging 将日志生产和日志写盘分离：前端线程只负责把日志追加到内存缓冲区，后台线程负责批量写入 LogFile。
 class D_API_EXPORTED AsyncLogging
 {
@@ -73,6 +76,9 @@ private:
     // 前台已经填充并移交、等待后台线程处理的缓冲区队列。
     BufferVector m_pendingBuffers;
 };
+
+
+D_NAMESPACE_END
 
 
 #endif

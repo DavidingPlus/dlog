@@ -10,6 +10,9 @@
 #include <sstream>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // LogFile 通常是一个长期存在的共享日志后端，而不是每条日志都重新创建的对象。Logger 可以在每条 LOG_INFO() 语句中临时创建，但最终都会把数据交给同一个 LogFile::append()。因此，普通 append() 会持续写入当前文件；只有文件大小超限或本地日期变化时才会轮转。
 // 基础文件名采用“日期 + 当天序号”的格式：
 //   app.20260922.0.log  // 15:30:12 创建，当天第一个文件。
@@ -87,6 +90,9 @@ private:
     // 上一次将 FileUtil 缓冲区刷新到文件的时间（秒），用于判断是否达到 m_flushInterval。
     time_t m_lastFlush = 0;
 };
+
+
+D_NAMESPACE_END
 
 
 #endif

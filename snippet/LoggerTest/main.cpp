@@ -12,27 +12,27 @@ namespace
 
     struct LogLevelExample
     {
-        LogLevel level;
+        dlog::LogLevel level;
         std::string_view name;
         std::string_view colorName;
     };
 
     void showLoggerColor(const LogLevelExample &example)
     {
-        Logger logger(__FILE__, __LINE__, example.level);
-        // LogColorGuard color(logger.stream(), example.level);
+        dlog::Logger logger(__FILE__, __LINE__, example.level);
+        // dlog::LogColorGuard color(logger.stream(), example.level);
         logger.stream() << example.name << " (" << example.colorName << ") color sample";
     }
 
     void showFatalColor()
     {
-        LogStream stream;
+        dlog::LogStream stream;
         {
-            // LogColorGuard color(stream, LogLevel::FATAL);
+            // dlog::LogColorGuard color(stream, dlog::LogLevel::FATAL);
             stream << "FATAL (spdlog CRITICAL, bold on red) color sample";
         }
 
-        const SmallBuffer &buffer = stream.buffer();
+        const dlog::SmallBuffer &buffer = stream.buffer();
         std::fwrite(buffer.data(), sizeof(char), buffer.length(), stdout);
         std::fputc('\n', stdout);
         std::fflush(stdout);
@@ -44,11 +44,11 @@ namespace
 int main()
 {
     constexpr std::array<LogLevelExample, 5> examples{{
-        {LogLevel::TRACE, "TRACE", "white"},
-        {LogLevel::DEBUG, "DEBUG", "cyan"},
-        {LogLevel::INFO, "INFO", "green"},
-        {LogLevel::WARN, "WARN", "bold yellow"},
-        {LogLevel::ERROR, "ERROR", "bold red"},
+        {dlog::LogLevel::TRACE, "TRACE", "white"},
+        {dlog::LogLevel::DEBUG, "DEBUG", "cyan"},
+        {dlog::LogLevel::INFO, "INFO", "green"},
+        {dlog::LogLevel::WARN, "WARN", "bold yellow"},
+        {dlog::LogLevel::ERROR, "ERROR", "bold red"},
     }};
 
     for (const LogLevelExample &example : examples) showLoggerColor(example);

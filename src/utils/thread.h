@@ -11,6 +11,8 @@
 #include <utility>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
 class D_API_EXPORTED Thread
 {
 
@@ -64,5 +66,7 @@ private:
     std::string m_name;
 };
 
+
+D_NAMESPACE_END
 
 #endif

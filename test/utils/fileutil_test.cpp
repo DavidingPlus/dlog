@@ -12,6 +12,9 @@
 #include "fileutil.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 

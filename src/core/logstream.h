@@ -13,6 +13,9 @@
 #include <type_traits>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // LogStream 类用于管理日志输出流，重载输出流运算符 <<，将各种类型的值写入内部缓冲区。
 class D_API_EXPORTED LogStream
 {
@@ -108,6 +111,9 @@ LogStream &LogStream::formatInteger(T num)
 
     return *this;
 }
+
+
+D_NAMESPACE_END
 
 
 #endif

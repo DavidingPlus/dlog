@@ -5,6 +5,9 @@
 #include <array>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
 
@@ -32,3 +35,6 @@ LogColorGuard::~LogColorGuard()
 {
     m_stream << DLOG_COLOR_RESET;
 }
+
+
+D_NAMESPACE_END

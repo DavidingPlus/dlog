@@ -8,6 +8,9 @@
 #include <stdexcept>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
 
@@ -189,3 +192,6 @@ void LogFile::rollFileImpl(time_t now, const std::string &date)
     m_fileIndex = nextIndex;
     m_lastFlush = now;
 }
+
+
+D_NAMESPACE_END

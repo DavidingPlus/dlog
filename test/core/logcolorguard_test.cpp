@@ -9,6 +9,9 @@
 #include "logcolorguard.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 

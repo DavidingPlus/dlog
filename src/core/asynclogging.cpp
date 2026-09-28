@@ -5,6 +5,9 @@
 #include <chrono>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 void AsyncLogging::append(const char *data, size_t length)
 {
     if (!data || 0 == length) return;
@@ -138,3 +141,6 @@ void AsyncLogging::threadFunc()
     // 退出前再做一次最终刷新，将 LogFile 内部缓冲中的数据提交到文件层。
     logFile.flush();
 }
+
+
+D_NAMESPACE_END

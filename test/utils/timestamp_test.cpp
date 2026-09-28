@@ -10,6 +10,9 @@
 #include "globalmacros.h"
 
 
+using namespace dlog;
+
+
 // 验证默认构造得到的时间戳是 0。
 TEST(TimestampTest, DefaultConstructor)
 {

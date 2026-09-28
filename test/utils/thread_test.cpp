@@ -11,6 +11,7 @@
 #include "currentthread.h"
 
 
+using namespace dlog;
 using namespace std::chrono_literals;
 
 

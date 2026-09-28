@@ -15,6 +15,9 @@
 #endif
 
 
+using namespace dlog;
+
+
 namespace
 {
 

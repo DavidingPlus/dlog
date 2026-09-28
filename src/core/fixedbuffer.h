@@ -7,6 +7,9 @@
 #include <cstring>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // 日志系统预设的小缓冲区和大缓冲区容量。
 // 这两个值是编译期常量，调用方包含头文件后即可直接参与数组长度和模板参数计算，例如 FixedBuffer<kSmallBufferSize> 等价于 FixedBuffer<4000>，不需要在运行时从 DLL 中读取一个变量。因此这里不使用 D_API_EXPORTED 导出变量符号。
 // inline 允许该定义出现在多个源文件包含的头文件中，并按照 C++17 的 inline 变量规则处理重复定义；constexpr 则保证它可以作为常量表达式使用。修改容量会影响模板类型和对象布局，发布新版本时需要让使用方重新编译。
@@ -110,6 +113,9 @@ using LargeBuffer = FixedBuffer<kLargeBufferSize>;
 // 模板显式实例化声明：这两个常用特化的非内联模板成员由 .cpp 提供，其他翻译单元无需重复隐式实例化。因为模板定义仍保留在本头文件中，因此调用方仍可使用 FixedBuffer<8> 等其他容量；未列出的特化照常按需实例化。
 extern template class FixedBuffer<kSmallBufferSize>;
 extern template class FixedBuffer<kLargeBufferSize>;
+
+
+D_NAMESPACE_END
 
 
 #endif

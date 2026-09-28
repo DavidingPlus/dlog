@@ -7,6 +7,9 @@
 #endif
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
     // 每个线程各自独立拥有一份缓存。该变量不作为 DLL 数据符号导出，由下面的导出函数在 DLL 内部访问。
@@ -45,3 +48,6 @@ int CurrentThread::tid() noexcept
 
     return t_cachedTid;
 }
+
+
+D_NAMESPACE_END

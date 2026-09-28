@@ -7,6 +7,9 @@
 #include <system_error>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
 
@@ -92,3 +95,6 @@ size_t FileUtil::write(const char *data, size_t len) noexcept
     // 注意：std::fwrite() 只保护 FILE* 内部状态，并不能让整个 FileUtil::append() 变成线程安全；多个线程直接共享同一个 FileUtil 时，仍需在外部加锁。
     return std::fwrite(data, 1, len, m_file);
 }
+
+
+D_NAMESPACE_END

@@ -14,6 +14,9 @@
 #include "logger.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 

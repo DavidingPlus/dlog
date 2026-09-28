@@ -7,6 +7,9 @@
 #include <system_error>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
 
@@ -119,3 +122,6 @@ void Logger::LoggerImpl::formatTime()
     // 多个线程分别格式化各自日志时，toFormattedString() 这条路径是线程安全的。但线程安全不等于没有开销：每条日志仍需要做时间格式化，并可能创建临时 std::string；如果后续日志频率很高，可以再使用 thread_local 缓存每秒不变的日期部分进行优化。
     m_stream << "[" << m_time.toFormattedString(true) << "] ";
 }
+
+
+D_NAMESPACE_END

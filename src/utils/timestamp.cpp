@@ -9,6 +9,9 @@
 #include <fmt/chrono.h>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 std::string Timestamp::toFormattedString(bool showMicroseconds) const
 {
     // 将保存的微秒时间戳转换成 system_clock::time_point。
@@ -61,3 +64,6 @@ Timestamp Timestamp::AddTime(const Timestamp &timestamp, double seconds)
     // 返回新增时后的时间戳。
     return Timestamp(timestamp.microSecondsSinceEpoch() + delta);
 }
+
+
+D_NAMESPACE_END

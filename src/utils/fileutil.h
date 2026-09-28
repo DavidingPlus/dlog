@@ -6,6 +6,9 @@
 #include <string>
 
 
+D_NAMESPACE_BEGIN(dlog)
+
+
 // 文件工具类，用于处理文件的写入操作。该类封装了对文件的基本操作，包括写入数据和刷新缓冲区。
 class D_API_EXPORTED FileUtil
 {
@@ -45,6 +48,9 @@ private:
     // 记录已写入文件的总字节数，int64_t 类型用于大文件支持。
     int64_t m_writtenBytes = 0;
 };
+
+
+D_NAMESPACE_END
 
 
 #endif

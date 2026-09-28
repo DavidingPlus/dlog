@@ -17,6 +17,9 @@
 #include "logfile.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 
