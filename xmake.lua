@@ -128,7 +128,8 @@ target(project_name)
 
         io.writefile(manifest_path, json.encode({
             repo = repository,
-            package = target:name(),
+            package_name = project_name,
+            macro_prefix = macro_prefix,
             version = release_version,
             dependencies = {
                 common = dependency_specs(package_dependencies.common),

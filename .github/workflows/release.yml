@@ -115,7 +115,7 @@ jobs:
     - name: Read package name
       shell: bash
       run: |
-        package_name="$(node -p 'require("./build/package-metadata.json").package')"
+        package_name="$(node -p 'require("./build/package-metadata.json").package_name')"
         printf 'PACKAGE_NAME=%s\n' "$package_name" >> "$GITHUB_ENV"
 
     - name: Upload package metadata
