@@ -68,6 +68,30 @@ target("dlog")
 
     add_packages("fmt", {public = true})
 
+    on_config(function (target)
+        local json = import("core.base.json")
+        local dependencies = {}
+        local repository = os.getenv("GITHUB_REPOSITORY")
+        local release_version = os.getenv("GITHUB_REF_NAME")
+
+        -- 只记录 dlog 对外公开的直接包依赖，并保留 add_requires 的原始版本规格。测试目标中的 gtest 不属于 dlog 的发布依赖。
+        for _, package in ipairs(target:orderpkgs({public = true})) do
+            table.insert(dependencies, package:requirestr())
+        end
+
+        table.sort(dependencies)
+
+        local manifest_path = path.join(os.projectdir(), "build", "package-metadata.json")
+        os.mkdir(path.directory(manifest_path))
+
+        io.writefile(manifest_path, json.encode({
+            repo = repository,
+            package = target:name(),
+            version = release_version,
+            dependencies = json.mark_as_array(dependencies)
+        }) .. "\n")
+    end)
+
     if build_shared and is_current_win32() then
         -- D_BUILD_SHARED：使用动态库还是静态库。
         add_defines("D_BUILD_SHARED", {public = true})
