@@ -1,6 +1,9 @@
 #include "logstream.h"
 
 
+DLOG_NAMESPACE_BEGIN(dlog)
+
+
 LogStream &LogStream::operator<<(bool express)
 {
     m_buffer.append(express ? "true" : "false", express ? 4 : 5);
@@ -40,10 +43,13 @@ LogStream &LogStream::operator<<(const unsigned char *str)
     return *this << std::string_view(reinterpret_cast<const char *>(str));
 }
 
-LogStream &LogStream::operator<<(const std::string_view &sv)
+LogStream &LogStream::operator<<(std::string_view sv)
 {
     // string_view::size() 是数据的显式长度，不会像 strlen() 一样在遇到 '\0' 时提前停止。
     // FixedBuffer 同样按照“地址 + 长度”保存数据，因此可以完整写入包含嵌入式 '\0' 的字符序列。
     if (!sv.empty()) m_buffer.append(sv.data(), sv.size());
     return *this;
 }
+
+
+DLOG_NAMESPACE_END

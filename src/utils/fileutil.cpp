@@ -7,6 +7,9 @@
 #include <system_error>
 
 
+DLOG_NAMESPACE_BEGIN(dlog)
+
+
 namespace
 {
 
@@ -18,9 +21,9 @@ namespace
 FileUtil::FileUtil(const std::string &fileName)
 {
     // Linux 使用 e 标志设置 close-on-exec；Windows 使用二进制模式（b），避免换行符被转换。
-#if defined(OS_WIN32)
+#if defined(DLOG_OS_WIN32)
     m_file = std::fopen(fileName.c_str(), "ab");
-#elif defined(OS_LINUX)
+#elif defined(DLOG_OS_LINUX)
     m_file = std::fopen(fileName.c_str(), "ae");
 #endif
 
@@ -92,3 +95,6 @@ size_t FileUtil::write(const char *data, size_t len) noexcept
     // 注意：std::fwrite() 只保护 FILE* 内部状态，并不能让整个 FileUtil::append() 变成线程安全；多个线程直接共享同一个 FileUtil 时，仍需在外部加锁。
     return std::fwrite(data, 1, len, m_file);
 }
+
+
+DLOG_NAMESPACE_END

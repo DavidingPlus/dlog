@@ -10,6 +10,9 @@
 #include "globalmacros.h"
 
 
+using namespace dlog;
+
+
 // 验证默认构造得到的时间戳是 0。
 TEST(TimestampTest, DefaultConstructor)
 {
@@ -111,7 +114,7 @@ TEST(TimestampTest, FormattedStringAtSecondBoundary)
 // 验证负时间戳的微秒部分仍然保持在 [0, 1 秒) 范围内。
 TEST(TimestampTest, FormattedStringBeforeEpoch)
 {
-#if defined(OS_WIN32)
+#if defined(DLOG_OS_WIN32)
     GTEST_SKIP() << "MSVC localtime_s rejects negative time_t values.";
 #else
     Timestamp ts(-1);

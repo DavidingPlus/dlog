@@ -8,6 +8,9 @@
 #include "logstream.h"
 
 
+using namespace dlog;
+
+
 TEST(LogStreamTest, StartsEmptyAndIsNonCopyable)
 {
     LogStream stream;

@@ -13,24 +13,24 @@
 #include <type_traits>
 
 
+DLOG_NAMESPACE_BEGIN(dlog)
+
+
 // LogStream 类用于管理日志输出流，重载输出流运算符 <<，将各种类型的值写入内部缓冲区。
-class LogStream
+class DLOG_API_EXPORTED LogStream
 {
 
-    CLASS_NONCOPYABLE(LogStream)
-
-    // 定义一个 Buffer 类型，使用固定大小的缓冲区。
-    using Buffer = FixedBuffer<kSmallBufferSize>;
+    DLOG_CLASS_NONCOPYABLE(LogStream)
 
 public:
 
     LogStream() = default;
 
     // 将指定长度的字符数据追加到缓冲区。
-    void append(const char *buffer, int len) { m_buffer.append(buffer, len); }
+    void append(const char *buffer, size_t len) { m_buffer.append(buffer, len); }
 
     // 返回当前缓冲区的常量引用。
-    const Buffer &buffer() const { return m_buffer; }
+    const SmallBuffer &buffer() const { return m_buffer; }
 
     // 重置缓冲区，将当前指针重置到缓冲区的起始位置。
     void resetBuffer() { m_buffer.reset(); }
@@ -67,7 +67,7 @@ public:
 
     // 写入带显式长度的字符数据。和参考实现 https://github.com/youngyangyang04/kamaLog/blob/main/logger/LogStream.h 的 GeneralTemplate 作用一致。
     // std::string_view 不拥有数据，只保存数据地址和长度，因此可以处理：不以 '\0' 结尾的数据；中间包含 '\0' 的数据；字符串的一部分，而不需要额外构造 std::string。
-    LogStream &operator<<(const std::string_view &sv);
+    LogStream &operator<<(std::string_view sv);
 
 
 private:
@@ -78,7 +78,7 @@ private:
 
 
     // 内部缓冲区对象。
-    Buffer m_buffer;
+    SmallBuffer m_buffer;
 };
 
 
@@ -111,6 +111,9 @@ LogStream &LogStream::formatInteger(T num)
 
     return *this;
 }
+
+
+DLOG_NAMESPACE_END
 
 
 #endif

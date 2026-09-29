@@ -9,6 +9,9 @@
 #include "fixedbuffer.h"
 
 
+using namespace dlog;
+
+
 namespace
 {
 
@@ -25,11 +28,8 @@ TEST(FixedBufferSizeTest, DefinesExpectedSmallAndLargeCapacities)
 }
 
 
-TEST(FixedBufferSizeTest, ConstantsCanBeUsedAsTemplateArguments)
+TEST(FixedBufferSizeTest, NamedAliasesUseExpectedCapacities)
 {
-    using SmallBuffer = FixedBuffer<kSmallBufferSize>;
-    using LargeBuffer = FixedBuffer<kLargeBufferSize>;
-
     SmallBuffer smallBuffer;
     auto largeBuffer = std::make_unique<LargeBuffer>();
 
@@ -40,7 +40,7 @@ TEST(FixedBufferSizeTest, ConstantsCanBeUsedAsTemplateArguments)
 
 TEST(FixedBufferSizeTest, SmallBufferUsesSmallCapacity)
 {
-    FixedBuffer<kSmallBufferSize> buffer;
+    SmallBuffer buffer;
 
     buffer.append("small", 5);
 
@@ -52,7 +52,6 @@ TEST(FixedBufferSizeTest, SmallBufferUsesSmallCapacity)
 
 TEST(FixedBufferSizeTest, LargeBufferUsesLargeCapacityAndCanBeReused)
 {
-    using LargeBuffer = FixedBuffer<kLargeBufferSize>;
     auto buffer = std::make_unique<LargeBuffer>();
 
     buffer->append("large", 5);

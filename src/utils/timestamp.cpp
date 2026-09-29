@@ -9,7 +9,7 @@
 #include <fmt/chrono.h>
 
 
-const int Timestamp::kMicroSecondsPerSecond = 1000 * 1000;
+DLOG_NAMESPACE_BEGIN(dlog)
 
 
 std::string Timestamp::toFormattedString(bool showMicroseconds) const
@@ -25,18 +25,22 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
     auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(tp - seconds).count();
     auto time = std::chrono::system_clock::to_time_t(seconds);
 
-    // 避免使用返回静态缓冲区的 std::localtime，减少线程间相互覆盖的风险。
+    // 不使用 std::localtime，因为它返回指向共享静态缓冲区的指针：多个线程同时调用时，某个线程可能覆盖另一个线程刚刚得到的日期时间。
+    // 这里每次调用都使用自己的局部 tm 对象，再通过 localtime_s/localtime_r 把转换结果写入这个对象。
     std::tm localTime{};
 
-#if defined(OS_WIN32)
-    localtime_s(&localTime, &time);
-#elif defined(OS_LINUX)
-    localtime_r(&time, &localTime);
+#if defined(DLOG_OS_WIN32)
+    // Windows 版本：由调用方提供输出缓冲区 localTime，避免使用共享静态对象。
+    if (::localtime_s(&localTime, &time)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_s failed");
+#elif defined(DLOG_OS_LINUX)
+    // Linux/POSIX 版本：与 localtime_s 的作用相同，结果写入调用方提供的 localTime。
+    if (!::localtime_r(&time, &localTime)) throw std::runtime_error("Timestamp::toFormattedString(): localtime_r failed");
 #else
-    throw std::runtime_error("Unsupported Operating System");
+    throw std::runtime_error("LogFile::GetLogFileName(): Unsupported Operating System");
 #endif
 
 
+    // fmt::format 返回拥有自己字符数据的 std::string，而不是共享的静态缓冲区。因此不同线程同时调用时，各自得到独立的返回值；调用方负责接收或立即复制它。
     return showMicroseconds
                ? fmt::format("{:%Y/%m/%d %H:%M:%S}.{:06}", localTime, microseconds)
                : fmt::format("{:%Y/%m/%d %H:%M:%S}", localTime);
@@ -44,8 +48,7 @@ std::string Timestamp::toFormattedString(bool showMicroseconds) const
 
 Timestamp Timestamp::Now()
 {
-    // 获取当前系统时间。
-    // 注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
+    // 获取当前系统时间。注意，因为是要获取绝对时间，因此不能使用只单调递增的 steady_clock，因为系统的绝对时间可能改变。
     auto now = std::chrono::system_clock::now();
     // 获取从 Unix epoch (1970-01-01 00:00:00 UTC) 到当前时间经过的微秒数。
     auto microSeconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
@@ -61,3 +64,6 @@ Timestamp Timestamp::AddTime(const Timestamp &timestamp, double seconds)
     // 返回新增时后的时间戳。
     return Timestamp(timestamp.microSecondsSinceEpoch() + delta);
 }
+
+
+DLOG_NAMESPACE_END

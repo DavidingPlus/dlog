@@ -1,0 +1,127 @@
+#include "logger.h"
+
+#include "logcolorguard.h"
+
+#include <array>
+#include <string>
+#include <system_error>
+
+
+DLOG_NAMESPACE_BEGIN(dlog)
+
+
+namespace
+{
+
+    // LEVEL_COUNT 是等级数量，不属于实际日志等级，因此正好可以用来确定数组大小。
+    // LogLevel 使用 enum class，不能直接拿枚举值作为数组下标，需要先转换为 size_t 类型。
+    constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLogLevelNames{
+        "[TRACE] ",
+        "[DEBUG] ",
+        "[INFO ] ",
+        "[WARN ] ",
+        "[ERROR] ",
+        "[FATAL] ",
+    };
+
+    std::string_view logLevelName(LogLevel level) noexcept { return kLogLevelNames[static_cast<size_t>(level)]; }
+
+    // 默认的日志输出函数，将日志内容写入标准输出流（stdout）。
+    void defaultOutput(const char *data, size_t len) { std::fwrite(data, len, sizeof(char), stdout); }
+
+    // 默认的刷新函数，刷新标准输出流的缓冲区，确保日志及时输出，在发生错误或需要立即看到日志时会被调用。
+    void defaultFlush() { std::fflush(stdout); }
+
+    Logger::OutputFunc g_outputCallback = defaultOutput;
+
+    Logger::FlushFunc g_flushCallback = defaultFlush;
+
+    LogLevelColorMode g_colorMode = LogLevelColorMode::ON;
+
+} // namespace
+
+
+FileNameView::FileNameView(const char *path)
+    : m_view(path)
+{
+    // 同时处理 Unix 和 Windows 的路径分隔符。例如：2022/10/26/test.log 和 D:\Workspace\dlog\src\core\logger.h
+    // find_last_of("/\\") 中的字符串表示“待查找的字符集合”：
+    //   - /  ：Unix 路径分隔符；
+    //   - \\ ：Windows 路径分隔符。这里的反斜杠需要额外转义。
+    // 函数返回最后一个分隔符在 m_view 中的下标，而不是返回分隔符本身。
+    auto sepPos = m_view.find_last_of("/\\");
+
+    // npos 表示没有找到任何路径分隔符，此时 m_view 已经是文件名，不需要处理。
+    // sepPos + 1 表示跳过最后一个 '/' 或 '\\'，使视图指向文件名首字符。
+    // remove_prefix(n) 的语义是从当前视图的开头移除 n 个字符。它只调整视图的起始地址和长度，不修改、不复制、不移动底层字符数据。
+    // 例如：对 "dir/log.txt" 调用 remove_prefix(4) 后，原字符串仍是 "dir/log.txt"，但当前视图变为 "log.txt"。
+    // 调用者必须保证 n <= m_view.size()；这里的 sepPos + 1 正好指向文件名的首字符，因此满足这个前提。例如："D:/src/logger/Logger.cc" -> "Logger.cc"。
+    if (std::string_view::npos != sepPos) m_view.remove_prefix(sepPos + 1);
+}
+
+Logger::~Logger()
+{
+    m_impl.finish();
+
+    const SmallBuffer &buffer = stream().buffer();
+
+    // 输出（默认项终端输出）。
+    g_outputCallback(buffer.data(), buffer.length());
+    // 输出 FATAL 的情况，刷新缓冲区并终止程序。
+    if (LogLevel::FATAL == m_impl.m_level)
+    {
+        g_flushCallback();
+        std::abort();
+    }
+}
+
+void Logger::SetOutput(OutputFunc output, LogLevelColorMode colorMode)
+{
+    g_outputCallback = output;
+    g_colorMode = colorMode;
+}
+
+void Logger::SetFlush(FlushFunc flush) { g_flushCallback = flush; }
+
+Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filename, int line)
+    : m_time(Timestamp::Now()), m_level(level), m_basename(filename), m_line(line)
+{
+    // 根据时区格式化当前时间字符串, 也是一条 log 消息的开头，作为整条日志的前缀。
+    formatTime();
+
+    // 按当前颜色模式写入日志等级。
+    if (LogLevelColorMode::ON == g_colorMode)
+    {
+        LogColorGuard color(m_stream, m_level);
+        m_stream << logLevelName(m_level);
+    }
+    else
+    {
+        m_stream << logLevelName(m_level);
+    }
+
+    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的固定缓冲区，因此这里只需要保证源文件名在调用时仍有效。
+    m_stream << "[" << m_basename.view() << ':' << m_line << "] ";
+
+    // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
+    if (savedErrno)
+    {
+        // std::error_code(value, category) 用数值和错误类别共同标识一个错误；这里的 savedErrno 是 errno 风格的错误码。
+        // std::generic_category() 返回标准通用错误类别，用于解释 errno 这类通用错误码；std::system_category() 则用于平台原生错误码。
+        // message() 根据这对错误码和类别生成可读描述，并按值返回独立的 std::string。
+        // 标准库负责 std::error_code 内部的并发安全（可能在内部加了锁），因此这里不需要进程内互斥锁。如果将来需要直接使用 strerror 系列接口，可封装 strerror_r/strerror_s，并用线程专用缓冲区（例如局部缓冲区或 thread_local 缓冲区）接收结果。
+        m_stream << std::error_code(savedErrno, std::generic_category()).message() << " (errno=" << savedErrno << ") ";
+    }
+}
+
+void Logger::LoggerImpl::formatTime()
+{
+    // m_time 在 LoggerImpl 构造时已经保存，是当前这条日志的时间戳。这里直接使用 m_time，而不是再次调用 Timestamp::Now()，这样可以避免一次额外的取时操作，并保证日志前缀表示 LoggerImpl 创建时的时间。
+
+    // toFormattedString(true) 返回一个独立拥有字符数据的 std::string，例如："[2026/09/22 15:30:12.123456]"。LogStream 会在本次 operator<< 调用中把它复制到自己的固定缓冲区，因此临时字符串在这条语句结束后销毁不会造成悬空引用。
+    // 多个线程分别格式化各自日志时，toFormattedString() 这条路径是线程安全的。但线程安全不等于没有开销：每条日志仍需要做时间格式化，并可能创建临时 std::string；如果后续日志频率很高，可以再使用 thread_local 缓存每秒不变的日期部分进行优化。
+    m_stream << "[" << m_time.toFormattedString(true) << "] ";
+}
+
+
+DLOG_NAMESPACE_END

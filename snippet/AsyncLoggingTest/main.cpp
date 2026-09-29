@@ -1,0 +1,78 @@
+#include "asynclogging.h"
+#include "logger.h"
+
+#include <cerrno>
+#include <cstdint>
+#include <filesystem>
+#include <string>
+
+
+namespace
+{
+    constexpr int64_t kRollSize = 1LL * 1024 * 1024;
+
+    dlog::AsyncLogging *g_asyncLog = nullptr;
+
+
+    void asyncLog(const char *message, size_t length)
+    {
+        if (g_asyncLog) g_asyncLog->append(message, length);
+    }
+
+    void testLogging()
+    {
+        DLOG_DEBUG() << "debug";
+        DLOG_INFO() << "info";
+        DLOG_WARN() << "warn";
+        DLOG_ERROR() << "error";
+        DLOG_SYS_ERROR(ENOENT);
+
+        for (int i = 0; i < 10; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
+    }
+
+    void testAsyncLogging()
+    {
+        for (int i = 0; i < 1024; ++i) DLOG_INFO() << "Hello, " << i << " abc...xyz";
+    }
+
+    void testRollover()
+    {
+        // 每块大小等于一个 dlog::LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
+        std::string firstBuffer(dlog::kLargeBufferSize, 'A');
+        std::string secondBuffer(dlog::kLargeBufferSize, 'B');
+
+        g_asyncLog->append(firstBuffer.data(), firstBuffer.size());
+        g_asyncLog->append(secondBuffer.data(), secondBuffer.size());
+    }
+
+} // namespace
+
+
+int main()
+{
+    std::filesystem::path logDirectory("logs");
+    std::filesystem::create_directories(logDirectory);
+
+    std::string logBasePath = (logDirectory / "AsyncLoggingTest").string();
+    dlog::AsyncLogging logging(logBasePath, kRollSize);
+
+    // 先使用 dlog::Logger 的默认输出，确认日志格式化与异步输出切换前的行为。
+    testLogging();
+
+    // dlog::AsyncLogging 对象和回调目标先准备好，再启动后台线程并切换 dlog::Logger 输出。
+    g_asyncLog = &logging;
+    logging.start();
+    dlog::Logger::SetOutput(asyncLog, dlog::LogLevelColorMode::OFF);
+
+    testLogging();
+    testAsyncLogging();
+
+    // 先结束普通日志批次，再重启写盘线程，使滚动演示从空生产者缓冲区开始。
+    logging.stop();
+    logging.start();
+    testRollover();
+
+    // stop() 会排空生产者缓冲区、写出剩余日志并完成最终 flush。
+    logging.stop();
+    g_asyncLog = nullptr;
+}
