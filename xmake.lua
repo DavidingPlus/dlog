@@ -25,7 +25,7 @@ set_project(project_name)
 set_description("A Simple Log System.")
 set_languages("cxx17")
 
-add_rules("mode.debug", "mode.release")
+add_rules("mode.debug", "mode.release", "mode.coverage")
 
 set_configvar("MACRO_PREFIX", macro_prefix)
 set_configdir("$(builddir)/config/")
