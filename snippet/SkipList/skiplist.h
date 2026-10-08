@@ -3,6 +3,8 @@
 
 #include "node.h"
 
+#include <iostream>
+
 
 template <typename K, typename T>
 class SkipList
@@ -79,16 +81,32 @@ void SkipList<K, T>::deleteElement(const K &)
 template <typename K, typename T>
 void SkipList<K, T>::displayList() const
 {
+    std::cout << "\n*****Skip List*****\n";
+
+    for (int i = 0; i <= m_currentLevel; i++)
+    {
+        std::cout << "Level " << i << ": ";
+
+        Node<K, T> *node = m_header->m_forward[i];
+        while (node)
+        {
+            std::cout << node->getKey() << ":" << node->getValue() << ";";
+            node = node->m_forward[i];
+        }
+
+        std::cout << std::endl;
+    }
 }
 
 template <typename K, typename T>
 int SkipList<K, T>::getRandomLevel()
 {
-    int level = 1;
-    while (std::rand() % 2) ++level;
+    // 从第 0 层开始；每次的随机数最低位为 1 就再提升一层，为 0 就停止，用于为新节点随机选择最高层数。同时 level < m_maxLevel 确保不会超过允许的最高层编号。
+    int level = 0;
+    while (level < m_maxLevel && (std::rand() & 1)) ++level;
 
 
-    return (level < m_maxLevel) ? level : m_maxLevel;
+    return level;
 }
 
 template <typename K, typename T>
