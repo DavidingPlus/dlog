@@ -10,7 +10,7 @@ class SkipList
 
 public:
 
-    explicit SkipList(int maxLevel);
+    explicit SkipList(int maxLevel) : m_maxLevel(maxLevel), m_header(new Node<K, T>(K{}, T{}, maxLevel)) {}
 
     ~SkipList();
 
@@ -23,7 +23,7 @@ public:
 
     void displayList() const;
 
-    int size() const;
+    int size() const { return m_elementCount; }
 
 
 private:
@@ -48,14 +48,15 @@ private:
 
 
 template <typename K, typename T>
-SkipList<K, T>::SkipList(int maxLevel)
-    : m_maxLevel(maxLevel)
-{
-}
-
-template <typename K, typename T>
 SkipList<K, T>::~SkipList()
 {
+    if (!m_header) return;
+
+    // 从头节点的第 0 层后继开始清理；头节点最后单独释放。
+    if (!m_header->m_forward.empty()) clear(m_header->m_forward[0]);
+
+    delete m_header;
+    m_header = nullptr;
 }
 
 template <typename K, typename T>
@@ -81,15 +82,13 @@ void SkipList<K, T>::displayList() const
 }
 
 template <typename K, typename T>
-int SkipList<K, T>::size() const
-{
-    return m_elementCount;
-}
-
-template <typename K, typename T>
 int SkipList<K, T>::getRandomLevel()
 {
-    return 0;
+    int level = 1;
+    while (std::rand() % 2) ++level;
+
+
+    return (level < m_maxLevel) ? level : m_maxLevel;
 }
 
 template <typename K, typename T>
@@ -99,8 +98,14 @@ Node<K, T> *SkipList<K, T>::createNode(const K &, const T &, int)
 }
 
 template <typename K, typename T>
-void SkipList<K, T>::clear(Node<K, T> *)
+void SkipList<K, T>::clear(Node<K, T> *node)
 {
+    if (!node) return;
+
+    // 沿 m_forward[0] 遍历，因为最底层串起了所有数据节点；递归会先走到尾部再返回。返回时对当前节点执行 delete，逐个销毁所有数据节点。
+    if (!node->m_forward.empty()) clear(node->m_forward[0]);
+
+    delete node;
 }
 
 
