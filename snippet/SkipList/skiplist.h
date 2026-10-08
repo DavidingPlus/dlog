@@ -99,7 +99,7 @@ bool SkipList<K, T>::insertElement(const K &key, const T &value)
         update[i] = current;
     }
 
-    // 因此检查底层（第 0 层）插入位置的后继，判断 key 是否已存在。
+    // 检查底层（第 0 层）插入位置的后继，判断 key 是否已存在。已存在则不用插入，返回 false。
     current = update[0]->m_forward[0];
     if (current && key == current->getKey())
     {
@@ -187,8 +187,42 @@ bool SkipList<K, T>::searchElement(const K &key) const
 }
 
 template <typename K, typename T>
-void SkipList<K, T>::deleteElement(const K &)
+void SkipList<K, T>::deleteElement(const K &key)
 {
+    Node<K, T> *current = m_header;
+
+    // 逻辑完全类似 insertElement，使用 update 数组存储每层的前驱结点。
+    std::vector<Node<K, T> *> update(1 + m_maxLevel, nullptr);
+
+    for (int i = m_skipListLevel; i >= 0; --i)
+    {
+        while (current->m_forward[i] && current->m_forward[i]->getKey() < key) current = current->m_forward[i];
+
+        update[i] = current;
+    }
+
+    // 检查底层（第 0 层）插入位置的后继，判断 key 是否已存在，不存在则不用删除，直接返回。
+    current = update[0]->m_forward[0];
+    if (current && key == current->getKey())
+    {
+        // 从底层向上逐层绕过目标节点。目标节点只参加从第 0 层开始的连续若干层。当第一次发现某层的后继不是目标节点时，更高层必然也不是，因此不需要再处理。
+        for (int i = 0; i <= m_skipListLevel; ++i)
+        {
+            if (current != update[i]->m_forward[i]) break;
+
+            update[i]->m_forward[i] = current->m_forward[i];
+        }
+
+        // current 在所有参与的层都已被绕过，删除结点。
+        delete current;
+
+        --m_size;
+
+        // 如果删除以后最高层已没有数据节点，就逐层降低最高层编号。第 0 层始终保留。
+        while (m_skipListLevel > 0 && !m_header->m_forward[m_skipListLevel]) --m_skipListLevel;
+
+        std::cout << "Successfully deleted key: " << key << std::endl;
+    }
 }
 
 template <typename K, typename T>
