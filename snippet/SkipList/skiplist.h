@@ -4,6 +4,7 @@
 #include "node.h"
 
 #include <iostream>
+#include <shared_mutex>
 
 
 template <typename K, typename T>
@@ -26,7 +27,7 @@ public:
 
     void displayList() const;
 
-    int size() const { return m_size; }
+    int size() const;
 
 
 private:
@@ -37,6 +38,10 @@ private:
     // 释放从 node 开始的底层链表节点。
     void clear(Node<K, T> *node);
 
+
+    // 保护跳表的节点链、层级和元素数量。读操作持有共享锁；插入和删除持有独占锁。
+    // mutable 允许 const 查询方法也加锁。
+    mutable std::shared_mutex m_mutex;
 
     // 当前跳表允许到达的最高层编号。层编号从 0 开始，因此 maxLevel = 4 时，编号范围为 0 到 4。头节点需要 maxLevel + 1 个 forward 槽位。
     int m_maxLevel;
@@ -53,6 +58,7 @@ private:
 template <typename K, typename T>
 SkipList<K, T>::~SkipList()
 {
+    // 析构前调用方必须确保没有其他线程仍在访问此对象。
     if (!m_header) return;
 
     // 从头节点的第 0 层后继开始清理；头节点最后单独释放。
@@ -86,6 +92,9 @@ level 0         1    4   9 10         30   40  | 50 |  60      70       100
 template <typename K, typename T>
 bool SkipList<K, T>::insertElement(const K &key, const T &value)
 {
+    // 独占锁保证修改链表期间，其他读写操作都不能访问跳表。unique_lock 会在函数返回（包括重复 key 的提前返回）时自动释放锁。
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
     Node<K, T> *current = m_header;
 
     // update[i] 保存第 i 层中，新节点插入位置的前驱。后面要修改这些前驱的 m_forward[i]，把新节点接入对应层的链表。
@@ -159,6 +168,9 @@ level 0         1    4   9 10         30   40    50+-->60      70       100
 template <typename K, typename T>
 bool SkipList<K, T>::searchElement(const K &key) const
 {
+    // 共享锁允许多个线程同时查找，但会阻止插入和删除。
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+
     std::cout << "searchElement-----------------" << std::endl;
 
     Node<K, T> *current = m_header;
@@ -189,6 +201,8 @@ bool SkipList<K, T>::searchElement(const K &key) const
 template <typename K, typename T>
 void SkipList<K, T>::deleteElement(const K &key)
 {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
     Node<K, T> *current = m_header;
 
     // 逻辑完全类似 insertElement，使用 update 数组存储每层的前驱结点。
@@ -228,6 +242,8 @@ void SkipList<K, T>::deleteElement(const K &key)
 template <typename K, typename T>
 void SkipList<K, T>::displayList() const
 {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+
     std::cout << "\n*****Skip List*****\n";
 
     for (int i = 0; i <= m_skipListLevel; i++)
@@ -243,6 +259,13 @@ void SkipList<K, T>::displayList() const
 
         std::cout << std::endl;
     }
+}
+
+template <typename K, typename T>
+int SkipList<K, T>::size() const
+{
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_size;
 }
 
 template <typename K, typename T>
