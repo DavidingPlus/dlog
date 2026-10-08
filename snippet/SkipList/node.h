@@ -12,16 +12,15 @@ public:
 
     Node() = default;
 
-    Node(K key, T value, int level);
+    Node(K key, T value, int level) : m_forward(1 + level, nullptr), m_nodeLevel(level), m_key(key), m_value(value) {}
 
-    // vector 会自动释放指针数组；指针指向的节点由 SkipList 管理。
     ~Node() = default;
 
-    K get_key() const;
+    K getKey() const { return m_key; }
 
-    T get_value() const;
+    T getValue() const { return m_value; }
 
-    void set_value(T value);
+    void setValue(T value) { m_value = value; }
 
 
     // forward[i] 保存第 i 层中下一个节点的地址；下标 0 是最底层。使用 vector 管理这些指针槽位。
