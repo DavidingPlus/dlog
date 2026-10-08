@@ -12,6 +12,7 @@ class SkipList
 
 public:
 
+    // maxLevel 是允许的最高层编号，不是层数；例如 maxLevel = 4 时会有第 0 到第 4 层，共 5 层。
     explicit SkipList(int maxLevel) : m_maxLevel(maxLevel), m_header(new Node<K, T>(K{}, T{}, maxLevel)) {}
 
     ~SkipList();
@@ -25,7 +26,7 @@ public:
 
     void displayList() const;
 
-    int size() const { return m_elementCount; }
+    int size() const { return m_size; }
 
 
 private:
@@ -39,13 +40,15 @@ private:
     void clear(Node<K, T> *node);
 
 
+    // 当前跳表允许到达的最高层编号。层编号从 0 开始，因此 maxLevel = 4 时，编号范围为 0 到 4。头节点需要 maxLevel + 1 个 forward 槽位。
     int m_maxLevel;
 
-    int m_currentLevel = 0;
+    // 当前跳表实际使用的最高层编号。m_skipListLevel <= m_maxLevel，也就是说，上层可能有层数没有使用为空。遍历跳表从第 m_skipListLevel 层开始。
+    int m_skipListLevel = 0;
 
     Node<K, T> *m_header = nullptr;
 
-    int m_elementCount = 0;
+    int m_size = 0;
 };
 
 
@@ -67,10 +70,53 @@ int SkipList<K, T>::insertElement(const K &, const T &)
     return 0;
 }
 
+// Search for element in skip list
+/*
+                           +------------+
+                           |  select 60 |
+                           +------------+
+level 4     +-->1+                                                      100
+                 |
+                 |
+level 3         1+-------->10+------------------>50+           70       100
+                                                   |
+                                                   |
+level 2         1          10         30         50|           70       100
+                                                   |
+                                                   |
+level 1         1    4     10         30         50|           70       100
+                                                   |
+                                                   |
+level 0         1    4   9 10         30   40    50+-->60      70       100
+*/
 template <typename K, typename T>
-bool SkipList<K, T>::searchElement(const K &) const
+bool SkipList<K, T>::searchElement(const K &key) const
 {
-    return false;
+    std::cout << "searchElement-----------------" << std::endl;
+
+    Node<K, T> *current = m_header;
+
+    // 从当前实际使用的最高层（m_skipListLevel）向下查找。每层只越过小于 key 的节点，停在 key 的前驱处。降到下一层时保留 current，因为它在更低层也有对应的后继指针。
+    for (int i = m_skipListLevel; i >= 0; --i)
+    {
+        // 注意一个特殊情况，若 key == current->m_forward[i]->getKey()，此时依然会停在 key 的前驱，最底层最后判断的时候依然是成立的，符合算法模板本身。
+        while (current->m_forward[i] && current->m_forward[i]->getKey() < key) current = current->m_forward[i];
+    }
+
+    // 此时 current 是第 0 层中目标位置的前驱；向右一步取得候选节点。
+    current = current->m_forward[0];
+
+    // 只有候选节点的 key 与目标相等，才表示查找成功。
+    if (current && key == current->getKey())
+    {
+        std::cout << "Found key: " << key << ", value: " << current->getValue() << std::endl;
+        return true;
+    }
+    else
+    {
+        std::cout << "Not Found Key:" << key << std::endl;
+        return false;
+    }
 }
 
 template <typename K, typename T>
@@ -83,7 +129,7 @@ void SkipList<K, T>::displayList() const
 {
     std::cout << "\n*****Skip List*****\n";
 
-    for (int i = 0; i <= m_currentLevel; i++)
+    for (int i = 0; i <= m_skipListLevel; i++)
     {
         std::cout << "Level " << i << ": ";
 
@@ -101,7 +147,7 @@ void SkipList<K, T>::displayList() const
 template <typename K, typename T>
 int SkipList<K, T>::getRandomLevel()
 {
-    // 从第 0 层开始；每次的随机数最低位为 1 就再提升一层，为 0 就停止，用于为新节点随机选择最高层数。同时 level < m_maxLevel 确保不会超过允许的最高层编号。
+    // 从第 0 层开始；每次的随机数最低位为 1 就再提升一层，为 0 就停止，随机得到新节点的最高层编号。level < m_maxLevel 确保这个编号不会超过允许的最高层编号；节点会参与第 0 层到 level 层。
     int level = 0;
     while (level < m_maxLevel && (std::rand() & 1)) ++level;
 
