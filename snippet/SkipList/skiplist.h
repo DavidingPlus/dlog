@@ -271,7 +271,7 @@ int SkipList<K, T>::size() const
 template <typename K, typename T>
 int SkipList<K, T>::getRandomLevel()
 {
-    // 从第 0 层开始；每次的随机数最低位为 1 就再提升一层，为 0 就停止，随机得到新节点的最高层编号。level < m_maxLevel 确保这个编号不会超过允许的最高层编号；节点会参与第 0 层到 level 层。
+    // 每次用 rand() 做一次升层判断，结果为 1 就提升一层，直到结果为 0 或到达 m_maxLevel。返回的是最高层编号；新节点会参与第 0 层到 level 层。
     int level = 0;
     while (level < m_maxLevel && (std::rand() & 1)) ++level;
 
