@@ -11,7 +11,7 @@ DLOG_NAMESPACE_BEGIN(dlog)
 namespace
 {
 
-    constexpr std::array<std::string_view, static_cast<std::size_t>(LogLevel::LEVEL_COUNT)> kLogLevelColors{
+    constexpr std::array<std::string_view, static_cast<size_t>(LogLevel::LEVEL_COUNT)> kLogLevelColors{
         DLOG_COLOR_TRACE,
         DLOG_COLOR_DEBUG,
         DLOG_COLOR_INFO,

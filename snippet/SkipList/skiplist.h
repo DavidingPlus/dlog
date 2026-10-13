@@ -1,0 +1,416 @@
+#ifndef _SKIPLIST_SKIPLIST_H_
+#define _SKIPLIST_SKIPLIST_H_
+
+#include "node.h"
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <shared_mutex>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+
+template <typename K, typename T>
+class SkipList
+{
+
+public:
+
+    // maxLevel 是允许的最高层编号，不是层数；例如 maxLevel = 4 时会有第 0 到第 4 层，共 5 层。
+    explicit SkipList(int maxLevel) : m_maxLevel(maxLevel), m_header(new Node<K, T>(K{}, T{}, maxLevel)) {}
+
+    ~SkipList();
+
+    // 插入键值对。返回 true 表示插入成功，返回 false 表示 key 已存在。
+    bool insertElement(const K &key, const T &value);
+
+    bool searchElement(const K &key) const;
+
+    void deleteElement(const K &key);
+
+    void displayList() const;
+
+    // 将全部键值对按 key 顺序保存到当前工作目录的 store/dumpFile，覆盖旧内容。保存失败时抛出异常。
+    void dumpFile() const;
+
+    // TODO 当前按 int key、std::string value 的方式从 store/dumpFile 逐行加载；重复 key 保留已有值。
+    // 加载时合并到已有跳表，不清空原跳表中的节点；重复判断只看 key，即使 value 不同也不会覆盖。
+    void loadFile();
+
+    int size() const;
+
+
+private:
+
+    // 保存和加载使用同一路径，路径相对于程序运行时的工作目录。
+    static constexpr const char *kStoreFile = "store/dumpFile";
+
+
+    // 为新节点随机选择最高层编号；新节点会参与从第 0 层到该层的所有层。
+    int getRandomLevel();
+
+    // 释放从 node 开始的底层链表节点。
+    void clear(Node<K, T> *node);
+
+
+    // 保护跳表的节点链、层级和元素数量。读操作持有共享锁；插入和删除持有独占锁。
+    // mutable 允许 const 查询方法也加锁。
+    mutable std::shared_mutex m_mutex;
+
+    // 当前跳表允许到达的最高层编号。层编号从 0 开始，因此 maxLevel = 4 时，编号范围为 0 到 4。头节点需要 maxLevel + 1 个 forward 槽位。
+    int m_maxLevel;
+
+    // 当前跳表实际使用的最高层编号，范围为 0 到 m_maxLevel。高于该编号的层暂时为空；遍历跳表从第 m_skipListLevel 层开始。
+    int m_skipListLevel = 0;
+
+    Node<K, T> *m_header = nullptr;
+
+    int m_size = 0;
+};
+
+
+template <typename K, typename T>
+SkipList<K, T>::~SkipList()
+{
+    // 析构前调用方必须确保没有其他线程仍在访问此对象。
+    if (!m_header) return;
+
+    // 从头节点的第 0 层后继开始清理；头节点最后单独释放。
+    if (!m_header->m_forward.empty()) clear(m_header->m_forward[0]);
+
+    delete m_header;
+    m_header = nullptr;
+}
+
+// Insert given key and value in skip list
+/*
+                           +------------+
+                           |  insert 50 |
+                           +------------+
+level 4     +-->1+                                                      100
+                 |
+                 |                      insert +----+
+level 3         1+-------->10+---------------> | 50 |          70       100
+                                               |    |
+                                               |    |
+level 2         1          10         30       | 50 |          70       100
+                                               |    |
+                                               |    |
+level 1         1    4     10         30       | 50 |          70       100
+                                               |    |
+                                               |    |
+level 0         1    4   9 10         30   40  | 50 |  60      70       100
+                                               +----+
+*/
+
+template <typename K, typename T>
+bool SkipList<K, T>::insertElement(const K &key, const T &value)
+{
+    // 独占锁保证修改链表期间，其他读写操作都不能访问跳表。unique_lock 会在函数返回（包括重复 key 的提前返回）时自动释放锁。
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
+    Node<K, T> *current = m_header;
+
+    // update[i] 保存第 i 层中，新节点插入位置的前驱。后面要修改这些前驱的 m_forward[i]，把新节点接入对应层的链表。
+    std::vector<Node<K, T> *> update(1 + m_maxLevel, nullptr);
+
+    // 同 searchElement() 逻辑，从当前实际使用的最高层向下查找。每层向右越过所有小于 key 的节点，停下来的 current 就是这一层插入位置的前驱。
+    for (int i = m_skipListLevel; i >= 0; --i)
+    {
+        while (current->m_forward[i] && current->m_forward[i]->getKey() < key) current = current->m_forward[i];
+
+        update[i] = current;
+    }
+
+    // 检查底层（第 0 层）插入位置的后继，判断 key 是否已存在。已存在则不用插入，返回 false。
+    current = update[0]->m_forward[0];
+    if (current && key == current->getKey())
+    {
+        std::cout << "key: " << key << ", exists" << std::endl;
+        return false;
+    }
+
+    // 随机决定新节点参与的最高层编号；新节点会出现在第 0 层到 randomLevel 层。
+    int randomLevel = getRandomLevel();
+
+    // 若新节点会把跳表顶层抬高，超出的层目前没有数据节点，前驱都是头节点，前面通过 m_skipListLevel 遍历无法填充这些层的 update[i] 信息。因此这里先填写 update；等节点成功接入后再更新 m_skipListLevel。
+    if (randomLevel > m_skipListLevel)
+    {
+        for (int i = 1 + m_skipListLevel; i <= randomLevel; ++i) update[i] = m_header;
+    }
+
+    Node<K, T> *newNode = new Node<K, T>(key, value, randomLevel);
+
+    // 逐层插入：先让新节点指向原后继，再让前驱指向新节点，避免丢失原链条。
+    for (int i = 0; i <= randomLevel; ++i)
+    {
+        newNode->m_forward[i] = update[i]->m_forward[i];
+        update[i]->m_forward[i] = newNode;
+    }
+
+    // 更新状态。
+    if (randomLevel > m_skipListLevel) m_skipListLevel = randomLevel;
+
+    ++m_size;
+
+    std::cout << "Successfully inserted key: " << key << ", value: " << value << std::endl;
+
+
+    return true;
+}
+
+// Search for element in skip list
+/*
+                           +------------+
+                           |  select 60 |
+                           +------------+
+level 4     +-->1+                                                      100
+                 |
+                 |
+level 3         1+-------->10+------------------>50+           70       100
+                                                   |
+                                                   |
+level 2         1          10         30         50|           70       100
+                                                   |
+                                                   |
+level 1         1    4     10         30         50|           70       100
+                                                   |
+                                                   |
+level 0         1    4   9 10         30   40    50+-->60      70       100
+*/
+
+template <typename K, typename T>
+bool SkipList<K, T>::searchElement(const K &key) const
+{
+    // 共享锁允许多个线程同时查找，但会阻止插入和删除。
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+
+    std::cout << "searchElement-----------------" << std::endl;
+
+    Node<K, T> *current = m_header;
+
+    // 从当前实际使用的最高层（m_skipListLevel）向下查找。每层只越过小于 key 的节点，停在 key 的前驱处。降到下一层时保留 current，因为它在更低层也有对应的后继指针。
+    for (int i = m_skipListLevel; i >= 0; --i)
+    {
+        // 注意一个特殊情况，若 key == current->m_forward[i]->getKey()，此时依然会停在 key 的前驱，最底层最后判断的时候依然是成立的，符合算法模板本身。
+        while (current->m_forward[i] && current->m_forward[i]->getKey() < key) current = current->m_forward[i];
+    }
+
+    // 此时 current 是第 0 层中目标位置的前驱；向右一步取得候选节点。
+    current = current->m_forward[0];
+
+    // 只有候选节点的 key 与目标相等，才表示查找成功。
+    if (current && key == current->getKey())
+    {
+        std::cout << "Found key: " << key << ", value: " << current->getValue() << std::endl;
+        return true;
+    }
+    else
+    {
+        std::cout << "Not Found Key:" << key << std::endl;
+        return false;
+    }
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::deleteElement(const K &key)
+{
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
+    Node<K, T> *current = m_header;
+
+    // 逻辑完全类似 insertElement，使用 update 数组存储每层的前驱结点。
+    std::vector<Node<K, T> *> update(1 + m_maxLevel, nullptr);
+
+    for (int i = m_skipListLevel; i >= 0; --i)
+    {
+        while (current->m_forward[i] && current->m_forward[i]->getKey() < key) current = current->m_forward[i];
+
+        update[i] = current;
+    }
+
+    // 检查底层（第 0 层）插入位置的后继，判断 key 是否已存在，不存在则不用删除，直接返回。
+    current = update[0]->m_forward[0];
+    if (current && key == current->getKey())
+    {
+        // 从底层向上逐层绕过目标节点。目标节点只参加从第 0 层开始的连续若干层。当第一次发现某层的后继不是目标节点时，更高层必然也不是，因此不需要再处理。
+        for (int i = 0; i <= m_skipListLevel; ++i)
+        {
+            if (current != update[i]->m_forward[i]) break;
+
+            update[i]->m_forward[i] = current->m_forward[i];
+        }
+
+        // current 在所有参与的层都已被绕过，删除结点。
+        delete current;
+
+        --m_size;
+
+        // 如果删除以后最高层已没有数据节点，就逐层降低最高层编号。第 0 层始终保留。
+        while (m_skipListLevel > 0 && !m_header->m_forward[m_skipListLevel]) --m_skipListLevel;
+
+        std::cout << "Successfully deleted key: " << key << std::endl;
+    }
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::displayList() const
+{
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+
+    std::cout << "\n*****Skip List*****\n";
+
+    for (int i = 0; i <= m_skipListLevel; i++)
+    {
+        std::cout << "Level " << i << ": ";
+
+        Node<K, T> *node = m_header->m_forward[i];
+        while (node)
+        {
+            std::cout << node->getKey() << ":" << node->getValue() << ";";
+            node = node->m_forward[i];
+        }
+
+        std::cout << std::endl;
+    }
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::dumpFile() const
+{
+
+    // 保存流程：取得独占锁 -> 打开并清空旧文件 -> 沿第 0 层写入所有键值对 -> 关闭文件 -> 释放锁。
+    // 内存中的跳表：
+    //     Level 2: HEAD --------------------------------> [3:banana]
+    //     Level 1: HEAD -> [1:apple] --------------------> [3:banana]
+    //     Level 0: HEAD -> [1:apple] -> [2:pear] ---------> [3:banana] -> nullptr
+    //                           |
+    //                           | dumpFile() 只沿第 0 层读取，每个节点写一次
+    //                           v
+    //     磁盘文本文件：store/dumpFile
+    //     +------------------+
+    //     | 1:apple          |  第一行
+    //     | 2:pear           |  第二行
+    //     | 3:banana         |  第三行
+    //     +------------------+
+    // 每行格式为 key:value，行尾有换行符；文件中保存的只有键值文本。HEAD、Node 对象、m_forward 指针和层级编号都不会写入文件。加载时通过 insertElement() 重新创建节点和各层链接，因此恢复后的层级可能不同。
+
+    // 保存只读取节点，但同一对象的多次保存都会覆盖同一个文件，因此也要串行执行。独占锁同时阻止插入和删除，保证遍历期间得到一份完整、一致的数据快照。
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
+    std::cout << "dumpFile-----------------" << std::endl;
+
+    std::filesystem::path filePath(kStoreFile);
+    std::filesystem::create_directories(filePath.parent_path());
+
+    // 文件流仅在本次保存期间存在，语义是即拿即用，离开作用域会自动关闭，包括异常退出。
+    // trunc 表示先清空旧文件；空跳表也会把旧文件覆盖为空文件。
+    std::ofstream fileWriter(filePath, std::ios::out | std::ios::trunc);
+    if (!fileWriter.is_open()) throw std::runtime_error(std::string("Failed to open dump file: ") + kStoreFile);
+
+    // 第 0 层包含全部数据节点，且按 key 排序，因此无需遍历其他层。每行保存 key:value；只保存键值数据，不保存节点指针或随机生成的层级。
+    Node<K, T> *node = m_header->m_forward[0];
+    while (node)
+    {
+        std::cout << node->getKey() << ":" << node->getValue() << ";\n";
+
+        fileWriter << node->getKey() << ":" << node->getValue() << "\n";
+        node = node->m_forward[0];
+    }
+
+    // 将缓冲区内容交给文件系统并关闭文件；检查写入或关闭期间发生的错误。
+    fileWriter.flush();
+    fileWriter.close();
+    if (!fileWriter) throw std::runtime_error(std::string("Failed to write dump file: ") + kStoreFile);
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::loadFile()
+{
+    // 加载流程：
+    //     store/dumpFile
+    //           |
+    //           | getline() 读取一行
+    //           v
+    //        "2:pear"
+    //           |
+    //           | find(':') + substr()，按第一个冒号拆分
+    //           v
+    //     key = "2"，value = "pear"
+    //           |
+    //           | stoi(key) 将 key 转成整数
+    //           v
+    //     insertElement(2, "pear")
+    //           |
+    //           +-> 取得 m_mutex 的独占锁
+    //           +-> 查找位置；重复 key 保留原值，否则创建节点并接入各层
+    //           +-> 返回时自动释放独占锁
+    //           |
+    //           v
+    //     继续读取下一行，直到文件结束；局部文件流离开作用域时自动关闭。
+
+    // 加载前不会清空当前内存中的跳表，文件中的记录逐条交给 insertElement() 处理。key 不存在时创建新节点；key 已存在时返回 false，保留原 value，不增加节点数量。重复判断只看 key：即使文件中的 value 与原 value 不同，也不会覆盖原值。如果文件本身多次出现同一 key，且内存中原先没有它，保留文件中第一次成功插入的值。
+    // 例如：加载前内存为 1:apple，文件中的三行依次为：
+    //     1:banana   -> key 1 已存在，保留 apple
+    //     2:pear     -> key 2 不存在，插入 pear
+    //     2:peach    -> key 2 已存在，保留 pear
+    // 加载后内存为 1:apple、2:pear。
+
+    // 锁的边界：loadFile() 的读取和字符串拆分使用局部变量，不直接访问节点链。修改跳表的工作全部交给 insertElement()，因此每次插入都受到独占锁保护。不能在 loadFile() 外层持有 m_mutex 再调用 insertElement()：std::shared_mutex 不支持递归加锁。
+
+    std::ifstream fileReader(kStoreFile);
+    if (!fileReader.is_open()) throw std::runtime_error(std::string("Failed to open dump file: ") + kStoreFile);
+
+    std::cout << "loadFile-----------------" << std::endl;
+
+    std::string line;
+    while (std::getline(fileReader, line))
+    {
+        // 按第一个冒号拆分 key 和 value，value 中的其他冒号保留。
+        size_t delimiter = line.find(':');
+        if (std::string::npos == delimiter) continue;
+
+        std::string key = line.substr(0, delimiter);
+        std::string value = line.substr(delimiter + 1);
+        if (key.empty() || value.empty()) continue;
+
+        // key 用 stoi 转为 int，value 直接使用字符串。insertElement() 内部为这一次插入加独占锁；这里不在外层重复加锁。重复 key 返回 false 时，跳表保持不变；这里继续读取后续行。
+        insertElement(std::stoi(key), value);
+    }
+}
+
+template <typename K, typename T>
+int SkipList<K, T>::size() const
+{
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_size;
+}
+
+template <typename K, typename T>
+int SkipList<K, T>::getRandomLevel()
+{
+    // 每次用 rand() 做一次升层判断，结果为 1 就提升一层，直到结果为 0 或到达 m_maxLevel。返回的是最高层编号；新节点会参与第 0 层到 level 层。
+    int level = 0;
+    while (level < m_maxLevel && (std::rand() & 1)) ++level;
+
+
+    return level;
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::clear(Node<K, T> *node)
+{
+    // 第 0 层串起了全部数据节点，每个节点只需删除一次，上层无需单独遍历。循环清理避免例如压力测试中数万个节点导致递归调用栈过深。
+    while (node)
+    {
+        // 在删除前保存后继，delete 之后不能再读取当前节点的 m_forward[0]。
+        Node<K, T> *next = node->m_forward.empty() ? nullptr : node->m_forward[0];
+        delete node;
+        node = next;
+    }
+}
+
+
+#endif
