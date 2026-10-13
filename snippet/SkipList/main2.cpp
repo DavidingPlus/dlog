@@ -4,9 +4,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -147,6 +151,64 @@ namespace
             std::srand(12345);
         }
     };
+
+    // dumpFile 使用相对路径；每个保存测试在独立临时目录中运行，避免覆盖用户的数据文件。
+    class TemporaryDumpDirectory
+    {
+    public:
+
+        TemporaryDumpDirectory() : m_previousDirectory(std::filesystem::current_path())
+        {
+            const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+            m_directory = std::filesystem::temp_directory_path() / ("skiplist-dump-test-" + std::to_string(timestamp));
+            if (!std::filesystem::create_directory(m_directory)) throw std::runtime_error("Failed to create dump test directory");
+
+            try
+            {
+                std::filesystem::current_path(m_directory);
+            }
+            catch (...)
+            {
+                std::error_code ignoredError;
+                std::filesystem::remove(m_directory, ignoredError);
+                throw;
+            }
+        }
+
+        ~TemporaryDumpDirectory()
+        {
+            std::error_code ignoredError;
+            std::filesystem::current_path(m_previousDirectory, ignoredError);
+            // 只移除本测试创建的三个固定路径；不递归删除其他文件。
+            std::filesystem::remove(m_directory / "store" / "dumpFile", ignoredError);
+            std::filesystem::remove(m_directory / "store", ignoredError);
+            std::filesystem::remove(m_directory, ignoredError);
+        }
+
+        TemporaryDumpDirectory(const TemporaryDumpDirectory &) = delete;
+        TemporaryDumpDirectory &operator=(const TemporaryDumpDirectory &) = delete;
+
+    private:
+
+        std::filesystem::path m_previousDirectory;
+        std::filesystem::path m_directory;
+    };
+
+    class SkipListDumpTest : public SkipListTest
+    {
+    private:
+
+        TemporaryDumpDirectory m_directory;
+    };
+
+    std::string readDumpFile()
+    {
+        std::ifstream file("store/dumpFile");
+        EXPECT_TRUE(file.is_open());
+        std::ostringstream contents;
+        contents << file.rdbuf();
+        return contents.str();
+    }
 
 } // namespace
 
@@ -473,6 +535,110 @@ TEST_F(SkipListTest, ConcurrentInsertionOfTheSameKeySucceedsExactlyOnce)
                                                    { EXPECT_TRUE(list.searchElement(7)); });
     EXPECT_NE(searchOutput.find("Found key: 7, value: candidate-"), std::string::npos);
     expectValidDisplayedStructure(displayQuiet(list), {7});
+}
+
+
+TEST_F(SkipListDumpTest, SavesAllPairsInKeyOrderWithoutChangingTheList)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  {
+        ASSERT_TRUE(list.insertElement(7, "seven:tail"));
+        ASSERT_TRUE(list.insertElement(1, "one"));
+        ASSERT_TRUE(list.insertElement(3, "")); });
+    const std::string beforeSave = displayQuiet(list);
+
+    EXPECT_NO_THROW(captureOutput([&]
+                                  { list.dumpFile(); }));
+
+    EXPECT_EQ(readDumpFile(), "1:one\n3:\n7:seven:tail\n");
+    EXPECT_EQ(list.size(), 3);
+    EXPECT_TRUE(searchQuiet(list, 1));
+    EXPECT_TRUE(searchQuiet(list, 3));
+    EXPECT_TRUE(searchQuiet(list, 7));
+    EXPECT_EQ(displayQuiet(list), beforeSave);
+}
+
+TEST_F(SkipListDumpTest, RepeatedSavesOverwriteOldDataAndEmptyListProducesAnEmptyFile)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  {
+        ASSERT_TRUE(list.insertElement(1, "one"));
+        ASSERT_TRUE(list.insertElement(2, "two"));
+        list.dumpFile(); });
+    EXPECT_EQ(readDumpFile(), "1:one\n2:two\n");
+
+    captureOutput([&]
+                  {
+        list.deleteElement(1);
+        ASSERT_TRUE(list.insertElement(3, "three"));
+        list.dumpFile(); });
+    EXPECT_EQ(readDumpFile(), "2:two\n3:three\n");
+
+    captureOutput([&]
+                  {
+        list.deleteElement(2);
+        list.deleteElement(3);
+        list.dumpFile(); });
+    EXPECT_EQ(list.size(), 0);
+    EXPECT_EQ(readDumpFile(), "");
+}
+
+TEST_F(SkipListDumpTest, OpeningAnInvalidDestinationThrowsAndLeavesTheListUsable)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { ASSERT_TRUE(list.insertElement(1, "one")); });
+    // 用目录占据目标文件路径，确保打开输出文件失败。
+    std::filesystem::create_directories("store/dumpFile");
+
+    EXPECT_THROW(captureOutput([&]
+                               { list.dumpFile(); }),
+                 std::runtime_error);
+
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 1)); // 异常路径也必须释放锁。
+}
+
+TEST_F(SkipListDumpTest, ConcurrentSavesOfTheSameListProduceOneCompleteSnapshot)
+{
+    SkipList<int, std::string> list(4);
+    std::string expectedContents;
+    captureOutput([&]
+                  {
+        for (int key = 0; key < 50; ++key)
+        {
+            ASSERT_TRUE(list.insertElement(key, std::to_string(key)));
+            expectedContents += std::to_string(key) + ":" + std::to_string(key) + "\n";
+        } });
+
+    std::atomic<bool> start{false};
+    std::atomic<int> failures{0};
+    std::vector<std::thread> writers;
+    {
+        CoutCapture capturedOutput;
+        for (int writer = 0; writer < 4; ++writer)
+        {
+            writers.emplace_back([&]
+                                 {
+                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+                try
+                {
+                    list.dumpFile();
+                }
+                catch (...)
+                {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                } });
+        }
+        start.store(true, std::memory_order_release);
+        for (std::thread &writer : writers) writer.join();
+    }
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
+    EXPECT_EQ(readDumpFile(), expectedContents);
+    EXPECT_EQ(list.size(), 50);
 }
 
 

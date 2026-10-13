@@ -3,8 +3,13 @@
 
 #include "node.h"
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <shared_mutex>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 
 template <typename K, typename T>
@@ -27,7 +32,7 @@ public:
 
     void displayList() const;
 
-    // 将全部键值对的信息写入文件。
+    // 将全部键值对按 key 顺序保存到当前工作目录的 store/dumpFile，覆盖旧内容。保存失败时抛出异常。
     void dumpFile() const;
 
     // 从文件读取键值对并插入当前跳表，重复 key 则保留已有值。
@@ -37,6 +42,10 @@ public:
 
 
 private:
+
+    // 保存路径相对于程序运行时的工作目录；loadFile() 后续也使用同一路径。
+    static constexpr char *kStoreFile = "store/dumpFile";
+
 
     // 为新节点随机选择最高层编号；新节点会参与从第 0 层到该层的所有层。
     int getRandomLevel();
@@ -270,6 +279,33 @@ void SkipList<K, T>::displayList() const
 template <typename K, typename T>
 void SkipList<K, T>::dumpFile() const
 {
+    // 保存只读取节点，但同一对象的多次保存都会覆盖同一个文件，因此也要串行执行。独占锁同时阻止插入和删除，保证遍历期间得到一份完整、一致的数据快照。
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+
+    std::cout << "dumpFile-----------------" << std::endl;
+
+    const std::filesystem::path filePath(kStoreFile);
+    std::filesystem::create_directories(filePath.parent_path());
+
+    // 文件流仅在本次保存期间存在，语义是即拿即用，离开作用域会自动关闭，包括异常退出。
+    // trunc 表示先清空旧文件；空跳表也会把旧文件覆盖为空文件。
+    std::ofstream fileWriter(filePath, std::ios::out | std::ios::trunc);
+    if (!fileWriter.is_open()) throw std::runtime_error(std::string("Failed to open dump file: ") + kStoreFile);
+
+    // 第 0 层包含全部数据节点，且按 key 排序，因此无需遍历其他层。每行保存 key:value；只保存键值数据，不保存节点指针或随机生成的层级。
+    Node<K, T> *node = m_header->m_forward[0];
+    while (node)
+    {
+        std::cout << node->getKey() << ":" << node->getValue() << ";\n";
+
+        fileWriter << node->getKey() << ":" << node->getValue() << "\n";
+        node = node->m_forward[0];
+    }
+
+    // 将缓冲区内容交给文件系统并关闭文件；检查写入或关闭期间发生的错误。
+    fileWriter.flush();
+    fileWriter.close();
+    if (!fileWriter) throw std::runtime_error(std::string("Failed to write dump file: ") + kStoreFile);
 }
 
 template <typename K, typename T>
