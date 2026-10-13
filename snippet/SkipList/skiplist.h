@@ -27,6 +27,12 @@ public:
 
     void displayList() const;
 
+    // 将全部键值对的信息写入文件。
+    void dumpFile() const;
+
+    // 从文件读取键值对并插入当前跳表，重复 key 则保留已有值。
+    void loadFile();
+
     int size() const;
 
 
@@ -259,6 +265,16 @@ void SkipList<K, T>::displayList() const
 
         std::cout << std::endl;
     }
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::dumpFile() const
+{
+}
+
+template <typename K, typename T>
+void SkipList<K, T>::loadFile()
+{
 }
 
 template <typename K, typename T>
