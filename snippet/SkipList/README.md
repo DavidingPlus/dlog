@@ -98,6 +98,15 @@ Level 0: HEAD ──> 1 ───> 4 ───> 10 ─> 30 ─> 50 ─> 70
 xmake run SkipList
 ```
 
+启用仓库的 GoogleTest 选项并运行 SkipList 单元测试：
+
+```powershell
+xmake f --with_gtest=y
+xmake run SkipListTest
+```
+
+`SkipListTest` 只在 `with_gtest` 开启时生成。测试代码位于 `main2.cpp`，使用 GoogleTest fixture 和断言，覆盖空表、负数和边界 key、插入与重复 key、value 保持、查找命中与未命中、不同插入顺序、每层有序及高层节点在低层中的对应关系、删除首尾/中间/不存在节点、清空后重新插入、最高层收缩、`maxLevel = 0`、固定 seed 可复现，以及并发读写和并发重复插入。
+
 ## 当前实现的边界
 
 - 数据只保存在进程内存中；程序结束后不会持久化。
