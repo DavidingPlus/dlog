@@ -35,7 +35,8 @@ public:
     // 将全部键值对按 key 顺序保存到当前工作目录的 store/dumpFile，覆盖旧内容。保存失败时抛出异常。
     void dumpFile() const;
 
-    // 从文件读取键值对并插入当前跳表，重复 key 则保留已有值。
+    // TODO 当前按 int key、std::string value 的方式从 store/dumpFile 逐行加载；重复 key 保留已有值。
+    // 加载时合并到已有跳表，不清空原跳表中的节点；重复判断只看 key，即使 value 不同也不会覆盖。
     void loadFile();
 
     int size() const;
@@ -43,7 +44,7 @@ public:
 
 private:
 
-    // 保存路径相对于程序运行时的工作目录；loadFile() 后续也使用同一路径。
+    // 保存和加载使用同一路径，路径相对于程序运行时的工作目录。
     static constexpr char *kStoreFile = "store/dumpFile";
 
 
@@ -279,12 +280,29 @@ void SkipList<K, T>::displayList() const
 template <typename K, typename T>
 void SkipList<K, T>::dumpFile() const
 {
+
+    // 保存流程：取得独占锁 -> 打开并清空旧文件 -> 沿第 0 层写入所有键值对 -> 关闭文件 -> 释放锁。
+    // 内存中的跳表：
+    //     Level 2: HEAD --------------------------------> [3:banana]
+    //     Level 1: HEAD -> [1:apple] --------------------> [3:banana]
+    //     Level 0: HEAD -> [1:apple] -> [2:pear] ---------> [3:banana] -> nullptr
+    //                           |
+    //                           | dumpFile() 只沿第 0 层读取，每个节点写一次
+    //                           v
+    //     磁盘文本文件：store/dumpFile
+    //     +------------------+
+    //     | 1:apple          |  第一行
+    //     | 2:pear           |  第二行
+    //     | 3:banana         |  第三行
+    //     +------------------+
+    // 每行格式为 key:value，行尾有换行符；文件中保存的只有键值文本。HEAD、Node 对象、m_forward 指针和层级编号都不会写入文件。加载时通过 insertElement() 重新创建节点和各层链接，因此恢复后的层级可能不同。
+
     // 保存只读取节点，但同一对象的多次保存都会覆盖同一个文件，因此也要串行执行。独占锁同时阻止插入和删除，保证遍历期间得到一份完整、一致的数据快照。
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     std::cout << "dumpFile-----------------" << std::endl;
 
-    const std::filesystem::path filePath(kStoreFile);
+    std::filesystem::path filePath(kStoreFile);
     std::filesystem::create_directories(filePath.parent_path());
 
     // 文件流仅在本次保存期间存在，语义是即拿即用，离开作用域会自动关闭，包括异常退出。
@@ -311,6 +329,56 @@ void SkipList<K, T>::dumpFile() const
 template <typename K, typename T>
 void SkipList<K, T>::loadFile()
 {
+    // 加载流程：
+    //     store/dumpFile
+    //           |
+    //           | getline() 读取一行
+    //           v
+    //        "2:pear"
+    //           |
+    //           | find(':') + substr()，按第一个冒号拆分
+    //           v
+    //     key = "2"，value = "pear"
+    //           |
+    //           | stoi(key) 将 key 转成整数
+    //           v
+    //     insertElement(2, "pear")
+    //           |
+    //           +-> 取得 m_mutex 的独占锁
+    //           +-> 查找位置；重复 key 保留原值，否则创建节点并接入各层
+    //           +-> 返回时自动释放独占锁
+    //           |
+    //           v
+    //     继续读取下一行，直到文件结束；局部文件流离开作用域时自动关闭。
+
+    // 加载前不会清空当前内存中的跳表，文件中的记录逐条交给 insertElement() 处理。key 不存在时创建新节点；key 已存在时返回 false，保留原 value，不增加节点数量。重复判断只看 key：即使文件中的 value 与原 value 不同，也不会覆盖原值。如果文件本身多次出现同一 key，且内存中原先没有它，保留文件中第一次成功插入的值。
+    // 例如：加载前内存为 1:apple，文件中的三行依次为：
+    //     1:banana   -> key 1 已存在，保留 apple
+    //     2:pear     -> key 2 不存在，插入 pear
+    //     2:peach    -> key 2 已存在，保留 pear
+    // 加载后内存为 1:apple、2:pear。
+
+    // 锁的边界：loadFile() 的读取和字符串拆分使用局部变量，不直接访问节点链。修改跳表的工作全部交给 insertElement()，因此每次插入都受到独占锁保护。不能在 loadFile() 外层持有 m_mutex 再调用 insertElement()：std::shared_mutex 不支持递归加锁。
+
+    std::ifstream fileReader(kStoreFile);
+    if (!fileReader.is_open()) throw std::runtime_error(std::string("Failed to open dump file: ") + kStoreFile);
+
+    std::cout << "loadFile-----------------" << std::endl;
+
+    std::string line;
+    while (std::getline(fileReader, line))
+    {
+        // 按第一个冒号拆分 key 和 value，value 中的其他冒号保留。
+        size_t delimiter = line.find(':');
+        if (std::string::npos == delimiter) continue;
+
+        std::string key = line.substr(0, delimiter);
+        std::string value = line.substr(delimiter + 1);
+        if (key.empty() || value.empty()) continue;
+
+        // key 用 stoi 转为 int，value 直接使用字符串。insertElement() 内部为这一次插入加独占锁；这里不在外层重复加锁。重复 key 返回 false 时，跳表保持不变；这里继续读取后续行。
+        insertElement(std::stoi(key), value);
+    }
 }
 
 template <typename K, typename T>

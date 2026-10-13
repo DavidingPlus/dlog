@@ -5,9 +5,6 @@
 #include <string>
 
 
-// #define FILE_PATH "./store/dumpFile"
-
-
 int main()
 {
     // rand/srand 使用运行库的随机序列状态；整个程序启动时播种一次，不能在 SkipList 构造函数中重复播种。
@@ -27,8 +24,8 @@ int main()
 
     std::cout << "skipList size: " << skipList.size() << std::endl;
 
-    // skipList.dumpFile();
-    // skipList.loadFile();
+    skipList.dumpFile();
+    skipList.loadFile();
 
     skipList.searchElement(9);
     skipList.searchElement(18);

@@ -84,10 +84,10 @@ namespace
         return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
     }
 
-    std::size_t countOccurrences(const std::string &text, std::string_view target)
+    size_t countOccurrences(const std::string &text, std::string_view target)
     {
-        std::size_t count = 0;
-        std::size_t position = 0;
+        size_t count = 0;
+        size_t position = 0;
         while (std::string::npos != (position = text.find(target, position)))
         {
             ++count;
@@ -406,6 +406,6 @@ TEST_F(LogFileTest, SerializesConcurrentAppends)
     const auto files = findLogFiles(m_basePath);
     ASSERT_EQ(files.size(), 1u);
     const std::string content = readFile(files.front());
-    EXPECT_EQ(countOccurrences(content, payload), static_cast<std::size_t>(threadCount * messagesPerThread));
+    EXPECT_EQ(countOccurrences(content, payload), static_cast<size_t>(threadCount * messagesPerThread));
     EXPECT_EQ(content.size(), payload.size() * threadCount * messagesPerThread);
 }

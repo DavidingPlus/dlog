@@ -81,15 +81,15 @@ namespace
         {
             if (line.rfind("Level ", 0) != 0) continue;
 
-            const std::size_t contentStart = line.find(": ");
+            const size_t contentStart = line.find(": ");
             if (contentStart == std::string::npos) continue;
 
             std::vector<int> keys;
-            std::size_t itemStart = contentStart + 2;
+            size_t itemStart = contentStart + 2;
             while (itemStart < line.size())
             {
-                const std::size_t itemEnd = line.find(';', itemStart);
-                const std::size_t keyEnd = line.find(':', itemStart);
+                const size_t itemEnd = line.find(';', itemStart);
+                const size_t keyEnd = line.find(':', itemStart);
                 if (keyEnd == std::string::npos || (itemEnd != std::string::npos && keyEnd > itemEnd)) break;
 
                 keys.push_back(std::stoi(line.substr(itemStart, keyEnd - itemStart)));
@@ -110,7 +110,7 @@ namespace
         ASSERT_FALSE(levels.empty()) << "displayList() should always print level 0";
         EXPECT_EQ(levels.front(), expectedBottomKeys);
 
-        for (std::size_t level = 0; level < levels.size(); ++level)
+        for (size_t level = 0; level < levels.size(); ++level)
         {
             EXPECT_TRUE(std::is_sorted(levels[level].begin(), levels[level].end()))
                 << "keys are not sorted at level " << level;
@@ -119,7 +119,7 @@ namespace
 
             for (int key : levels[level])
             {
-                for (std::size_t lowerLevel = 0; lowerLevel < level; ++lowerLevel)
+                for (size_t lowerLevel = 0; lowerLevel < level; ++lowerLevel)
                 {
                     EXPECT_NE(std::find(levels[lowerLevel].begin(), levels[lowerLevel].end(), key),
                               levels[lowerLevel].end())
@@ -152,7 +152,7 @@ namespace
         }
     };
 
-    // dumpFile 使用相对路径；每个保存测试在独立临时目录中运行，避免覆盖用户的数据文件。
+    // 文件保存和加载使用相对路径；每个测试在独立临时目录中运行，避免覆盖用户的数据文件。
     class TemporaryDumpDirectory
     {
     public:
@@ -195,6 +195,13 @@ namespace
     };
 
     class SkipListDumpTest : public SkipListTest
+    {
+    private:
+
+        TemporaryDumpDirectory m_directory;
+    };
+
+    class SkipListLoadTest : public SkipListTest
     {
     private:
 
@@ -639,6 +646,36 @@ TEST_F(SkipListDumpTest, ConcurrentSavesOfTheSameListProduceOneCompleteSnapshot)
     EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
     EXPECT_EQ(readDumpFile(), expectedContents);
     EXPECT_EQ(list.size(), 50);
+}
+
+
+TEST_F(SkipListLoadTest, SavesLoadsAndKeepsExistingValueForDuplicateKey)
+{
+    SkipList<int, std::string> source(4);
+    captureOutput([&]
+                  {
+        EXPECT_TRUE(source.insertElement(1, "one"));
+        EXPECT_TRUE(source.insertElement(3, "three words: tail"));
+        source.dumpFile(); });
+    EXPECT_EQ(readDumpFile(), "1:one\n3:three words: tail\n");
+
+    SkipList<int, std::string> restored(4);
+    captureOutput([&]
+                  {
+        EXPECT_TRUE(restored.insertElement(1, "original"));
+        restored.loadFile(); });
+
+    EXPECT_EQ(restored.size(), 2);
+    const std::string output = captureOutput([&]
+                                             {
+        EXPECT_TRUE(restored.searchElement(1));
+        EXPECT_TRUE(restored.searchElement(3)); });
+    EXPECT_NE(output.find("Found key: 1, value: original"), std::string::npos);
+    EXPECT_NE(output.find("Found key: 3, value: three words: tail"), std::string::npos);
+
+    captureOutput([&]
+                  { restored.loadFile(); });
+    EXPECT_EQ(restored.size(), 2);
 }
 
 
