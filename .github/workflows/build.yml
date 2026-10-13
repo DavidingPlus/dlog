@@ -44,11 +44,20 @@ jobs:
         xmake-version: latest
 
     - name: Configure XMake
-      run: xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} -y
+      run: |
+        touch snippet/SkipList/.buildme
+        xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} -y
 
     - name: Build Targets
       working-directory: ${{github.workspace}}
       run: xmake build
+
+    - name: Run Target SkipList
+      working-directory: ${{github.workspace}}
+      run: |
+        xmake run SkipListTest
+        xmake run SkipListUnitTest
+        xmake run SkipListStressTest
 
     - name: Install Targets
       working-directory: ${{github.workspace}}
