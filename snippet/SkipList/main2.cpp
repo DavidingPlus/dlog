@@ -9,9 +9,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <streambuf>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -20,7 +25,7 @@
 namespace
 {
 
-    // SkipList 当前会向 std::cout 打印操作日志；并发写测试中，输出调用被该对象的独占锁串行化。
+    // 用于单线程测试：捕获 SkipList 打印的日志，便于检查查询输出和层级结构。
     class CoutCapture
     {
     public:
@@ -37,6 +42,35 @@ namespace
     private:
 
         std::ostringstream m_buffer;
+        std::streambuf *m_previousBuffer;
+    };
+
+    // 并发测试只丢弃日志，不把多个线程的输出写入同一个 ostringstream。
+    // 这个缓冲区不保存任何可变状态，输出操作始终报告成功。
+    class CoutDiscard
+    {
+    private:
+
+        class Buffer : public std::streambuf
+        {
+        protected:
+
+            int_type overflow(int_type character) override { return traits_type::not_eof(character); }
+            std::streamsize xsputn(const char *, std::streamsize count) override { return count; }
+            int sync() override { return 0; }
+        };
+
+    public:
+
+        CoutDiscard() : m_previousBuffer(std::cout.rdbuf(&m_buffer)) {}
+        ~CoutDiscard() { std::cout.rdbuf(m_previousBuffer); }
+
+        CoutDiscard(const CoutDiscard &) = delete;
+        CoutDiscard &operator=(const CoutDiscard &) = delete;
+
+    private:
+
+        Buffer m_buffer;
         std::streambuf *m_previousBuffer;
     };
 
@@ -109,6 +143,7 @@ namespace
         const std::vector<std::vector<int>> levels = parseDisplayedLevels(display);
         ASSERT_FALSE(levels.empty()) << "displayList() should always print level 0";
         EXPECT_EQ(levels.front(), expectedBottomKeys);
+        if (levels.size() > 1) EXPECT_FALSE(levels.back().empty()) << "highest active level should not be empty";
 
         for (size_t level = 0; level < levels.size(); ++level)
         {
@@ -207,6 +242,16 @@ namespace
 
         TemporaryDumpDirectory m_directory;
     };
+
+    void writeDumpFile(const std::string &contents)
+    {
+        std::filesystem::create_directories("store");
+        std::ofstream file("store/dumpFile", std::ios::out | std::ios::trunc);
+        if (!file.is_open()) throw std::runtime_error("Failed to open test dump file");
+        file << contents;
+        file.close();
+        if (!file) throw std::runtime_error("Failed to write test dump file");
+    }
 
     std::string readDumpFile()
     {
@@ -394,6 +439,13 @@ TEST_F(SkipListTest, MaximumLevelZeroOnlyUsesBottomLayer)
     EXPECT_NE(display.find("Level 0:"), std::string::npos);
     EXPECT_EQ(display.find("Level 1:"), std::string::npos);
     expectValidDisplayedStructure(display, {1, 2, 3});
+
+    EXPECT_TRUE(searchQuiet(list, 1));
+    EXPECT_TRUE(searchQuiet(list, 3));
+    deleteQuiet(list, 2);
+    EXPECT_EQ(list.size(), 2);
+    EXPECT_FALSE(searchQuiet(list, 2));
+    expectValidDisplayedStructure(displayQuiet(list), {1, 3});
 }
 
 TEST_F(SkipListTest, SameSeedProducesTheSameLevelStructure)
@@ -453,8 +505,8 @@ TEST_F(SkipListTest, ConcurrentReadersAndWritersKeepSizeAndAllInsertedKeysConsis
     std::vector<std::thread> threads;
 
     {
-        // Writers are serialized by SkipList's exclusive lock. Readers call size(), which emits no output.
-        CoutCapture capturedOutput;
+        // 丢弃并发日志；读线程检查 size()，断言在线程全部结束后执行。
+        CoutDiscard discardedOutput;
 
         for (int reader = 0; reader < readerCount; ++reader)
         {
@@ -517,21 +569,24 @@ TEST_F(SkipListTest, ConcurrentInsertionOfTheSameKeySucceedsExactlyOnce)
 {
     constexpr int writerCount = 8;
     SkipList<int, std::string> list(4);
+    std::atomic<bool> start{false};
     std::atomic<int> successfulInsertions{0};
     std::vector<std::thread> writers;
 
     {
-        // insertElement uses an exclusive lock, so its log writes are serialized during capture.
-        CoutCapture capturedOutput;
+        // 同时启动多个线程竞争同一个 key，日志通过无状态缓冲区丢弃。
+        CoutDiscard discardedOutput;
         for (int writer = 0; writer < writerCount; ++writer)
         {
             writers.emplace_back([&, writer]
                                  {
+                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
                 if (list.insertElement(7, "candidate-" + std::to_string(writer)))
                 {
                     successfulInsertions.fetch_add(1, std::memory_order_relaxed);
                 } });
         }
+        start.store(true, std::memory_order_release);
         for (std::thread &thread : writers) thread.join();
     }
 
@@ -624,7 +679,7 @@ TEST_F(SkipListDumpTest, ConcurrentSavesOfTheSameListProduceOneCompleteSnapshot)
     std::atomic<int> failures{0};
     std::vector<std::thread> writers;
     {
-        CoutCapture capturedOutput;
+        CoutDiscard discardedOutput;
         for (int writer = 0; writer < 4; ++writer)
         {
             writers.emplace_back([&]
@@ -676,6 +731,401 @@ TEST_F(SkipListLoadTest, SavesLoadsAndKeepsExistingValueForDuplicateKey)
     captureOutput([&]
                   { restored.loadFile(); });
     EXPECT_EQ(restored.size(), 2);
+}
+
+
+TEST(NodeTest, InitializesKeyValueAndForwardSlotsForEveryParticipatingLevel)
+{
+    for (int level : {0, 1, 4})
+    {
+        SCOPED_TRACE(level);
+        Node<int, std::string> node(7, "seven", level);
+        EXPECT_EQ(node.getKey(), 7);
+        EXPECT_EQ(node.getValue(), "seven");
+        EXPECT_EQ(node.m_nodeLevel, level);
+        EXPECT_EQ(node.m_forward.size(), static_cast<size_t>(level + 1));
+        EXPECT_TRUE(std::all_of(node.m_forward.begin(), node.m_forward.end(),
+                                [](const Node<int, std::string> *next)
+                                { return next == nullptr; }));
+    }
+}
+
+TEST(NodeTest, SetValueKeepsKeyLevelAndLinksUnchanged)
+{
+    Node<int, std::string> node(7, "original", 1);
+    Node<int, std::string> next(9, "nine", 1);
+    node.m_forward[0] = &next;
+    node.m_forward[1] = &next;
+
+    node.setValue("replacement");
+
+    EXPECT_EQ(node.getValue(), "replacement");
+    EXPECT_EQ(node.getKey(), 7);
+    EXPECT_EQ(node.m_nodeLevel, 1);
+    EXPECT_EQ(node.m_forward[0], &next);
+    EXPECT_EQ(node.m_forward[1], &next);
+}
+
+TEST_F(SkipListTest, SupportsMinimumAndMaximumIntKeys)
+{
+    const int minimum = std::numeric_limits<int>::min();
+    const int maximum = std::numeric_limits<int>::max();
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  {
+        EXPECT_TRUE(list.insertElement(maximum, "maximum"));
+        EXPECT_TRUE(list.insertElement(0, "zero"));
+        EXPECT_TRUE(list.insertElement(minimum, "minimum")); });
+
+    EXPECT_EQ(list.size(), 3);
+    EXPECT_TRUE(searchQuiet(list, minimum));
+    EXPECT_TRUE(searchQuiet(list, maximum));
+    expectValidDisplayedStructure(displayQuiet(list), {minimum, 0, maximum});
+
+    deleteQuiet(list, minimum);
+    deleteQuiet(list, maximum);
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 0));
+    EXPECT_FALSE(searchQuiet(list, minimum));
+    EXPECT_FALSE(searchQuiet(list, maximum));
+}
+
+TEST_F(SkipListTest, RepeatedDeletionOfTheLastKeyDoesNotUnderflowSizeAndKeyCanBeReinserted)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(7, "original")); });
+    deleteQuiet(list, 7);
+    deleteQuiet(list, 7);
+    EXPECT_EQ(list.size(), 0);
+    EXPECT_FALSE(searchQuiet(list, 7));
+
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(7, "replacement")); });
+    EXPECT_EQ(list.size(), 1);
+    const std::string output = captureOutput([&]
+                                             { EXPECT_TRUE(list.searchElement(7)); });
+    EXPECT_NE(output.find("Found key: 7, value: replacement"), std::string::npos);
+}
+
+TEST_F(SkipListTest, MixedOperationsMatchAnIndependentMap)
+{
+    SkipList<int, std::string> list(6);
+    std::map<int, std::string> expected;
+    std::mt19937 operations(2026); // 只用于生成可复现的测试操作，不改变生产代码的随机数实现。
+    CoutCapture capturedOutput;
+
+    for (int step = 0; step < 400; ++step)
+    {
+        SCOPED_TRACE(step);
+        const int key = static_cast<int>(operations() % 61) - 30;
+        const int action = static_cast<int>(operations() % 3);
+        if (action == 0)
+        {
+            const std::string value = "value-" + std::to_string(step);
+            const bool expectedInsertion = expected.emplace(key, value).second;
+            EXPECT_EQ(list.insertElement(key, value), expectedInsertion);
+        }
+        else if (action == 1)
+        {
+            expected.erase(key);
+            list.deleteElement(key);
+        }
+        else
+        {
+            EXPECT_EQ(list.searchElement(key), expected.find(key) != expected.end());
+        }
+        EXPECT_EQ(list.size(), static_cast<int>(expected.size()));
+
+        if (step % 25 == 0 || step == 399)
+        {
+            std::vector<int> expectedKeys;
+            std::ostringstream expectedBottom;
+            expectedBottom << "Level 0: ";
+            for (const auto &entry : expected)
+            {
+                expectedKeys.push_back(entry.first);
+                expectedBottom << entry.first << ":" << entry.second << ";";
+            }
+            expectedBottom << '\n';
+            const std::string display = displayQuiet(list);
+            expectValidDisplayedStructure(display, expectedKeys);
+            EXPECT_NE(display.find(expectedBottom.str()), std::string::npos);
+        }
+    }
+
+    for (int key = -30; key <= 30; ++key)
+    {
+        EXPECT_EQ(list.searchElement(key), expected.find(key) != expected.end()) << "key " << key;
+    }
+}
+
+TEST_F(SkipListTest, DeletionAndDestructionReleaseEveryStoredValue)
+{
+    constexpr int count = 24;
+    std::vector<std::weak_ptr<int>> values;
+    {
+        SkipList<int, std::shared_ptr<int>> list(4);
+        captureOutput([&]
+                      {
+            for (int key = 0; key < count; ++key)
+            {
+                auto value = std::make_shared<int>(key);
+                values.push_back(value);
+                EXPECT_TRUE(list.insertElement(key, value));
+            } });
+        for (int key = 0; key < count; key += 2) deleteQuiet(list, key);
+        EXPECT_EQ(list.size(), count / 2);
+        for (int key = 0; key < count; ++key)
+        {
+            EXPECT_EQ(values[key].expired(), key % 2 == 0) << "key " << key;
+        }
+    }
+    // 不再有其他 shared_ptr 持有 value；节点若未释放，这些 weak_ptr 就不会过期。
+    for (const auto &value : values) EXPECT_TRUE(value.expired());
+}
+
+TEST_F(SkipListTest, RemovingHighestLayerNodesShrinksHeightAndPreservesOtherNodes)
+{
+    for (unsigned int seed = 1; seed <= 64; ++seed)
+    {
+        std::srand(seed);
+        SkipList<int, int> list(6);
+        captureOutput([&]
+                      {
+            for (int key = 0; key < 40; ++key) EXPECT_TRUE(list.insertElement(key, key)); });
+        const auto before = parseDisplayedLevels(displayQuiet(list));
+        if (before.size() < 2 || before.back().size() == before.front().size()) continue;
+
+        const auto highestKeys = before.back();
+        std::vector<int> remainingKeys;
+        for (int key = 0; key < 40; ++key)
+        {
+            if (std::find(highestKeys.begin(), highestKeys.end(), key) == highestKeys.end()) remainingKeys.push_back(key);
+        }
+        for (int key : highestKeys) deleteQuiet(list, key);
+
+        const std::string afterDisplay = displayQuiet(list);
+        const auto after = parseDisplayedLevels(afterDisplay);
+        ASSERT_FALSE(after.empty());
+        EXPECT_LT(after.size(), before.size());
+        EXPECT_EQ(list.size(), static_cast<int>(remainingKeys.size()));
+        expectValidDisplayedStructure(afterDisplay, remainingKeys);
+        for (int key : highestKeys) EXPECT_FALSE(searchQuiet(list, key));
+        for (int key : remainingKeys) EXPECT_TRUE(searchQuiet(list, key));
+        return;
+    }
+    FAIL() << "none of the probed seeds generated a suitable highest layer";
+}
+
+TEST_F(SkipListTest, ConcurrentSearchInsertAndDeletePreserveStableKeysAndFinalContents)
+{
+    constexpr int stableCount = 8;
+    constexpr int writerCount = 2;
+    constexpr int valuesPerWriter = 8;
+    constexpr int expectedSize = stableCount + writerCount * valuesPerWriter;
+    SkipList<int, std::string> list(5);
+    captureOutput([&]
+                  {
+        for (int key = 0; key < stableCount; ++key) EXPECT_TRUE(list.insertElement(key, "stable")); });
+
+    std::atomic<bool> start{false};
+    std::atomic<int> writersRemaining{writerCount};
+    std::atomic<int> failedInsertions{0};
+    std::atomic<int> missingStableKeys{0};
+    std::atomic<int> invalidSizes{0};
+    std::vector<std::thread> threads;
+    {
+        CoutDiscard discardedOutput;
+        for (int reader = 0; reader < 2; ++reader)
+        {
+            threads.emplace_back([&]
+                                 {
+                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+                for (int sample = 0; sample < 200 || writersRemaining.load(std::memory_order_acquire) > 0; ++sample)
+                {
+                    if (!list.searchElement(sample % stableCount)) missingStableKeys.fetch_add(1, std::memory_order_relaxed);
+                    // 这些 key 正在被增删，查询结果可能为 true 或 false；查询过程必须保持安全。
+                    list.searchElement(stableCount + sample % (writerCount * valuesPerWriter));
+                    const int currentSize = list.size();
+                    if (currentSize < stableCount || currentSize > expectedSize) invalidSizes.fetch_add(1, std::memory_order_relaxed);
+                    std::this_thread::yield();
+                } });
+        }
+        for (int writer = 0; writer < writerCount; ++writer)
+        {
+            threads.emplace_back([&, writer]
+                                 {
+                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+                const int firstKey = stableCount + writer * valuesPerWriter;
+                for (int round = 0; round < 4; ++round)
+                {
+                    for (int key = firstKey; key < firstKey + valuesPerWriter; ++key)
+                    {
+                        if (!list.insertElement(key, "changing")) failedInsertions.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    for (int key = firstKey; key < firstKey + valuesPerWriter; ++key) list.deleteElement(key);
+                }
+                for (int key = firstKey; key < firstKey + valuesPerWriter; ++key)
+                {
+                    if (!list.insertElement(key, "final")) failedInsertions.fetch_add(1, std::memory_order_relaxed);
+                }
+                writersRemaining.fetch_sub(1, std::memory_order_release); });
+        }
+        start.store(true, std::memory_order_release);
+        for (auto &thread : threads) thread.join();
+    }
+
+    EXPECT_EQ(failedInsertions.load(), 0);
+    EXPECT_EQ(missingStableKeys.load(), 0);
+    EXPECT_EQ(invalidSizes.load(), 0);
+    EXPECT_EQ(list.size(), expectedSize);
+    std::vector<int> expectedKeys;
+    for (int key = 0; key < expectedSize; ++key)
+    {
+        EXPECT_TRUE(searchQuiet(list, key));
+        expectedKeys.push_back(key);
+    }
+    expectValidDisplayedStructure(displayQuiet(list), expectedKeys);
+}
+
+TEST_F(SkipListDumpTest, DirectoryCreationFailureReleasesLockAndKeepsData)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(1, "one")); });
+    std::ofstream blocker("store");
+    ASSERT_TRUE(blocker.is_open());
+    blocker.close(); // 用普通文件占据 store 目录的位置。
+
+    EXPECT_THROW(captureOutput([&]
+                               { list.dumpFile(); }),
+                 std::filesystem::filesystem_error);
+
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 1));
+}
+
+TEST_F(SkipListLoadTest, LoadsIntoAnEmptyListIncludingZeroAndIntBoundaryKeys)
+{
+    const int minimum = std::numeric_limits<int>::min();
+    const int maximum = std::numeric_limits<int>::max();
+    writeDumpFile(std::to_string(maximum) + ":maximum\n0:zero\n" + std::to_string(minimum) + ":minimum");
+    SkipList<int, std::string> list(4);
+
+    captureOutput([&]
+                  { list.loadFile(); });
+
+    EXPECT_EQ(list.size(), 3);
+    EXPECT_TRUE(searchQuiet(list, minimum));
+    EXPECT_TRUE(searchQuiet(list, maximum));
+    EXPECT_TRUE(searchQuiet(list, 0));
+    expectValidDisplayedStructure(displayQuiet(list), {minimum, 0, maximum});
+}
+
+TEST_F(SkipListLoadTest, EmptyFileKeepsExistingData)
+{
+    writeDumpFile("");
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(9, "nine")); });
+
+    EXPECT_NO_THROW(captureOutput([&]
+                                  { list.loadFile(); }));
+
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 9));
+}
+
+TEST_F(SkipListLoadTest, SkipsBlankLinesMissingDelimitersAndEmptyKeysOrValues)
+{
+    writeDumpFile("\nno delimiter\n:missing-key\n2:\n:\n1:first\n\n3:third:tail\n");
+    SkipList<int, std::string> list(4);
+
+    EXPECT_NO_THROW(captureOutput([&]
+                                  { list.loadFile(); }));
+
+    EXPECT_EQ(list.size(), 2);
+    expectValidDisplayedStructure(displayQuiet(list), {1, 3});
+    EXPECT_FALSE(searchQuiet(list, 2)); // 当前参考式实现明确跳过空 value。
+    const std::string output = captureOutput([&]
+                                             { EXPECT_TRUE(list.searchElement(3)); });
+    EXPECT_NE(output.find("Found key: 3, value: third:tail"), std::string::npos);
+}
+
+TEST_F(SkipListLoadTest, DuplicateKeysInsideFileKeepFirstLoadedValueAndPreserveOtherExistingKeys)
+{
+    const std::string contents = "2:pear\n1:apple\n2:peach\n1:banana\n";
+    writeDumpFile(contents);
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  {
+        EXPECT_TRUE(list.insertElement(9, "nine"));
+        list.loadFile(); });
+
+    EXPECT_EQ(list.size(), 3);
+    expectValidDisplayedStructure(displayQuiet(list), {1, 2, 9});
+    const std::string output = captureOutput([&]
+                                             {
+        EXPECT_TRUE(list.searchElement(1));
+        EXPECT_TRUE(list.searchElement(2));
+        EXPECT_TRUE(list.searchElement(9)); });
+    EXPECT_NE(output.find("Found key: 1, value: apple"), std::string::npos);
+    EXPECT_NE(output.find("Found key: 2, value: pear"), std::string::npos);
+    EXPECT_NE(output.find("Found key: 9, value: nine"), std::string::npos);
+    EXPECT_EQ(readDumpFile(), contents);
+}
+
+TEST_F(SkipListLoadTest, MissingFileThrowsAndKeepsExistingData)
+{
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(9, "nine")); });
+    ASSERT_FALSE(std::filesystem::exists("store/dumpFile"));
+
+    EXPECT_THROW(captureOutput([&]
+                               { list.loadFile(); }),
+                 std::runtime_error);
+
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 9));
+    EXPECT_FALSE(std::filesystem::exists("store/dumpFile"));
+}
+
+TEST_F(SkipListLoadTest, InvalidIntegerKeyThrowsAfterKeepingPreviouslyLoadedRecords)
+{
+    writeDumpFile("1:one\nnot-a-number:invalid\n3:three\n");
+    SkipList<int, std::string> list(4);
+    captureOutput([&]
+                  { EXPECT_TRUE(list.insertElement(9, "nine")); });
+
+    EXPECT_THROW(captureOutput([&]
+                               { list.loadFile(); }),
+                 std::invalid_argument);
+
+    EXPECT_EQ(list.size(), 2);
+    EXPECT_TRUE(searchQuiet(list, 1));
+    EXPECT_TRUE(searchQuiet(list, 9));
+    EXPECT_FALSE(searchQuiet(list, 3));
+    writeDumpFile("2:two\n");
+    EXPECT_NO_THROW(captureOutput([&]
+                                  { list.loadFile(); }));
+    EXPECT_EQ(list.size(), 3);
+    EXPECT_TRUE(searchQuiet(list, 2));
+}
+
+TEST_F(SkipListLoadTest, IntegerOverflowThrowsAfterKeepingPreviouslyLoadedRecords)
+{
+    writeDumpFile("1:one\n999999999999999999999999999999:overflow\n3:three\n");
+    SkipList<int, std::string> list(4);
+
+    EXPECT_THROW(captureOutput([&]
+                               { list.loadFile(); }),
+                 std::out_of_range);
+
+    EXPECT_EQ(list.size(), 1);
+    EXPECT_TRUE(searchQuiet(list, 1));
+    EXPECT_FALSE(searchQuiet(list, 3));
 }
 
 

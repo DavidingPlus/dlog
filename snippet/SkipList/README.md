@@ -107,16 +107,25 @@ Level 0: HEAD ──> 1 ───> 4 ───> 10 ─> 30 ─> 50 ─> 70
 在仓库根目录运行：
 
 ```powershell
-xmake run SkipList1
+xmake run SkipListTest
 ```
 
 运行 SkipList 的 GoogleTest 单元测试：
 
 ```powershell
-xmake run SkipList2
+xmake run SkipListUnitTest
 ```
 
-测试代码位于 `main2.cpp`，使用 GoogleTest fixture 和断言，覆盖空表、负数和边界 key、插入与重复 key、value 保持、查找命中与未命中、不同插入顺序、每层有序及高层节点在低层中的对应关系、删除首尾/中间/不存在节点、清空后重新插入、最高层收缩、`maxLevel = 0`、固定 seed 可复现，以及并发读写和并发重复插入。文件测试在独立临时目录中运行，检查保存内容、覆盖旧数据、空表保存和并发保存。加载目前只保留一组最小验证：保存后加载、重复 key 保留原值、重复加载不增加节点。
+测试代码位于 `main2.cpp`，共有 33 个 GoogleTest 用例，按当前实现的行为验证：
+
+| 测试组 | 用例数 | 覆盖范围 |
+| --- | --- | --- |
+| `NodeTest` | 2 | key/value、前向指针初始化、层编号、修改 value 后保留 key 和链接 |
+| `SkipListTest` | 18 | 空表、增删查与重复 key、整数边界、各层结构、顶层收缩、固定 seed、400 次混合操作与 `std::map` 对照、节点资源释放、并发查询/插入/删除 |
+| `SkipListDumpTest` | 5 | 保存顺序和内容、覆盖旧文件、空表保存、打开文件和创建目录失败后的锁释放、并发保存 |
+| `SkipListLoadTest` | 8 | 保存后恢复、合并与重复 key、空文件、缺少分隔符和空 key/value、整数边界、文件不存在、转换失败和整数溢出后的已加载数据保留 |
+
+文件测试在独立临时目录中运行，避免覆盖真实数据。并发测试使用不保存状态的日志缓冲区，并在线程结束后检查结果。当前未模拟磁盘满等系统写入故障；文件加载测试遵循该学习版本的 `int` key、`std::string` value 和顺序调用保存/加载的约定。
 
 ## 当前实现的边界
 
