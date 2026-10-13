@@ -12,7 +12,7 @@
 #include <vector>
 
 
-constexpr int kThreadCount = 1;
+constexpr int kThreadCount = 10;
 // 插入和查询两个阶段各执行 kTestCount 次操作。
 constexpr int kTestCount = 100000;
 
@@ -62,7 +62,7 @@ void runTest(const std::string &name, const std::function<void(int, unsigned int
     std::vector<std::thread> threads;
     threads.reserve(kThreadCount);
 
-    // steady_clock 单调递增，适合测量耗时，不受系统时间调整影响。
+    // steady_clock 单调递增，适合测量耗时，不受系统时间调整影响。在创建线程之前开始计时，全部线程 join() 后结束计时。
     auto start = std::chrono::steady_clock::now();
 
     try
@@ -84,11 +84,11 @@ void runTest(const std::string &name, const std::function<void(int, unsigned int
     // join() 等待全部任务完成；线程函数正常返回即可，不需要 pthread_exit()。
     for (std::thread &thread : threads) thread.join();
 
+    // TODO 这里得到的是整个测试阶段的总耗时，包含线程创建和调度、随机 key 生成、跳表操作（含节点分配、随机层级和锁等待）、逐条日志输出以及等待线程结束的开销。
+    // 控制台日志可能占用大量时间，因此这个结果不能当作纯跳表算法的耗时。程序入口的播种、上面的耗时汇总输出和退出时的跳表清理都在计时区间之外。
     auto finish = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsed = finish - start;
     std::cout << name << " elapsed: " << elapsed.count() << " seconds" << std::endl;
-
-    // 耗时包括线程创建、随机 key 生成、跳表操作及其日志输出。
 }
 
 
