@@ -1,111 +1,117 @@
 #include "skiplist.h"
 
-#include <iostream>
 #include <chrono>
 #include <cstdlib>
-#include <pthread.h>
-#include <time.h>
+#include <ctime>
+#include <exception>
+#include <functional>
+#include <iostream>
+#include <random>
+#include <string>
+#include <thread>
+#include <vector>
 
 
-#define NUM_THREADS 1
-#define TEST_COUNT 100000
+constexpr int kThreadCount = 1;
+// 插入和查询两个阶段各执行 kTestCount 次操作。
+constexpr int kTestCount = 100000;
+
+static_assert(kThreadCount > 0, "Thread count must be positive.");
+static_assert(kTestCount > 0, "Test count must be positive.");
+
+// 全部工作线程访问同一个跳表。
 SkipList<int, std::string> skipList(18);
 
-void *insertElement(void *threadid)
+
+int getOperationCount(int threadId)
 {
-    long tid;
-    tid = (long)threadid;
-    std::cout << tid << std::endl;
-    int tmp = TEST_COUNT / NUM_THREADS;
-    for (int i = tid * tmp, count = 0; count < tmp; i++)
-    {
-        count++;
-        skipList.insert_element(rand() % TEST_COUNT, "a");
-    }
-    pthread_exit(NULL);
+    // 平均分配操作次数，余数分给前几个线程，确保合计恰好为 kTestCount。
+    return kTestCount / kThreadCount + (threadId < kTestCount % kThreadCount ? 1 : 0);
 }
 
-void *getElement(void *threadid)
+void insertElement(int threadId, unsigned int seed)
 {
-    long tid;
-    tid = (long)threadid;
-    std::cout << tid << std::endl;
-    int tmp = TEST_COUNT / NUM_THREADS;
-    for (int i = tid * tmp, count = 0; count < tmp; i++)
+    // 每个线程有自己的随机数引擎，不共享测试 key 的随机状态。uniform_int_distribution 覆盖 [0, kTestCount - 1]，不受 RAND_MAX 限制。
+    std::mt19937 randomEngine(seed + static_cast<unsigned int>(threadId));
+    std::uniform_int_distribution<int> randomKey(0, kTestCount - 1);
+
+    int operationCount = getOperationCount(threadId);
+    for (int count = 0; count < operationCount; ++count)
     {
-        count++;
-        skipList.search_element(rand() % TEST_COUNT);
+        // 随机 key 可能重复：这里统计的是插入尝试次数，不是新增节点数量。
+        skipList.insertElement(randomKey(randomEngine), "a");
     }
-    pthread_exit(NULL);
 }
+
+void getElement(int threadId, unsigned int seed)
+{
+    std::mt19937 randomEngine(seed + static_cast<unsigned int>(threadId));
+    std::uniform_int_distribution<int> randomKey(0, kTestCount - 1);
+
+    int operationCount = getOperationCount(threadId);
+    for (int count = 0; count < operationCount; ++count)
+    {
+        // 查询随机 key，既可能命中已有节点，也可能查不到。
+        skipList.searchElement(randomKey(randomEngine));
+    }
+}
+
+// name 是测试阶段名称；operation 接收线程编号和随机种子，执行该线程的测试任务。std::function 可以保存普通函数、lambda 或函数对象，要求调用形式为 void(int, unsigned int)。
+void runTest(const std::string &name, const std::function<void(int, unsigned int)> &operation, unsigned int seed)
+{
+    std::vector<std::thread> threads;
+    threads.reserve(kThreadCount);
+
+    // steady_clock 单调递增，适合测量耗时，不受系统时间调整影响。
+    auto start = std::chrono::steady_clock::now();
+
+    try
+    {
+        for (int threadId = 0; threadId < kThreadCount; ++threadId)
+        {
+            std::cout << "main(): creating thread " << threadId << std::endl;
+            // 参数直接按值传入，无需将线程编号转换成 void*。
+            threads.emplace_back(operation, threadId, seed);
+        }
+    }
+    catch (...)
+    {
+        // 如果创建后续线程失败，先等待已创建的线程，避免销毁可 join 的线程导致 terminate。
+        for (std::thread &thread : threads) thread.join();
+        throw;
+    }
+
+    // join() 等待全部任务完成；线程函数正常返回即可，不需要 pthread_exit()。
+    for (std::thread &thread : threads) thread.join();
+
+    auto finish = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed = finish - start;
+    std::cout << name << " elapsed: " << elapsed.count() << " seconds" << std::endl;
+
+    // 耗时包括线程创建、随机 key 生成、跳表操作及其日志输出。
+}
+
 
 int main()
 {
-    srand(time(NULL));
+    unsigned int seed = static_cast<unsigned int>(std::time(nullptr));
+    // 跳表内部使用 std::rand() 的播种方式；测试 key 使用上面的独立 C++ 随机引擎。
+    std::srand(seed);
+
+    try
     {
+        runTest("insert", insertElement, seed);
 
-        pthread_t threads[NUM_THREADS];
-        int rc;
-        int i;
+        std::cout << "skipList size: " << skipList.size() << std::endl;
 
-        auto start = std::chrono::high_resolution_clock::now();
-
-        for (i = 0; i < NUM_THREADS; i++)
-        {
-            std::cout << "main() : creating thread, " << i << std::endl;
-            rc = pthread_create(&threads[i], NULL, insertElement, (void *)i);
-
-            if (rc)
-            {
-                std::cout << "Error:unable to create thread," << rc << std::endl;
-                exit(-1);
-            }
-        }
-
-        void *ret;
-        for (i = 0; i < NUM_THREADS; i++)
-        {
-            if (pthread_join(threads[i], &ret) != 0)
-            {
-                perror("pthread_create() error");
-                exit(3);
-            }
-        }
-        auto finish = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = finish - start;
-        std::cout << "insert elapsed:" << elapsed.count() << std::endl;
+        // 插入阶段的所有线程结束后，再执行查询测试；换一个 seed 生成查询序列。
+        runTest("get", getElement, seed + 1U);
     }
-    // skipList.displayList();
+    catch (std::exception &error)
+    {
+        std::cerr << "Stress test failed: " << error.what() << std::endl;
+        return EXIT_FAILURE;
+    }
 
-    // {
-    //     pthread_t threads[NUM_THREADS];
-    //     int rc;
-    //     int i;
-    //     auto start = std::chrono::high_resolution_clock::now();
-
-    //     for( i = 0; i < NUM_THREADS; i++ ) {
-    //         std::cout << "main() : creating thread, " << i << std::endl;
-    //         rc = pthread_create(&threads[i], NULL, getElement, (void *)i);
-
-    //         if (rc) {
-    //             std::cout << "Error:unable to create thread," << rc << std::endl;
-    //             exit(-1);
-    //         }
-    //     }
-
-    //     void *ret;
-    //     for( i = 0; i < NUM_THREADS; i++ ) {
-    //         if (pthread_join(threads[i], &ret) !=0 )  {
-    //             perror("pthread_create() error");
-    //             exit(3);
-    //         }
-    //     }
-
-    //     auto finish = std::chrono::high_resolution_clock::now();
-    //     std::chrono::duration<double> elapsed = finish - start;
-    //     std::cout << "get elapsed:" << elapsed.count() << std::endl;
-    // }
-
-    pthread_exit(NULL);
-    return 0;
+    // 正常结束程序时析构全局跳表；此时所有工作线程均已 join。
 }

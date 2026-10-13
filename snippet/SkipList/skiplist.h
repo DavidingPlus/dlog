@@ -45,7 +45,7 @@ public:
 private:
 
     // 保存和加载使用同一路径，路径相对于程序运行时的工作目录。
-    static constexpr char *kStoreFile = "store/dumpFile";
+    static constexpr const char *kStoreFile = "store/dumpFile";
 
 
     // 为新节点随机选择最高层编号；新节点会参与从第 0 层到该层的所有层。
@@ -402,12 +402,14 @@ int SkipList<K, T>::getRandomLevel()
 template <typename K, typename T>
 void SkipList<K, T>::clear(Node<K, T> *node)
 {
-    if (!node) return;
-
-    // 沿 m_forward[0] 遍历，因为最底层串起了所有数据节点；递归会先走到尾部再返回。返回时对当前节点执行 delete，逐个销毁所有数据节点。
-    if (!node->m_forward.empty()) clear(node->m_forward[0]);
-
-    delete node;
+    // 第 0 层串起了全部数据节点，每个节点只需删除一次，上层无需单独遍历。循环清理避免例如压力测试中数万个节点导致递归调用栈过深。
+    while (node)
+    {
+        // 在删除前保存后继，delete 之后不能再读取当前节点的 m_forward[0]。
+        Node<K, T> *next = node->m_forward.empty() ? nullptr : node->m_forward[0];
+        delete node;
+        node = next;
+    }
 }
 
 
