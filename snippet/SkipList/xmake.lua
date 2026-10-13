@@ -11,3 +11,8 @@ target("SkipListUnitTest")
     add_files("main2.cpp")
     add_packages("gtest")
 target_end()
+
+target("SkipListStressTest")
+    set_kind("binary")
+    add_files("main3.cpp")
+target_end()
