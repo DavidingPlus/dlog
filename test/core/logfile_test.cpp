@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -153,6 +154,87 @@ namespace
 
 } // namespace
 
+
+TEST_F(LogFileTest, NormalModeUsesExactFilenameAndKeepsLongBinaryData)
+{
+    const auto filename = m_directory / "app.log";
+    std::string payload(5000, 'A');
+    payload[2500] = '\0';
+
+    LogFile logFile(filename.string());
+    logFile.append(payload.data(), payload.size());
+    logFile.append(payload.data(), payload.size());
+    logFile.flush();
+
+    EXPECT_EQ(readFile(filename), payload + payload);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(m_directory), std::filesystem::directory_iterator()), 1);
+}
+
+TEST_F(LogFileTest, NormalModeAppendsToExistingFileAcrossReopens)
+{
+    const auto filename = m_directory / "app.log";
+    writeFile(filename, "existing|");
+
+    {
+        LogFile logFile(filename.string());
+        logFile.append("first|", 6);
+    } // 析构应刷新，重开不能截断已有数据。
+    {
+        LogFile logFile(filename.string());
+        logFile.append("second", 6);
+        logFile.flush();
+    }
+
+    EXPECT_EQ(readFile(filename), "existing|first|second");
+}
+
+TEST_F(LogFileTest, NormalModeValidatesAppendBoundaries)
+{
+    const auto filename = m_directory / "app.log";
+    LogFile logFile(filename.string());
+
+    logFile.append("before", 6);
+    EXPECT_NO_THROW(logFile.append(nullptr, 0));
+    EXPECT_THROW(logFile.append(nullptr, 1), std::invalid_argument);
+    logFile.append("after", 5);
+    logFile.flush();
+
+    EXPECT_EQ(readFile(filename), "beforeafter");
+}
+
+TEST_F(LogFileTest, NormalModeRejectsManualRollWithoutChangingFile)
+{
+    const auto filename = m_directory / "app.log";
+    LogFile logFile(filename.string());
+
+    logFile.append("before|", 7);
+    EXPECT_THROW(logFile.rollFile(), std::logic_error);
+    logFile.append("after", 5);
+    logFile.flush();
+
+    EXPECT_EQ(readFile(filename), "before|after");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(m_directory), std::filesystem::directory_iterator()), 1);
+}
+
+TEST_F(LogFileTest, NormalModeThrowsWhenParentDirectoryDoesNotExist)
+{
+    const auto filename = m_directory / "missing" / "app.log";
+
+    EXPECT_THROW({ LogFile logFile(filename.string()); }, std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(filename.parent_path()));
+}
+
+TEST_F(LogFileTest, NormalModeSupportsRelativeFilename)
+{
+    {
+        CurrentPathGuard currentPath(m_directory);
+        LogFile logFile("app.log");
+        logFile.append("relative", 8);
+        logFile.flush();
+    }
+
+    EXPECT_EQ(readFile(m_directory / "app.log"), "relative");
+}
 
 TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
 {

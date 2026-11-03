@@ -3,6 +3,7 @@
 
 #include "logstream.h"
 #include "fileutil.h"
+#include "timestamp.h"
 
 #include <memory>
 #include <mutex>
@@ -13,8 +14,8 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// LogFile 通常是一个长期存在的共享日志后端，而不是每条日志都重新创建的对象。Logger 可以在每条 LOG_INFO() 语句中临时创建，但最终都会把数据交给同一个 LogFile::append()。因此，普通 append() 会持续写入当前文件；只有文件大小超限或本地日期变化时才会轮转。
-// 基础文件名采用“日期 + 当天序号”的格式：
+// LogFile 是长期存在的文件后端：普通模式始终追加到指定文件，轮转模式在大小超限或本地日期变化时切换文件。
+// 轮转模式的文件名采用“日期 + 当天序号”的格式：
 //   app.20260922.0.log  // 15:30:12 创建，当天第一个文件。
 //   app.20260922.1.log  // 同一天文件大小超限后创建。
 //   app.20260922.2.log  // 同一天再次大小超限后创建。
@@ -27,12 +28,15 @@ class DLOG_API_EXPORTED LogFile
 
 public:
 
-    // 构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
-    LogFile(const std::string &basePath, int64_t rollsize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollsize(rollsize), m_flushInterval(flushInterval) { rollFile(); }
+    // 普通模式。按完整文件名追加，不添加日期、序号，也不自动轮转；父目录需已存在。
+    explicit LogFile(const std::string &filename) : m_file(std::make_unique<FileUtil>(filename)), m_flushInterval(3), m_lastFlush(Timestamp::Now().secondsSinceEpoch()) {}
+
+    // 轮转模式。构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
+    LogFile(const std::string &basePath, int64_t rollsize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollsize(rollsize), m_flushInterval(flushInterval), m_rollingEnabled(true) { rollFile(); }
 
     ~LogFile() = default;
 
-    // 追加一段日志数据。append() 将本次调用的数据视为不可拆分的写入单元，在真正写入前统一判断日期和文件大小是否需要轮转。
+    // 追加一段日志数据。普通模式直接追加。以下规则只适用于轮转模式：
     // 1. 日期变化时，先切换到新日期的日志文件，再写入本次数据，避免跨天后的日志继续写入前一天的文件。
     // 2. 如果当前文件已有内容，且写入本次数据后会超过 m_rollsize，则先切换到下一个序号的文件，再写入本次数据。写入后刚好等于 m_rollsize 时不轮转，允许文件达到但不超过大小限制。
     // 3. 如果当前文件为空，即使本次数据本身大于 m_rollsize，也直接完整写入当前文件。这是“保持一次 append 数据完整”和“严格限制单个文件大小”之间的取舍：允许这一个文件超限，以避免先创建一个空的轮转文件，也避免拆分一段日志数据。
@@ -43,7 +47,7 @@ public:
     // 将当前日志文件对象内部缓冲区的数据刷新到当前文件，不会创建或切换日志文件。
     void flush();
 
-    // 创建并切换到下一个日志文件。构造时用于初始化当前文件，运行中用于响应大小或日期轮转。成功正常返回，失败抛出异常。
+    // 创建并切换到下一个轮转文件。普通模式调用会抛出 std::logic_error，避免改变指定文件名。
     void rollFile();
 
 
@@ -67,7 +71,7 @@ private:
     // 保护当前文件、日期、序号和 flush 状态，保证多线程追加、flush 和轮转时不会相互冲突。
     std::mutex m_mtx;
 
-    // 日志文件的基础路径，不是单独的目录，由“目录路径 + 基础文件名”组成，后续会在其后追加日期、序号和 .log 后缀。
+    // 轮转模式的基础路径，不是单独的目录，由“目录路径 + 基础文件名”组成，后续会在其后追加日期、序号和 .log 后缀。
     // 可以使用绝对路径或相对路径。例如："D:/logs/app" 生成绝对路径 D:/logs/app.YYYYMMDD.0.log；"logs/app" 相对于当前工作目录生成日志，生成相对路径 "logs/app.20260922.0.log"；"app" 则表示当前工作目录下的日志文件，生成相对路径 "app.20260922.0.log"。
     // 父目录必须已经存在，LogFile 不负责创建目录。
     std::string m_basePath;
@@ -89,6 +93,9 @@ private:
 
     // 上一次将 FileUtil 缓冲区刷新到文件的时间（秒），用于判断是否达到 m_flushInterval。
     time_t m_lastFlush = 0;
+
+    // 模式由构造方式确定，普通文件不参与日期和大小轮转。
+    bool m_rollingEnabled = false;
 };
 
 

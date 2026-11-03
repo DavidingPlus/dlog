@@ -1,7 +1,5 @@
 #include "logfile.h"
 
-#include "timestamp.h"
-
 #include <filesystem>
 #include <limits>
 #include <string_view>
@@ -68,17 +66,21 @@ void LogFile::append(const char *data, size_t len)
     std::lock_guard<std::mutex> lock(m_mtx);
 
     time_t now = Timestamp::Now().secondsSinceEpoch();
-    std::string currentDate = GetDateString(now);
 
-    // 处理策略见函数声明。
+    // 普通文件跳过日期、大小判断，写入和定时刷新仍共用下面的逻辑。
+    if (m_rollingEnabled)
+    {
+        std::string currentDate = GetDateString(now);
 
-    // 处理日期。
-    bool dateChanged = currentDate != m_currentDate;
-    // 处理大小。
-    bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollsize;
+        // 处理策略见函数声明。
+        // 处理日期。
+        bool dateChanged = currentDate != m_currentDate;
+        // 处理大小。
+        bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollsize;
 
-    // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
-    if (sizeExceeded || dateChanged) rollFileImpl(now, currentDate);
+        // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
+        if (sizeExceeded || dateChanged) rollFileImpl(now, currentDate);
+    }
 
     m_file->append(data, len);
 
@@ -100,6 +102,8 @@ void LogFile::flush()
 void LogFile::rollFile()
 {
     std::lock_guard<std::mutex> lock(m_mtx);
+
+    if (!m_rollingEnabled) throw std::logic_error("LogFile::rollFile(): rolling is disabled");
 
     time_t now = Timestamp::Now().secondsSinceEpoch();
     rollFileImpl(now, GetDateString(now));

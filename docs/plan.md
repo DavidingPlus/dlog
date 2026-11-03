@@ -8,11 +8,12 @@
 
 - [x] 动态 Buffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
+- [x] LogFile 统一支持普通和轮转模式：单参数构造使用完整文件名，现有构造方式继续启用轮转。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
 
-上次实现验证为 Windows 全量 172 项测试通过、相关示例编译运行正常；不代表下述待实施功能已经通过验收。本次仅整理文档，接口示例均是待实现方案。
+此前 Buffer 闭环验证为 Windows 全量 172 项测试通过、相关示例编译运行正常。本轮 LogFile 双模式改造新增 6 项测试，Windows 核心 144 项通过，默认构建通过；不代表下述待实施功能已经通过验收。日志器工厂等接口示例仍是待实现方案。
 
 ## 2. 当前 dlog 与 Kama 的联系和区别
 
@@ -28,7 +29,7 @@
 | 日志器管理 | 进程共享回调 | LoggerManager 保存默认和命名日志器 | 使用简单管理器 |
 | 缓冲 | 单条记录用动态 Buffer，后台用 LargeBuffer 块队列 | 两个 vector 缓冲区交换；SAFE 等待、UNSAFE 扩容 | 保留 dlog 已验证的缓冲组织，不直接替换 |
 | 唤醒 | 整块入队通知，未满数据周期处理，默认 3 秒 | 每次 Push 通知消费者 | 核心迁移先保留；终端低流量延迟需观察再调整 |
-| 文件与轮转 | LogFile 按日期、大小轮转，启动扫描序号；FileUtil 补写部分写入 | FileFlush / RollFileFlush，按批次检查大小 | 继续复用 dlog 的文件层 |
+| 文件与轮转 | LogFile 统一管理普通文件与按日期、大小轮转的文件；FileUtil 补写部分写入 | FileFlush / RollFileFlush，按批次检查大小 | FileFlush 统一包装 LogFile，文件模式由 LogFile 决定 |
 | FATAL | 输出、刷新回调、abort；异步回调未自动接通 | 等待备份后提交异步输出，不主动终止进程 | 保留 dlog 的终止语义，退出前排空目标 |
 | 配置及平台 | 构造参数；Windows / Linux 适配 | JSON、Builder、全局指针；偏向 POSIX | 本轮不迁配置、Builder、网络备份或线程池 |
 
@@ -70,7 +71,9 @@ DLOG_INFO() << "request=" << 42;
 dlog::Shutdown();
 ```
 
-`"app"` 是日志器名称，`"logs/app"` 是基础路径；第一版复用现有轮转，实际文件类似 `logs/app.YYYYMMDD.0.log`。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
+`"app"` 是日志器名称，`"logs/app"` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式则使用完整文件名。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
+
+底层 LogFile 已支持 `LogFile("logs/app.log")` 普通模式及原有 `LogFile("logs/app", rollSize)` 轮转模式。普通模式重开时追加已有内容，调用 `rollFile()` 抛出 `std::logic_error`；两种模式都要求父目录预先存在。FileFlush 及日志器工厂的对应接入仍待实施。
 
 默认终端从同步改为异步后，调用返回不代表终端已经显示内容；正常退出需要排空。
 
@@ -82,7 +85,7 @@ dlog::Shutdown();
 | AsyncLogger | 长期持有工作器与输出目标，接收完整记录 |
 | AsyncWorker | 从 AsyncLogging 提取，负责字节复制、后台写出、周期刷新、停止排空 |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
-| StdoutFlush / FileFlush | 分别复用 stdout 与 LogFile；此处 FileFlush 指轮转文件输出 |
+| StdoutFlush / FileFlush | 分别复用 stdout 与 LogFile；FileFlush 只转发写入与刷新，普通或轮转行为由 LogFile 决定 |
 | 简单管理器 | 保存默认和命名 AsyncLogger，统一关闭 |
 
 ```text
@@ -99,7 +102,7 @@ DLOG_INFO()
 
 ### 第一步：输出目标与工作器解耦
 
-- 定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和轮转文件输出。后台按批调用，避免每条日志都单独刷新。
+- 定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和文件输出。LogFile 已统一普通与轮转模式，后续 FileFlush 只包装它，不另分 RollFileFlush。后台按批调用，避免每条日志都单独刷新。
 - 从 AsyncLogging 提取工作器，把写死的 LogFile 改为调用输出目标，只保留一套消费循环。原 AsyncLogging 调用在迁移期间继续通过该循环工作，不另写一个后端。
 - 保留持锁整条追加、跨块顺序、锁外写出、周期刷新、重复启停和停止排空。
 - 后台捕获失败、保存错误状态并直接向 stderr 报告，避免异常逃出线程或递归记录。FileUtil 已有的报错返回路径也要检查，单加 catch 不够。
