@@ -234,6 +234,18 @@ TEST(LogStreamTest, RejectsPayloadThatExceedsAvailableBufferWithoutPartialWrite)
     EXPECT_EQ(stream.buffer().toString(), payload);
 }
 
+// TODO 复现当前缺陷：超长正文被整段忽略，但前后字段仍会保留；修复策略确定后需调整期望。
+TEST(LogStreamTest, ReproducesSilentLossOfOversizedPayload)
+{
+    LogStream stream;
+    const std::string payload(5000, 'A');
+    ASSERT_GT(payload.size(), kSmallBufferSize);
+
+    stream << "payload=" << payload << ", done\n";
+
+    EXPECT_EQ(stream.buffer().toString(), "payload=, done\n");
+}
+
 TEST(LogStreamTest, RejectsValueWhenOnlyPartOfItsFormattedTextFits)
 {
     LogStream stream;
