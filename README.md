@@ -19,6 +19,10 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 
 直接使用 `LogFile` 时，`append()` 不再按时间主动刷新，应显式调用 `flush()` 或使用 `FileFlush::writeAndFlush()`。`LogFile` 和 `FileFlush` 不再接受刷新间隔参数；周期等待仍由 `AsyncLogging` 的 `flushInterval` 控制。
 
+`FileUtil` 和 `LogFile` 构造函数接收 `const std::filesystem::path&`，已有字符串调用仍可转换使用；Windows 下使用原生宽字符路径打开文件。直接传入路径对象可避免先调用 `.string()` 丢失字符；`FileFlush` 和 `AsyncLogging` 的字符串路径接口尚未迁移。
+
+相对文件路径统一以 `FileUtil::executableDirectory()` 为基准，并做 `lexically_normal()` 规范化，不再依赖当前工作目录；绝对路径直接使用。`FileUtil::executableFullPath()` 返回进程可执行文件的绝对路径，获取失败抛出 `std::system_error`（包括派生异常）。父目录仍需提前创建，轮转文件的扫描与写入使用同一绝对基准。
+
 ```cpp
 #include <dlog/core/logger.h>
 
@@ -74,7 +78,9 @@ dlog::Logger::SetOutput(
 #include <dlog/core/asynclogging.h>
 #include <dlog/core/logger.h>
 
-std::filesystem::create_directories("logs");
+#include <dlog/utils/fileutil.h>
+
+std::filesystem::create_directories(dlog::FileUtil::executableDirectory() / "logs");
 dlog::AsyncLogging logging("logs/app", 64LL * 1024 * 1024);
 logging.start();
 
