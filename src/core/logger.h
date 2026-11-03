@@ -70,7 +70,7 @@ enum class LogLevelColorMode
 // Logger 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。
 // 一条日志的典型执行流程是：
 // 1. 创建 Logger 时，LoggerImpl 将时间、日志等级和源文件位置写入内部 LogStream 的前缀；
-// 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到固定缓冲区；
+// 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到可增长缓冲区；
 // 3. Logger 析构时调用 finish()，为日志追加换行符；
 // 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
 // Logger 本身不负责打开或管理日志文件。默认输出回调写入 stdout；如果调用 SetOutput() 注册文件输出回调，则可以将同一条日志交给其他文件后端持久化。颜色由 SetOutput() 的 LogLevelColorMode 参数控制，默认 ON；文件后端需要纯文本时应传入 LogLevelColorMode::OFF。OutputFunc 接收 data 和 length 两个参数，因此缓冲区是“起始地址 + 有效长度”的字节序列，不保证以 '\0' 结尾，不能直接按 C 字符串处理。
@@ -87,7 +87,7 @@ public:
 
     ~Logger();
 
-    // 返回当前日志的内部流。后续的 operator<< 只会修改本条日志自己的固定缓冲区，真正输出发生在 Logger 析构时。
+    // 返回当前日志的内部流。后续的 operator<< 只会修改本条日志自己的可增长缓冲区，真正输出发生在 Logger 析构时。
     LogStream &stream() { return m_impl.m_stream; }
 
     // 输出函数。OutputFunc 使用 size_t 表示显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。

@@ -10,6 +10,7 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "logger.h"
 
@@ -400,6 +401,49 @@ TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
     EXPECT_NE(callbackData.find("] length check\n"), std::string::npos);
 
     restoreDefaultOutput();
+}
+
+TEST(LoggerOutputTest, DeliversLongBinaryRecordOnceAndKeepsNextRecordSeparate)
+{
+    std::string payload(5000, 'A');
+    payload[2500] = '\0';
+    const std::string body = "payload=" + payload + ", done\n";
+
+    for (LogLevelColorMode mode : {LogLevelColorMode::OFF, LogLevelColorMode::ON})
+    {
+        std::vector<std::string> records;
+        Logger::SetOutput([&](const char *data, size_t len)
+                          { records.emplace_back(data, len); }, mode);
+
+        DLOG_INFO() << "payload=" << payload << ", done";
+        DLOG_INFO() << "next";
+        restoreDefaultOutput();
+
+        ASSERT_EQ(records.size(), 2u);
+        ASSERT_GE(records[0].size(), body.size());
+        EXPECT_EQ(records[0].substr(records[0].size() - body.size()), body);
+        EXPECT_NE(records[0].find("[INFO ]"), std::string::npos);
+        EXPECT_NE(records[0].find("[logger_test.cpp:"), std::string::npos);
+        EXPECT_NE(records[1].find("] next\n"), std::string::npos);
+        EXPECT_EQ(records[0].find('\x1b') != std::string::npos, mode == LogLevelColorMode::ON);
+    }
+}
+
+TEST(LoggerOutputTest, AppendsNewlineWhenInitialBufferIsExactlyFull)
+{
+    std::string payload;
+    const std::string output = captureOutput([&]
+    {
+        Logger logger(__FILE__, 456, LogLevel::INFO);
+        const size_t prefixLength = logger.stream().buffer().readableBytes();
+        ASSERT_LT(prefixLength, Buffer::kInitialSize);
+        payload.assign(Buffer::kInitialSize - prefixLength, 'X');
+        logger.stream() << payload;
+        EXPECT_EQ(logger.stream().buffer().writableBytes(), 0u);
+    });
+
+    ASSERT_EQ(output.size(), Buffer::kInitialSize + 1);
+    EXPECT_EQ(output.substr(output.size() - payload.size() - 1), payload + '\n');
 }
 
 TEST(LoggerColorOutputTest, EmitsColorByDefaultForEveryNonFatalLevel)

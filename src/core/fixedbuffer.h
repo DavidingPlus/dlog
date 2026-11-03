@@ -103,7 +103,7 @@ void FixedBuffer<bufferSize>::updateWriteState(size_t len)
 }
 
 
-// SmallBuffer 用于 LogStream 格式化单条日志，容量为 4,000 字节。
+// SmallBuffer 是容量为 4,000 字节的固定缓冲区；LogStream 已改用可增长的 Buffer。
 // LargeBuffer 用于 AsyncLogging 的生产者缓冲区和待写缓冲块，容量为 4,000,000 字节，即 SmallBuffer 的 1,000 倍。
 // using 为对应的 FixedBuffer 特化提供语义名称的别名。它既不创建新的派生类型，也不负责生成模板代码。
 using SmallBuffer = FixedBuffer<kSmallBufferSize>;

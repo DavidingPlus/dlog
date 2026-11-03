@@ -3,6 +3,7 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include "logger.h"
@@ -14,6 +15,12 @@ using namespace dlog;
 
 namespace
 {
+
+    std::string_view streamContents(const LogStream &stream)
+    {
+        const Buffer &buffer = stream.buffer();
+        return {buffer.peek(), buffer.readableBytes()};
+    }
 
     struct LogColorExample
     {
@@ -49,7 +56,7 @@ TEST(LogColorTest, WritesExpectedAnsiSequenceForEveryLogLevel)
             stream << example.name;
         }
 
-        EXPECT_EQ(stream.buffer().toString(), example.expected) << example.name;
+        EXPECT_EQ(streamContents(stream), example.expected) << example.name;
     }
 }
 
@@ -59,13 +66,13 @@ TEST(LogColorTest, AppliesColorAtConstructionAndResetsAfterDestruction)
     {
         LogColorGuard color(stream, LogLevel::INFO);
 
-        EXPECT_EQ(stream.buffer().toString(), "\x1b[32m");
+        EXPECT_EQ(streamContents(stream), "\x1b[32m");
 
         stream << "message";
-        EXPECT_EQ(stream.buffer().toString(), "\x1b[32mmessage");
+        EXPECT_EQ(streamContents(stream), "\x1b[32mmessage");
     }
 
-    EXPECT_EQ(stream.buffer().toString(), "\x1b[32mmessage\x1b[0m");
+    EXPECT_EQ(streamContents(stream), "\x1b[32mmessage\x1b[0m");
 }
 
 TEST(LogColorTest, WritesColorAndResetOnlyToTheSuppliedStream)
@@ -78,8 +85,8 @@ TEST(LogColorTest, WritesColorAndResetOnlyToTheSuppliedStream)
         otherStream << "other";
     }
 
-    EXPECT_EQ(targetStream.buffer().toString(), "\x1b[33m\x1b[1mtarget\x1b[0m");
-    EXPECT_EQ(otherStream.buffer().toString(), "other");
+    EXPECT_EQ(streamContents(targetStream), "\x1b[33m\x1b[1mtarget\x1b[0m");
+    EXPECT_EQ(streamContents(otherStream), "other");
 }
 
 TEST(LogColorTest, ResetsColorDuringStackUnwinding)
@@ -96,5 +103,18 @@ TEST(LogColorTest, ResetsColorDuringStackUnwinding)
     {
     }
 
-    EXPECT_EQ(stream.buffer().toString(), "\x1b[31m\x1b[1mbefore exception\x1b[0m");
+    EXPECT_EQ(streamContents(stream), "\x1b[31m\x1b[1mbefore exception\x1b[0m");
+}
+
+TEST(LogColorTest, PreservesColorResetAfterLongPayload)
+{
+    LogStream stream;
+    const std::string payload(5000, 'A');
+    {
+        LogColorGuard color(stream, LogLevel::INFO);
+        stream << payload;
+    }
+    stream << '\n';
+
+    EXPECT_EQ(streamContents(stream), "\x1b[32m" + payload + "\x1b[0m\n");
 }

@@ -63,10 +63,10 @@ Logger::~Logger()
 {
     m_impl.finish();
 
-    const SmallBuffer &buffer = stream().buffer();
+    const Buffer &buffer = stream().buffer();
 
     // 输出（默认项终端输出）。
-    g_outputCallback(buffer.data(), buffer.length());
+    g_outputCallback(buffer.peek(), buffer.readableBytes());
     // 输出 FATAL 的情况，刷新缓冲区并终止程序。
     if (LogLevel::FATAL == m_impl.m_level)
     {
@@ -100,7 +100,7 @@ Logger::LoggerImpl::LoggerImpl(LogLevel level, int savedErrno, const char *filen
         m_stream << logLevelName(m_level);
     }
 
-    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的固定缓冲区，因此这里只需要保证源文件名在调用时仍有效。
+    // m_basename.view() 返回的是非拥有型 std::string_view，LogStream 会在本次调用中立即把它复制到自己的可增长缓冲区，因此这里只需要保证源文件名在调用时仍有效。
     m_stream << "[" << m_basename.view() << ':' << m_line << "] ";
 
     // 如果调用方在进入 Logger 前保存了 errno，则把错误信息和 errno 数值一起写入正文前面。
@@ -118,7 +118,7 @@ void Logger::LoggerImpl::formatTime()
 {
     // m_time 在 LoggerImpl 构造时已经保存，是当前这条日志的时间戳。这里直接使用 m_time，而不是再次调用 Timestamp::Now()，这样可以避免一次额外的取时操作，并保证日志前缀表示 LoggerImpl 创建时的时间。
 
-    // toFormattedString(true) 返回一个独立拥有字符数据的 std::string，例如："[2026/09/22 15:30:12.123456]"。LogStream 会在本次 operator<< 调用中把它复制到自己的固定缓冲区，因此临时字符串在这条语句结束后销毁不会造成悬空引用。
+    // toFormattedString(true) 返回一个独立拥有字符数据的 std::string，例如："[2026/09/22 15:30:12.123456]"。LogStream 会在本次 operator<< 调用中把它复制到自己的可增长缓冲区，因此临时字符串在这条语句结束后销毁不会造成悬空引用。
     // 多个线程分别格式化各自日志时，toFormattedString() 这条路径是线程安全的。但线程安全不等于没有开销：每条日志仍需要做时间格式化，并可能创建临时 std::string；如果后续日志频率很高，可以再使用 thread_local 缓存每秒不变的日期部分进行优化。
     m_stream << "[" << m_time.toFormattedString(true) << "] ";
 }

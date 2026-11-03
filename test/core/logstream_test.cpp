@@ -11,12 +11,24 @@
 using namespace dlog;
 
 
+namespace
+{
+
+    std::string_view streamContents(const LogStream &stream)
+    {
+        const Buffer &buffer = stream.buffer();
+        return {buffer.peek(), buffer.readableBytes()};
+    }
+
+} // namespace
+
+
 TEST(LogStreamTest, StartsEmptyAndIsNonCopyable)
 {
     LogStream stream;
 
-    EXPECT_EQ(stream.buffer().length(), 0u);
-    EXPECT_EQ(stream.buffer().avail(), kSmallBufferSize);
+    EXPECT_EQ(stream.buffer().readableBytes(), 0u);
+    EXPECT_EQ(stream.buffer().writableBytes(), Buffer::kInitialSize);
     EXPECT_FALSE(std::is_copy_constructible_v<LogStream>);
     EXPECT_FALSE(std::is_copy_assignable_v<LogStream>);
     EXPECT_FALSE(std::is_move_constructible_v<LogStream>);
@@ -30,7 +42,7 @@ TEST(LogStreamTest, OperatorOverloadsReturnTheSameStream)
     LogStream &result = stream << 42 << ' ' << "answer";
 
     EXPECT_EQ(&result, &stream);
-    EXPECT_EQ(stream.buffer().toString(), "42 answer");
+    EXPECT_EQ(streamContents(stream), "42 answer");
 }
 
 TEST(LogStreamTest, FormatsBooleanValues)
@@ -39,7 +51,7 @@ TEST(LogStreamTest, FormatsBooleanValues)
 
     stream << true << ' ' << false;
 
-    EXPECT_EQ(stream.buffer().toString(), "true false");
+    EXPECT_EQ(streamContents(stream), "true false");
 }
 
 TEST(LogStreamTest, FormatsDoubleWithTwelveSignificantDigits)
@@ -48,7 +60,7 @@ TEST(LogStreamTest, FormatsDoubleWithTwelveSignificantDigits)
 
     stream << 3.141592653589793;
 
-    EXPECT_EQ(stream.buffer().toString(), "3.14159265359");
+    EXPECT_EQ(streamContents(stream), "3.14159265359");
 }
 
 TEST(LogStreamTest, FormatsFloatThroughDoubleOverload)
@@ -57,7 +69,7 @@ TEST(LogStreamTest, FormatsFloatThroughDoubleOverload)
 
     stream << 1.25f << ' ' << -0.5f;
 
-    EXPECT_EQ(stream.buffer().toString(), "1.25 -0.5");
+    EXPECT_EQ(streamContents(stream), "1.25 -0.5");
 }
 
 TEST(LogStreamTest, FormatsIntegralValuesAcrossAllOverloads)
@@ -92,7 +104,7 @@ TEST(LogStreamTest, FormatsIntegralValuesAcrossAllOverloads)
         std::to_string(longLongValue) + "|" +
         std::to_string(unsignedLongLongValue);
 
-    EXPECT_EQ(stream.buffer().toString(), expected);
+    EXPECT_EQ(streamContents(stream), expected);
 }
 
 TEST(LogStreamTest, FormatsZeroAndPositiveIntegralValues)
@@ -110,7 +122,7 @@ TEST(LogStreamTest, FormatsZeroAndPositiveIntegralValues)
            << 123 << ' '
            << 456ULL;
 
-    EXPECT_EQ(stream.buffer().toString(), "0 0 0 0 0 0 0 0 123 456");
+    EXPECT_EQ(streamContents(stream), "0 0 0 0 0 0 0 0 123 456");
 }
 
 TEST(LogStreamTest, FormatsLargeDoubleValues)
@@ -119,7 +131,7 @@ TEST(LogStreamTest, FormatsLargeDoubleValues)
 
     stream << std::numeric_limits<double>::max();
 
-    const std::string result = stream.buffer().toString();
+    const std::string result(streamContents(stream));
     EXPECT_FALSE(result.empty());
     EXPECT_NE(result.find('e'), std::string::npos);
 }
@@ -131,7 +143,7 @@ TEST(LogStreamTest, FormatsStringViewWithEmbeddedNull)
 
     stream << std::string_view(data, sizeof(data));
 
-    EXPECT_EQ(stream.buffer().toString(), std::string(data, sizeof(data)));
+    EXPECT_EQ(streamContents(stream), std::string(data, sizeof(data)));
 }
 
 TEST(LogStreamTest, FormatsStringViewSlice)
@@ -141,7 +153,7 @@ TEST(LogStreamTest, FormatsStringViewSlice)
 
     stream << std::string_view(text).substr(7, 7);
 
-    EXPECT_EQ(stream.buffer().toString(), "message");
+    EXPECT_EQ(streamContents(stream), "message");
 }
 
 TEST(LogStreamTest, FormatsCharacterAndNullCharacter)
@@ -152,7 +164,7 @@ TEST(LogStreamTest, FormatsCharacterAndNullCharacter)
 
     const char expectedData[] = {'a', '\0', 'b'};
     const std::string expected(expectedData, sizeof(expectedData));
-    EXPECT_EQ(stream.buffer().toString(), expected);
+    EXPECT_EQ(streamContents(stream), expected);
 }
 
 TEST(LogStreamTest, CharacterOverloadsReuseStringViewFormatting)
@@ -162,7 +174,7 @@ TEST(LogStreamTest, CharacterOverloadsReuseStringViewFormatting)
 
     stream << 'A' << "bc" << unsignedText;
 
-    EXPECT_EQ(stream.buffer().toString(), "Abcunsigned");
+    EXPECT_EQ(streamContents(stream), "Abcunsigned");
 }
 
 TEST(LogStreamTest, FormatsStdStringWithEmbeddedNull)
@@ -173,7 +185,7 @@ TEST(LogStreamTest, FormatsStdStringWithEmbeddedNull)
 
     stream << text;
 
-    EXPECT_EQ(stream.buffer().toString(), text);
+    EXPECT_EQ(streamContents(stream), text);
 }
 
 TEST(LogStreamTest, EmptyStringValuesDoNotChangeTheBuffer)
@@ -181,12 +193,12 @@ TEST(LogStreamTest, EmptyStringValuesDoNotChangeTheBuffer)
     LogStream stream;
 
     stream << "prefix";
-    const auto lengthBefore = stream.buffer().length();
+    const auto lengthBefore = stream.buffer().readableBytes();
 
     stream << "" << std::string() << std::string_view();
 
-    EXPECT_EQ(stream.buffer().length(), lengthBefore);
-    EXPECT_EQ(stream.buffer().toString(), "prefix");
+    EXPECT_EQ(stream.buffer().readableBytes(), lengthBefore);
+    EXPECT_EQ(streamContents(stream), "prefix");
 }
 
 TEST(LogStreamTest, NullCharacterPointersAreIgnored)
@@ -197,7 +209,7 @@ TEST(LogStreamTest, NullCharacterPointersAreIgnored)
 
     stream << text << unsignedText;
 
-    EXPECT_TRUE(stream.buffer().toString().empty());
+    EXPECT_TRUE(streamContents(stream).empty());
 }
 
 TEST(LogStreamTest, ResetBufferClearsDataAndAllowsReuse)
@@ -207,56 +219,84 @@ TEST(LogStreamTest, ResetBufferClearsDataAndAllowsReuse)
     stream << "old value";
     stream.resetBuffer();
 
-    EXPECT_EQ(stream.buffer().length(), 0u);
-    EXPECT_EQ(stream.buffer().avail(), kSmallBufferSize);
-    EXPECT_TRUE(stream.buffer().toString().empty());
+    EXPECT_EQ(stream.buffer().readableBytes(), 0u);
+    EXPECT_EQ(stream.buffer().writableBytes(), Buffer::kInitialSize);
+    EXPECT_TRUE(streamContents(stream).empty());
 
     stream << "new value";
 
-    EXPECT_EQ(stream.buffer().toString(), "new value");
+    EXPECT_EQ(streamContents(stream), "new value");
 }
 
-TEST(LogStreamTest, RejectsPayloadThatExceedsAvailableBufferWithoutPartialWrite)
+TEST(LogStreamTest, GrowsWhenAccumulatedFieldsExceedInitialCapacity)
 {
     LogStream stream;
-    const std::string payload(kSmallBufferSize - 2, 'x');
-
+    const std::string payload(Buffer::kInitialSize - 2, 'x');
     stream << std::string_view(payload);
-    ASSERT_EQ(stream.buffer().length(), kSmallBufferSize - 2);
+    ASSERT_EQ(stream.buffer().writableBytes(), 2u);
 
-    const auto lengthBefore = stream.buffer().length();
-    const auto availBefore = stream.buffer().avail();
+    stream << "123" << '|' << true << '|' << 1.25;
 
-    stream << "123";
-
-    EXPECT_EQ(stream.buffer().length(), lengthBefore);
-    EXPECT_EQ(stream.buffer().avail(), availBefore);
-    EXPECT_EQ(stream.buffer().toString(), payload);
+    EXPECT_EQ(streamContents(stream), payload + "123|true|1.25");
 }
 
-// TODO 复现当前缺陷：超长正文被整段忽略，但前后字段仍会保留；修复策略确定后需调整期望。
-TEST(LogStreamTest, ReproducesSilentLossOfOversizedPayload)
+// 回归原复现场景：正文、前后字段和换行都必须保留。
+TEST(LogStreamTest, PreservesOversizedPayloadAndSurroundingFields)
 {
     LogStream stream;
     const std::string payload(5000, 'A');
-    ASSERT_GT(payload.size(), kSmallBufferSize);
 
     stream << "payload=" << payload << ", done\n";
 
-    EXPECT_EQ(stream.buffer().toString(), "payload=, done\n");
+    EXPECT_EQ(streamContents(stream), "payload=" + payload + ", done\n");
 }
 
-TEST(LogStreamTest, RejectsValueWhenOnlyPartOfItsFormattedTextFits)
+TEST(LogStreamTest, GrowsWhenFormattedIntegerExceedsRemainingSpace)
 {
     LogStream stream;
-    const std::string payload(kSmallBufferSize - 1, 'x');
-
-    stream << std::string_view(payload);
-    ASSERT_EQ(stream.buffer().avail(), 1u);
+    const std::string payload(Buffer::kInitialSize - 1, 'x');
+    stream << payload;
+    ASSERT_EQ(stream.buffer().writableBytes(), 1u);
 
     stream << 12345;
 
-    EXPECT_EQ(stream.buffer().length(), kSmallBufferSize - 1);
-    EXPECT_EQ(stream.buffer().avail(), 1u);
-    EXPECT_EQ(stream.buffer().toString(), payload);
+    EXPECT_EQ(streamContents(stream), payload + "12345");
+}
+
+TEST(LogStreamTest, AppendsNewlineAfterExactlyFillingInitialCapacity)
+{
+    LogStream stream;
+    const std::string payload(Buffer::kInitialSize, 'x');
+    stream << payload;
+    ASSERT_EQ(stream.buffer().writableBytes(), 0u);
+
+    stream << '\n';
+
+    EXPECT_EQ(streamContents(stream), payload + "\n");
+}
+
+TEST(LogStreamTest, ExplicitLengthAppendPreservesLongBinaryData)
+{
+    LogStream stream;
+    std::string payload(5000, 'A');
+    payload[2500] = '\0';
+
+    stream.append(payload.data(), payload.size());
+    stream << ", done\n";
+
+    EXPECT_EQ(streamContents(stream), payload + ", done\n");
+}
+
+TEST(LogStreamTest, ResetAfterGrowthAllowsReuseWithoutOldContent)
+{
+    LogStream stream;
+    stream << std::string(5000, 'A');
+    const size_t storageSize = stream.buffer().readableBytes() + stream.buffer().writableBytes();
+
+    stream.resetBuffer();
+    EXPECT_EQ(stream.buffer().readableBytes(), 0u);
+    EXPECT_EQ(stream.buffer().writableBytes(), storageSize);
+    stream << "new" << 42;
+
+    EXPECT_EQ(streamContents(stream), "new42");
 }

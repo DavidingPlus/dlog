@@ -1,7 +1,8 @@
 #include "logstream.h"
-#include "fixedbuffer.h"
 
 #include <iostream>
+#include <cassert>
+#include <string_view>
 
 
 int main()
@@ -9,9 +10,12 @@ int main()
     dlog::LogStream stream;
     std::string payload(5000, 'A');
 
-    std::cout << "payload.size(): " << payload.size() << ", kSmallBufferSize: " << dlog::kSmallBufferSize << std::endl;
+    std::cout << "payload.size(): " << payload.size() << ", initial buffer size: " << dlog::Buffer::kInitialSize << std::endl;
 
     stream << "payload=" << payload << ", done\n";
 
-    std::cout << "stream.buffer().toString(): " << stream.buffer().toString();
+    const dlog::Buffer &buffer = stream.buffer();
+    assert(std::string_view(buffer.peek(), buffer.readableBytes()) == "payload=" + payload + ", done\n");
+    std::cout << "stream readable bytes: " << buffer.readableBytes() << '\n';
+    std::cout.write(buffer.peek(), buffer.readableBytes());
 }

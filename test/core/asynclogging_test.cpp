@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "asynclogging.h"
+#include "logger.h"
 
 
 using namespace dlog;
@@ -336,4 +338,33 @@ TEST_F(AsyncLoggingTest, ConcurrentProducersPreserveEveryWholeRecord)
 
     ASSERT_EQ(actualRecords.size(), expectedRecords.size());
     for (const auto &record : expectedRecords) EXPECT_EQ(actualRecords.count(record), 1u) << "missing record: " << record;
+}
+
+// 从日志宏走到文件，覆盖前端增长和后端跨 4,000,000 字节缓冲块的交接。
+TEST_F(AsyncLoggingTest, WritesCompleteLongLoggerRecordAcrossMultipleBuffers)
+{
+    std::string payload(2 * kLargeBufferSize + 137, 'A');
+    payload[kLargeBufferSize] = '\0';
+    AsyncLogging logging(m_basePath.string(), static_cast<int64_t>(4 * kLargeBufferSize), 60);
+    logging.start();
+    std::string submitted;
+    size_t calls = 0;
+    Logger::SetOutput([&](const char *data, size_t length)
+                      {
+        ++calls;
+        submitted.assign(data, length);
+        logging.append(data, length); },
+                      LogLevelColorMode::OFF);
+
+    DLOG_INFO() << "payload=" << payload << ", done";
+
+    Logger::SetOutput([](const char *data, size_t length)
+                      { std::fwrite(data, 1, length, stdout); });
+    logging.stop();
+
+    EXPECT_EQ(calls, 1u);
+    const std::string body = "payload=" + payload + ", done\n";
+    ASSERT_GE(submitted.size(), body.size());
+    EXPECT_EQ(submitted.substr(submitted.size() - body.size()), body);
+    EXPECT_EQ(readAllAsyncLogs(m_basePath), submitted);
 }
