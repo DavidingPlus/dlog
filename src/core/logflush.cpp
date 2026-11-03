@@ -26,22 +26,13 @@ void StdoutFlush::writeAndFlush(const char *data, size_t len)
     if (!std::cout) throw std::runtime_error("StdoutFlush::writeAndFlush() failed: stdout flush error");
 }
 
-FileFlush::FileFlush(const std::string &filename) : m_file(std::make_unique<LogFile>(filename))
-{
-}
-
-FileFlush::FileFlush(const std::string &basePath, int64_t rollSize) : m_file(std::make_unique<LogFile>(basePath, rollSize))
-{
-}
-
-FileFlush::~FileFlush() = default;
 
 void FileFlush::writeAndFlush(const char *data, size_t len)
 {
     if (0 == len) return;
     if (!data) throw std::invalid_argument("FileFlush::writeAndFlush(): data must not be null");
 
-    // LogFile 只负责文件操作，这里统一完成一次写入和刷新。
+    // LogFile 提供写入和刷新接口，但实际链路中一般只负责文件操作，在这里统一完成一次写入和刷新。
     m_file->append(data, len);
     m_file->flush();
 }

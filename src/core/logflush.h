@@ -3,14 +3,13 @@
 
 #include "globalmacros.h"
 
+#include "logfile.h"
+
 #include <memory>
-#include <string>
+#include <filesystem>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
-
-
-class LogFile;
 
 
 // 参考：https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/LogFlush.hpp
@@ -31,7 +30,7 @@ class DLOG_API_EXPORTED StdoutFlush : public LogFlush
 
 public:
 
-    void writeAndFlush(const char *data, size_t len) override;
+    virtual void writeAndFlush(const char *data, size_t len) override;
 };
 
 
@@ -40,20 +39,29 @@ class DLOG_API_EXPORTED FileFlush : public LogFlush
 
 public:
 
-    // 文件模式由 LogFile 管理；两种模式都要求父目录已存在。
-    explicit FileFlush(const std::string &filename);
+    explicit FileFlush(const std::filesystem::path &filename) : m_file(std::make_unique<LogFile>(filename)) {}
 
-    FileFlush(const std::string &basePath, int64_t rollSize);
+    FileFlush(const std::filesystem::path &basePath, int64_t rollSize) : m_file(std::make_unique<LogFile>(basePath, rollSize)) {}
 
-    // LogFile 仅在此处前置声明，析构放到 .cpp 中定义。
-    ~FileFlush() override;
+    virtual ~FileFlush() override = default;
 
-    void writeAndFlush(const char *data, size_t len) override;
+    virtual void writeAndFlush(const char *data, size_t len) override;
 
 
 private:
 
     std::unique_ptr<LogFile> m_file;
+};
+
+
+class DLOG_API_EXPORTED RollFileFlush : public FileFlush
+{
+
+public:
+
+    RollFileFlush(const std::filesystem::path &basePath, int64_t rollSize) : FileFlush(basePath, rollSize) {}
+
+    virtual ~RollFileFlush() override = default;
 };
 
 

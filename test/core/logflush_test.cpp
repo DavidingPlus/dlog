@@ -24,6 +24,7 @@ namespace
     class FileFlushTest : public ::testing::Test
     {
     protected:
+
         void SetUp() override
         {
             const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -122,6 +123,7 @@ TEST(StdoutFlushTest, FlushesNonemptyWritesAndIgnoresEmptyWrites)
     class CountingBuffer : public std::stringbuf
     {
     public:
+
         int flushes = 0;
         int sync() override
         {
@@ -143,10 +145,10 @@ TEST(StdoutFlushTest, FlushesNonemptyWritesAndIgnoresEmptyWrites)
 
 TEST_F(FileFlushTest, NormalFileIsReadableAfterEachWriteAndPreservesBinaryData)
 {
-    const auto filename = m_directory / "app.log";
+    const auto filename = m_directory / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680.log");
     std::string payload(5000, 'A');
     payload[2500] = '\0';
-    std::unique_ptr<LogFlush> output = std::make_unique<FileFlush>(filename.string());
+    std::unique_ptr<LogFlush> output = std::make_unique<FileFlush>(filename);
     const char tail[] = {'t', 'a', 'i', 'l', '!'};
 
     output->writeAndFlush(payload.data(), payload.size());
@@ -161,10 +163,10 @@ TEST_F(FileFlushTest, ReopeningNormalFileAppendsExistingContent)
 {
     const auto filename = m_directory / "app.log";
     {
-        FileFlush output(filename.string());
+        FileFlush output(filename);
         output.writeAndFlush("first|", 6);
     }
-    FileFlush output(filename.string());
+    FileFlush output(filename);
     output.writeAndFlush("second", 6);
 
     EXPECT_EQ(readFile(filename), "first|second");
@@ -172,26 +174,29 @@ TEST_F(FileFlushTest, ReopeningNormalFileAppendsExistingContent)
 
 TEST_F(FileFlushTest, RollingFileFlushesBeforeAndAfterRotation)
 {
-    FileFlush output((m_directory / "app").string(), 4);
-    output.writeAndFlush("abcd", 4);
+    const auto basePath = m_directory / std::filesystem::u8path(u8"\u8f6e\u8f6c \U0001f680");
+    std::unique_ptr<LogFlush> output = std::make_unique<RollFileFlush>(basePath, 4);
+    output->writeAndFlush("abcd", 4);
     ASSERT_EQ(files().size(), 1u);
     EXPECT_EQ(readFile(files().front()), "abcd");
 
-    EXPECT_NO_THROW(output.writeAndFlush(nullptr, 0));
-    EXPECT_THROW(output.writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_NO_THROW(output->writeAndFlush(nullptr, 0));
+    EXPECT_NO_THROW(output->writeAndFlush("ignored", 0));
+    EXPECT_THROW(output->writeAndFlush(nullptr, 1), std::invalid_argument);
     EXPECT_EQ(files().size(), 1u);
 
-    output.writeAndFlush("e", 1);
+    const char tail[] = {'e', '\0', 'f', '!'};
+    output->writeAndFlush(tail, 3);
     const auto paths = files();
     ASSERT_EQ(paths.size(), 2u);
     EXPECT_EQ(readFile(paths[0]), "abcd");
-    EXPECT_EQ(readFile(paths[1]), "e");
+    EXPECT_EQ(readFile(paths[1]), std::string(tail, 3));
 }
 
 TEST_F(FileFlushTest, EmptyAndInvalidWritesLeaveNormalFileUnchanged)
 {
     const auto filename = m_directory / "app.log";
-    FileFlush output(filename.string());
+    FileFlush output(filename);
 
     EXPECT_NO_THROW(output.writeAndFlush(nullptr, 0));
     EXPECT_NO_THROW(output.writeAndFlush("ignored", 0));
@@ -206,7 +211,31 @@ TEST_F(FileFlushTest, ReportsMissingParentDirectoryInBothModes)
 {
     const auto path = m_directory / "missing" / "app";
 
-    EXPECT_THROW({ FileFlush output(path.string()); }, std::runtime_error);
-    EXPECT_THROW({ FileFlush output(path.string(), 4); }, std::runtime_error);
+    EXPECT_THROW({ FileFlush output(path); }, std::runtime_error);
+    EXPECT_THROW({ RollFileFlush output(path, 4); }, std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path.parent_path()));
+}
+
+TEST_F(FileFlushTest, ReopeningRollingFileKeepsOldContentsAndUsesNextIndex)
+{
+    const auto basePath = m_directory / "app";
+    {
+        RollFileFlush output(basePath, 4);
+        output.writeAndFlush("first", 5);
+    }
+    RollFileFlush output(basePath, 4);
+    output.writeAndFlush("next", 4);
+
+    const auto paths = files();
+    ASSERT_EQ(paths.size(), 2u);
+    EXPECT_EQ(readFile(paths[0]), "first");
+    EXPECT_EQ(readFile(paths[1]), "next");
+}
+
+TEST_F(FileFlushTest, RejectsEmptyPathsInBothModes)
+{
+    const std::filesystem::path empty;
+    EXPECT_THROW({ FileFlush output(empty); }, std::invalid_argument);
+    EXPECT_THROW({ RollFileFlush output(empty, 4); }, std::invalid_argument);
+    EXPECT_TRUE(files().empty());
 }
