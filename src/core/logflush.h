@@ -21,11 +21,8 @@ public:
 
     virtual ~LogFlush() = default;
 
-    // 接收已经格式化的字节，不依赖末尾 '\0'。
-    virtual void append(const char *data, size_t len) = 0;
-
-    // 刷新输出目标自身的缓冲区。
-    virtual void flush() = 0;
+    // 写入并刷新。
+    virtual void writeAndFlush(const char *data, size_t len) = 0;
 };
 
 
@@ -34,9 +31,7 @@ class DLOG_API_EXPORTED StdoutFlush : public LogFlush
 
 public:
 
-    void append(const char *data, size_t len) override;
-
-    void flush() override;
+    void writeAndFlush(const char *data, size_t len) override;
 };
 
 
@@ -49,9 +44,7 @@ public:
 
     ~FileFlush() override = default;
 
-    void append(const char *data, size_t len) override;
-
-    void flush() override;
+    void writeAndFlush(const char *data, size_t len) override;
 
 
 private:

@@ -81,7 +81,7 @@ dlog::Shutdown();
 | 现有 Logger / LogStream / Buffer | 构造单条记录，完成后提交；保留格式、空字节和超长支持 |
 | AsyncLogger | 长期持有工作器与输出目标，接收完整记录 |
 | AsyncWorker | 从 AsyncLogging 提取，负责字节复制、后台写出、周期刷新、停止排空 |
-| LogFlush | 最小输出接口：写入显式长度字节、刷新 |
+| LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
 | StdoutFlush / FileFlush | 分别复用 stdout 与 LogFile；此处 FileFlush 指轮转文件输出 |
 | 简单管理器 | 保存默认和命名 AsyncLogger，统一关闭 |
 
@@ -99,7 +99,7 @@ DLOG_INFO()
 
 ### 第一步：输出目标与工作器解耦
 
-- 定义 LogFlush 的写入、刷新接口，实现终端和轮转文件输出。
+- 定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和轮转文件输出。后台按批调用，避免每条日志都单独刷新。
 - 从 AsyncLogging 提取工作器，把写死的 LogFile 改为调用输出目标，只保留一套消费循环。原 AsyncLogging 调用在迁移期间继续通过该循环工作，不另写一个后端。
 - 保留持锁整条追加、跨块顺序、锁外写出、周期刷新、重复启停和停止排空。
 - 后台捕获失败、保存错误状态并直接向 stderr 报告，避免异常逃出线程或递归记录。FileUtil 已有的报错返回路径也要检查，单加 catch 不够。
