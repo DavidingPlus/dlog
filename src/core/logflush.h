@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <filesystem>
+#include <utility>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -62,6 +63,16 @@ public:
     RollFileFlush(const std::filesystem::path &basePath, int64_t rollSize) : FileFlush(basePath, rollSize) {}
 
     virtual ~RollFileFlush() override = default;
+};
+
+
+class DLOG_API_EXPORTED LogFlushFactory
+{
+
+public:
+
+    template <typename LogFlushType, typename... Args>
+    static std::shared_ptr<LogFlush> CreateLogFlush(Args &&...args) { return std::make_shared<LogFlushType>(std::forward<Args>(args)...); }
 };
 
 

@@ -239,3 +239,87 @@ TEST_F(FileFlushTest, RejectsEmptyPathsInBothModes)
     EXPECT_THROW({ RollFileFlush output(empty, 4); }, std::invalid_argument);
     EXPECT_TRUE(files().empty());
 }
+
+TEST(LogFlushFactoryTest, CreatesStdoutFlushWithNoArguments)
+{
+    const auto output = LogFlushFactory::CreateLogFlush<StdoutFlush>();
+    ASSERT_NE(std::dynamic_pointer_cast<StdoutFlush>(output), nullptr);
+
+    testing::internal::CaptureStdout();
+    EXPECT_NO_THROW(output->writeAndFlush("factory", 7));
+    const auto actual = testing::internal::GetCapturedStdout();
+    EXPECT_EQ(actual, "factory");
+}
+
+TEST_F(FileFlushTest, FactoryCreatesNormalFileWithNativePath)
+{
+    const auto filename = m_directory / std::filesystem::u8path(u8"\u5de5\u5382 \U0001f680.log");
+    const auto output = LogFlushFactory::CreateLogFlush<FileFlush>(filename);
+    ASSERT_NE(std::dynamic_pointer_cast<FileFlush>(output), nullptr);
+    const char bytes[] = {'a', '\0', 'b'};
+
+    output->writeAndFlush(bytes, sizeof(bytes));
+
+    EXPECT_EQ(readFile(filename), std::string(bytes, sizeof(bytes)));
+    ASSERT_EQ(files().size(), 1u);
+    EXPECT_EQ(files().front(), filename);
+}
+
+TEST_F(FileFlushTest, FactoryCreatesRollingFileWithNativePathAndSize)
+{
+    const auto basePath = m_directory / std::filesystem::u8path(u8"\u5de5\u5382 \U0001f680");
+    const auto output = LogFlushFactory::CreateLogFlush<RollFileFlush>(basePath, 4);
+    ASSERT_NE(std::dynamic_pointer_cast<RollFileFlush>(output), nullptr);
+
+    output->writeAndFlush("abcd", 4);
+    output->writeAndFlush("e", 1);
+
+    const auto paths = files();
+    ASSERT_EQ(paths.size(), 2u);
+    EXPECT_EQ(readFile(paths[0]), "abcd");
+    EXPECT_EQ(readFile(paths[1]), "e");
+}
+
+TEST_F(FileFlushTest, FactoryPropagatesConstructionErrors)
+{
+    const std::filesystem::path empty;
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<FileFlush>(empty), std::invalid_argument);
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<RollFileFlush>(empty, 4), std::invalid_argument);
+
+    const auto missing = m_directory / "missing" / "app";
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<FileFlush>(missing), std::runtime_error);
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<RollFileFlush>(missing, 4), std::runtime_error);
+    EXPECT_TRUE(files().empty());
+}
+
+TEST(LogFlushFactoryTest, ForwardsLvalueAndMoveOnlyArgumentsAndSharesLifetime)
+{
+    // 引用参数和不可复制参数分别验证左值保留、右值移动，避免退化为按值复制。
+    class TrackedFlush : public LogFlush
+    {
+    public:
+
+        TrackedFlush(int &destructions, std::unique_ptr<int> value) : destructions(destructions), value(std::move(value)) {}
+        ~TrackedFlush() override { ++destructions; }
+        void writeAndFlush(const char *, size_t) override {}
+
+        int &destructions;
+        std::unique_ptr<int> value;
+    };
+
+    int destructions = 0;
+    auto value = std::make_unique<int>(42);
+    const auto *original = value.get();
+    auto output = LogFlushFactory::CreateLogFlush<TrackedFlush>(destructions, std::move(value));
+    ASSERT_EQ(value, nullptr);
+    const auto *derived = dynamic_cast<TrackedFlush *>(output.get());
+    ASSERT_NE(derived, nullptr);
+    EXPECT_EQ(derived->value.get(), original);
+    EXPECT_EQ(*derived->value, 42);
+
+    auto shared = output;
+    output.reset();
+    EXPECT_EQ(destructions, 0);
+    shared.reset();
+    EXPECT_EQ(destructions, 1);
+}
