@@ -18,6 +18,22 @@ using namespace dlog;
 namespace
 {
 
+    class CurrentPathGuard
+    {
+    public:
+        explicit CurrentPathGuard(const std::filesystem::path &path) : m_previous(std::filesystem::current_path()) { std::filesystem::current_path(path); }
+        ~CurrentPathGuard()
+        {
+            std::error_code error;
+            std::filesystem::current_path(m_previous, error);
+        }
+        CurrentPathGuard(const CurrentPathGuard &) = delete;
+        CurrentPathGuard &operator=(const CurrentPathGuard &) = delete;
+
+    private:
+        std::filesystem::path m_previous;
+    };
+
     std::filesystem::path makeTempFilePath()
     {
         const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -58,6 +74,20 @@ TEST(FileUtilTypeTest, IsNonCopyableAndNonMovable)
     EXPECT_FALSE(std::is_copy_assignable_v<FileUtil>);
     EXPECT_FALSE(std::is_move_constructible_v<FileUtil>);
     EXPECT_FALSE(std::is_move_assignable_v<FileUtil>);
+}
+
+TEST(FileUtilTypeTest, ExecutablePathNamesCurrentProcessAndIgnoresWorkingDirectory)
+{
+    const auto executable = FileUtil::executableFullPath();
+    const auto args = testing::internal::GetArgvs();
+    ASSERT_FALSE(args.empty());
+    EXPECT_TRUE(executable.is_absolute());
+    EXPECT_TRUE(std::filesystem::equivalent(executable, std::filesystem::path(args.front())));
+    EXPECT_EQ(FileUtil::executableDirectory(), executable.parent_path());
+
+    CurrentPathGuard currentPath(std::filesystem::temp_directory_path());
+    EXPECT_EQ(FileUtil::executableFullPath(), executable);
+    EXPECT_EQ(FileUtil::executableDirectory(), executable.parent_path());
 }
 
 TEST_F(FileUtilTest, ConstructorCreatesAnEmptyFile)
@@ -208,4 +238,64 @@ TEST_F(FileUtilTest, ConstructorThrowsWhenFileCannotBeOpened)
             FileUtil file(invalidPath.string());
         },
         std::runtime_error);
+}
+
+TEST_F(FileUtilTest, SupportsNativeUnicodePathWithSpaces)
+{
+    auto filename = std::filesystem::u8path(u8"日志 🦄 ");
+    filename += m_filePath.filename();
+    m_filePath.replace_filename(filename);
+    const std::string data("path\0data\n", 10);
+
+    {
+        FileUtil file(m_filePath);
+        file.append(data.data(), data.size());
+        file.flush();
+    }
+
+    EXPECT_TRUE(std::filesystem::exists(m_filePath));
+    EXPECT_EQ(readBinaryFile(m_filePath), data);
+}
+
+TEST_F(FileUtilTest, RejectsEmptyPath)
+{
+    EXPECT_THROW({ FileUtil file(std::filesystem::path{}); }, std::invalid_argument);
+}
+
+TEST_F(FileUtilTest, RejectsEmbeddedNullBeforeOpeningPathPrefix)
+{
+    auto nativePath = m_filePath.native();
+    nativePath.push_back(std::filesystem::path::value_type{});
+    nativePath += std::filesystem::path("suffix").native();
+
+    EXPECT_THROW({ FileUtil file{std::filesystem::path(nativePath)}; }, std::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists(m_filePath));
+}
+
+TEST_F(FileUtilTest, RelativePathUsesExecutableDirectoryAndNormalizesDotSegments)
+{
+    const auto workingDirectoryPath = m_filePath;
+    m_filePath = FileUtil::executableDirectory() / m_filePath.filename();
+    {
+        CurrentPathGuard currentPath(workingDirectoryPath.parent_path());
+        FileUtil file(std::filesystem::path("unused") / ".." / m_filePath.filename());
+        file.append("relative", 8);
+        file.flush();
+    }
+
+    EXPECT_EQ(readBinaryFile(m_filePath), "relative");
+    EXPECT_FALSE(std::filesystem::exists(workingDirectoryPath));
+    std::error_code error;
+    std::filesystem::remove(workingDirectoryPath, error);
+    EXPECT_FALSE(error) << error.message();
+}
+
+TEST_F(FileUtilTest, AbsolutePathIsUsedAfterWorkingDirectoryChanges)
+{
+    CurrentPathGuard currentPath(FileUtil::executableDirectory());
+    FileUtil file(m_filePath);
+    file.append("absolute", 8);
+    file.flush();
+
+    EXPECT_EQ(readBinaryFile(m_filePath), "absolute");
 }

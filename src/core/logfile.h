@@ -29,10 +29,10 @@ class DLOG_API_EXPORTED LogFile
 public:
 
     // 普通模式。按完整文件名追加，不添加日期、序号，也不自动轮转；父目录需已存在。
-    explicit LogFile(const std::string &filename) : m_file(std::make_unique<FileUtil>(filename)) {}
+    explicit LogFile(const std::filesystem::path &filename) : m_file(std::make_unique<FileUtil>(filename)) {}
 
     // 轮转模式。构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
-    LogFile(const std::string &basePath, int64_t rollsize) : m_basePath(basePath), m_rollsize(rollsize), m_rollingEnabled(true) { rollFile(); }
+    LogFile(const std::filesystem::path &basePath, int64_t rollsize);
 
     ~LogFile() = default;
 
@@ -58,10 +58,10 @@ private:
     static std::string GetDateString(time_t time);
 
     // 根据基础路径生成带日期和序号的日志文件路径。例如 basePath 为 "logs/app" 时，生成 "logs/app.20260922.0.log"。
-    static std::string GetLogFileName(const std::string &basePath, const std::string &date, int fileIndex) { return (std::ostringstream() << basePath << '.' << date << '.' << fileIndex << ".log").str(); }
+    static std::filesystem::path GetLogFileName(const std::filesystem::path &basePath, const std::string &date, int fileIndex);
 
     // 扫描 basePath 所在目录中当天已有的日志文件，返回最大合法序号加一。例如当天已有 .0 和 .1，则返回 2；没有已有文件时返回 0。
-    static int FindNextFileIndex(const std::string &basePath, const std::string &date);
+    static int FindNextFileIndex(const std::filesystem::path &basePath, const std::string &date);
 
     // 执行实际的轮转逻辑，但这是不加锁的内部版本。
     // append() 发现需要轮转时已经持有 m_mtx，不能再次调用同样会加锁的公共 rollFile()，否则同一线程会重复锁定 std::mutex 并发生死锁。
@@ -72,9 +72,9 @@ private:
     std::mutex m_mtx;
 
     // 轮转模式的基础路径，不是单独的目录，由“目录路径 + 基础文件名”组成，后续会在其后追加日期、序号和 .log 后缀。
-    // 可以使用绝对路径或相对路径。例如："D:/logs/app" 生成绝对路径 D:/logs/app.YYYYMMDD.0.log；"logs/app" 相对于当前工作目录生成日志，生成相对路径 "logs/app.20260922.0.log"；"app" 则表示当前工作目录下的日志文件，生成相对路径 "app.20260922.0.log"。
+    // 构造时将相对路径解析到可执行文件目录并保存为绝对路径，保证扫描和写入使用同一目录，后续切换工作目录也不影响轮转。
     // 父目录必须已经存在，LogFile 不负责创建目录。
-    std::string m_basePath;
+    std::filesystem::path m_basePath;
 
     // 当前正在接收日志数据的文件对象。普通 append() 会持续写入这个对象，发生轮转时才替换为新的 FileUtil。
     std::unique_ptr<FileUtil> m_file;

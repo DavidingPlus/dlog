@@ -46,7 +46,12 @@ namespace
         return date.str();
     }
 
-    std::filesystem::path makeLogPath(const std::filesystem::path &basePath, const std::string &date, std::string_view index) { return std::filesystem::path(basePath.string() + "." + date + "." + std::string(index) + ".log"); }
+    std::filesystem::path makeLogPath(const std::filesystem::path &basePath, const std::string &date, std::string_view index)
+    {
+        auto filename = basePath;
+        filename += '.' + date + '.' + std::string(index) + ".log";
+        return filename;
+    }
 
     std::vector<std::filesystem::path> findLogFiles(const std::filesystem::path &basePath)
     {
@@ -144,12 +149,19 @@ namespace
             std::error_code error;
             std::filesystem::remove_all(m_directory, error);
             EXPECT_FALSE(error) << error.message();
+            if (!m_executableTestDirectory.empty())
+            {
+                std::filesystem::remove_all(m_executableTestDirectory, error);
+                EXPECT_FALSE(error) << error.message();
+            }
         }
 
 
         std::filesystem::path m_directory;
 
         std::filesystem::path m_basePath;
+
+        std::filesystem::path m_executableTestDirectory;
     };
 
 } // namespace
@@ -226,14 +238,17 @@ TEST_F(LogFileTest, NormalModeThrowsWhenParentDirectoryDoesNotExist)
 
 TEST_F(LogFileTest, NormalModeSupportsRelativeFilename)
 {
+    m_executableTestDirectory = FileUtil::executableDirectory() / m_directory.filename();
+    std::filesystem::create_directories(m_executableTestDirectory);
     {
         CurrentPathGuard currentPath(m_directory);
-        LogFile logFile("app.log");
+        LogFile logFile(m_executableTestDirectory.filename() / "app.log");
         logFile.append("relative", 8);
         logFile.flush();
     }
 
-    EXPECT_EQ(readFile(m_directory / "app.log"), "relative");
+    EXPECT_EQ(readFile(m_executableTestDirectory / "app.log"), "relative");
+    EXPECT_FALSE(std::filesystem::exists(m_directory / "app.log"));
 }
 
 TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
@@ -429,19 +444,46 @@ TEST_F(LogFileTest, ThrowsWhenBaseDirectoryDoesNotExist)
 
 TEST_F(LogFileTest, SupportsRelativeBasePath)
 {
-    const std::filesystem::path relativeDirectory = m_directory / "relative";
+    m_executableTestDirectory = FileUtil::executableDirectory() / m_directory.filename();
+    const auto relativeDirectory = m_executableTestDirectory / "relative";
     std::filesystem::create_directories(relativeDirectory);
+    const auto absoluteBasePath = relativeDirectory / "app";
+    const auto date = currentDateString();
+    writeFile(makeLogPath(absoluteBasePath, date, "0"), "existing");
 
     {
         CurrentPathGuard currentPath(m_directory);
-        LogFile logFile("relative/app", 1024);
+        LogFile logFile(m_executableTestDirectory.filename() / "relative" / "app", 1024);
         logFile.append("relative path", 13);
+        // 生成新文件时工作目录已变化，仍应留在可执行文件目录下。
+        std::filesystem::current_path(m_directory.parent_path());
+        logFile.rollFile();
+        logFile.append("after roll", 10);
         logFile.flush();
     }
 
-    const auto files = findLogFiles(relativeDirectory / "app");
-    ASSERT_EQ(files.size(), 1u);
-    EXPECT_EQ(readFile(files.front()), "relative path");
+    const auto files = findLogFiles(absoluteBasePath);
+    ASSERT_EQ(files.size(), 3u);
+    EXPECT_EQ(readFile(makeLogPath(absoluteBasePath, date, "0")), "existing");
+    EXPECT_EQ(readFile(makeLogPath(absoluteBasePath, date, "1")), "relative path");
+    EXPECT_EQ(readFile(makeLogPath(absoluteBasePath, date, "2")), "after roll");
+    EXPECT_FALSE(std::filesystem::exists(m_directory / "relative"));
+}
+
+TEST_F(LogFileTest, SupportsNativeUnicodeBasePathWhenScanningAndRolling)
+{
+    const auto basePath = m_directory / std::filesystem::u8path(u8"日志 🦄");
+    const auto date = currentDateString();
+    writeFile(makeLogPath(basePath, date, "0"), "existing");
+
+    LogFile logFile(basePath, 4);
+    logFile.append("abcd", 4);
+    logFile.append("e", 1);
+    logFile.flush();
+
+    EXPECT_EQ(readFile(makeLogPath(basePath, date, "0")), "existing");
+    EXPECT_EQ(readFile(makeLogPath(basePath, date, "1")), "abcd");
+    EXPECT_EQ(readFile(makeLogPath(basePath, date, "2")), "e");
 }
 
 TEST_F(LogFileTest, RejectsNullDataWhenLengthIsPositive)

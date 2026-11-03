@@ -59,6 +59,15 @@ namespace
 } // namespace
 
 
+LogFile::LogFile(const std::filesystem::path &basePath, int64_t rollsize)
+    : m_basePath((FileUtil::executableDirectory() / basePath).lexically_normal()), m_rollsize(rollsize), m_rollingEnabled(true)
+{
+    if (basePath.empty() || !m_basePath.is_absolute()) throw std::invalid_argument("LogFile::constructor(): invalid base path");
+
+    rollFile();
+}
+
+
 void LogFile::append(const char *data, size_t len)
 {
     if (0 == len) return;
@@ -116,17 +125,23 @@ std::string LogFile::GetDateString(time_t time)
     return (std::ostringstream() << std::put_time(&localTime, "%Y%m%d")).str();
 }
 
-int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &date)
+std::filesystem::path LogFile::GetLogFileName(const std::filesystem::path &basePath, const std::string &date, int fileIndex)
+{
+    auto filename = basePath;
+    filename += '.' + date + '.' + std::to_string(fileIndex) + ".log";
+    return filename;
+}
+
+int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std::string &date)
 {
     // 1. 把 basePath 拆成“扫描目录”和“文件名前缀”。
     // 例如 basePath 为 "logs/app"、date 为 "20260923" 时：directory == "logs"，prefix == "app.20260923."，suffix == ".log"，最终只匹配 "app.20260923.<数字>.log"。
 
-    // path 对象保存并管理 basePath 对应的路径文本；这里后续需要从它提取父目录和文件名。
-    std::filesystem::path basePathObj(basePath);
-    // directory 是实际需要扫描的目录：basePath 含目录时使用其父目录，否则使用当前工作目录。
-    std::filesystem::path directory = basePathObj.has_parent_path() ? basePathObj.parent_path() : std::filesystem::path(".");
+    // basePath 已在构造时转为绝对路径，扫描目录与底层文件写入保持一致。
+    std::filesystem::path directory = basePath.parent_path();
     // prefix 是运行时拼接得到的完整前缀，右侧表达式会创建临时 std::string，必须由 std::string 持有数据，不能直接声明为 std::string_view，否则语句结束后会悬空。
-    std::string prefix = basePathObj.filename().string() + '.' + date + '.';
+    // UTF-8 只用于比较文件名；实际打开文件时始终保留原生 path。
+    std::string prefix = basePath.filename().u8string() + '.' + date + '.';
     // suffix 直接指向字符串字面量；字符串字面量具有静态存储期，使用不拥有数据的 std::string_view 是安全的。
     std::string_view suffix = ".log";
 
@@ -143,7 +158,7 @@ int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &d
     {
         // 4. 委托给解析函数筛选文件名并提取序号。
         int index = 0;
-        if (!tryParseLogFileIndex(entry.path().filename().string(), prefix, suffix, index)) continue;
+        if (!tryParseLogFileIndex(entry.path().filename().u8string(), prefix, suffix, index)) continue;
 
         // std::numeric_limits<int>::max() 是合法的现有序号，但无法再生成 index + 1，因此不能继续轮转。
         if (std::numeric_limits<int>::max() == index) throw std::overflow_error("LogFile::FindNextFileIndex(): LogFile file index overflow");
@@ -176,7 +191,7 @@ void LogFile::rollFileImpl(const std::string &date)
         nextIndex = 1 + m_fileIndex;
     }
 
-    std::string filename = GetLogFileName(m_basePath, date, nextIndex);
+    std::filesystem::path filename = GetLogFileName(m_basePath, date, nextIndex);
 
     // 先打开新文件，再替换旧的 FileUtil。新文件打开失败时，可以保留旧文件对象。
     auto newFile = std::make_unique<FileUtil>(filename);

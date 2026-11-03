@@ -1,5 +1,6 @@
 #include "asynclogging.h"
 #include "logger.h"
+#include "fileutil.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -51,7 +52,7 @@ namespace
 int main()
 {
     std::filesystem::path logDirectory("logs");
-    std::filesystem::create_directories(logDirectory);
+    std::filesystem::create_directories(dlog::FileUtil::executableDirectory() / logDirectory);
 
     std::string logBasePath = (logDirectory / "AsyncLoggingTest").string();
     dlog::AsyncLogging logging(logBasePath, kRollSize);

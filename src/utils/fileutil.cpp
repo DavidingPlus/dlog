@@ -3,8 +3,14 @@
 #include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+
+#if defined(DLOG_OS_WIN32)
+#include <windows.h>
+#endif
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -18,13 +24,21 @@ namespace
 } // namespace
 
 
-FileUtil::FileUtil(const std::string &fileName)
+FileUtil::FileUtil(const std::filesystem::path &filePath)
 {
-    // Linux 使用 e 标志设置 close-on-exec；Windows 使用二进制模式（b），避免换行符被转换。
+    if (filePath.empty()) throw std::invalid_argument("FileUtil::constructor(): path must not be empty");
+    // C 文件接口以空字符结尾，拒绝内嵌空字符，避免实际打开的是路径前缀。
+    if (std::filesystem::path::string_type::npos != filePath.native().find(std::filesystem::path::value_type{})) throw std::invalid_argument("FileUtil::constructor(): path must not contain null characters");
+
+    // XXX path 的 / 运算符规则：右侧为绝对路径时，直接使用右侧绝对路径；右侧为相对路径时，拼接到左侧的可执行文件目录形成新绝对路径。
+    auto absoluteFilePath = (executableDirectory() / filePath).lexically_normal();
+
 #if defined(DLOG_OS_WIN32)
-    m_file = std::fopen(fileName.c_str(), "ab");
+    // Windows 直接使用 path 的宽字符路径，避免窄字符串转换丢失 Unicode；b 保留原始字节。
+    m_file = ::_wfopen(absoluteFilePath.c_str(), L"ab");
 #elif defined(DLOG_OS_LINUX)
-    m_file = std::fopen(fileName.c_str(), "ae");
+    // Linux 使用原生字符路径，e 标志保留 close-on-exec 行为。
+    m_file = std::fopen(absoluteFilePath.c_str(), "ae");
 #endif
 
     if (!m_file) throw makeError("constructor");
@@ -87,6 +101,36 @@ void FileUtil::append(const char *data, size_t len)
 void FileUtil::flush()
 {
     if (std::fflush(m_file)) throw makeError("flush");
+}
+
+std::filesystem::path FileUtil::executableFullPath()
+{
+#if defined DLOG_OS_WIN32
+
+    // 使用宽字符支持中文路径，固定缓冲区覆盖 Windows 的长路径长度范围。
+    constexpr const DWORD kMaxPathLength = 32768;
+    wchar_t buffer[kMaxPathLength] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, kMaxPathLength);
+    if (0 == length)
+    {
+        const DWORD error = GetLastError();
+        throw std::system_error(static_cast<int>(error), std::system_category(), "executableFullPath(): GetModuleFileNameW() failed");
+    }
+    if (kMaxPathLength == length) throw std::system_error(ERROR_INSUFFICIENT_BUFFER, std::system_category(), "executableFullPath(): executable path was truncated");
+
+
+    return std::filesystem::path(buffer, buffer + length);
+
+#elif defined DLOG_OS_LINUX
+
+    // /proc/self/exe 指向当前进程实际执行的文件，标准库负责读取完整的链接目标。
+    return std::filesystem::read_symlink("/proc/self/exe");
+
+#else
+
+    throw std::system_error(std::make_error_code(std::errc::function_not_supported), "executableFullPath(): unsupported platform");
+
+#endif
 }
 
 size_t FileUtil::write(const char *data, size_t len) noexcept

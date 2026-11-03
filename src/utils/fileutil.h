@@ -3,7 +3,7 @@
 
 #include "globalmacros.h"
 
-#include <string>
+#include <filesystem>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -18,7 +18,8 @@ class DLOG_API_EXPORTED FileUtil
 public:
 
     // 以追加模式打开文件，并为文件设置内部缓冲区，主要面向高频、小块日志写入场景。为了减少每次写入都触发文件 I/O 的次数，专门为文件设置一个用户态缓冲区，先将多次 append() 的数据暂存到缓冲区，缓冲区写满或显式调用 flush() 时再批量提交。
-    explicit FileUtil(const std::string &fileName);
+    // 相对路径以当前进程可执行文件目录为基准，并做词法规范化；绝对路径直接使用。
+    explicit FileUtil(const std::filesystem::path &filePath);
 
     // 析构函数。刷新并关闭文件。
     ~FileUtil();
@@ -31,6 +32,13 @@ public:
 
     // 返回已经成功写入的字节数。
     int64_t writtenBytes() const noexcept { return m_writtenBytes; }
+
+
+    // 返回当前进程可执行文件的绝对路径，包含文件名，不受工作目录影响；获取失败抛出 std::system_error（包括派生异常）。
+    static std::filesystem::path executableFullPath();
+
+    // 返回可执行文件所在目录。
+    static std::filesystem::path executableDirectory() { return executableFullPath().parent_path(); }
 
 
 private:
