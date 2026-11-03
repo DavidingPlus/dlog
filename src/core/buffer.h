@@ -53,13 +53,13 @@ public:
 
     // 注意：以下这四个 retrieve 系列函数操控的都是可读 readable 区的数据，并且都只是逻辑上消费数据，实际并不会修改 Buffer 内存，在实际操作中为了效率也不能频繁修改 Buffer 内存。它们只是在逻辑上移动指针，维持可读和可写的语义，表示这部分数据已经被上层处理。下面的注释用“消费”这个词语描述。
 
-    // 消费指定长度的可读数据。
+    // 消费指定长度的可读数据；len 达到或超过可读长度时消费全部并重置缓冲区。
     void retrieve(size_t len);
 
-    // 消费当前 Buffer 中全部可读数据。
-    void retrieveAll();
+    // 消费当前 Buffer 中全部可读数据。消费完以后，Buffer 的状态应该回到初始状态。
+    void retrieveAll() { reset(); }
 
-    // 将指定长度的可读数据复制为 string 返回，并消费这些数据。
+    // 最多取 len 字节，复制为 string 并消费；len 达到或超过可读长度时取全部并重置缓冲区。
     std::string retrieveAsString(size_t len);
 
     // 将 Buffer 当前所有可读数据复制为 string 返回，并消费全部数据。
@@ -68,13 +68,17 @@ public:
     // 保证 Buffer 至少拥有 len 字节的连续可写空间，不够就调用 makeSpace() 扩充。
     void ensureWritableBytes(size_t len);
 
-    // 把 [data, data + len] 内存上的数据添加到 writable 缓冲区当中。
+    // 把 [data, data + len) 的数据追加到 writable 区。len 为 0 时不操作，正长度空指针会抛异常。
+    // data 必须来自外部有效内存，不支持自追加，否则可能导致源指针失效，出现不可预期的问题。
     void append(const char *data, size_t len);
 
     // 返回缓冲区中可写 writable 区域的起始地址。
     char *beginWrite() { return m_buffer.empty() ? begin() : begin() + m_writerIndex; }
 
     const char *beginWrite() const { return m_buffer.empty() ? begin() : begin() + m_writerIndex; }
+
+    void reset() { m_readerIndex = 0, m_writerIndex = 0; }
+
 
 private:
 

@@ -1,6 +1,7 @@
 #include "buffer.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -13,22 +14,17 @@ void Buffer::retrieve(size_t len)
     {
         m_readerIndex += len;
     }
-    // len == readableBytes()
+    // len >= readableBytes()
     else
     {
         retrieveAll();
     }
 }
 
-void Buffer::retrieveAll()
-{
-    // 消费完全部可读数据以后，Buffer 的状态应该回到初始状态。
-    m_readerIndex = 0;
-    m_writerIndex = 0;
-}
-
 std::string Buffer::retrieveAsString(size_t len)
 {
+    // 与 retrieve() 保持一致：超长请求按全部可读数据处理，避免构造字符串时越界读取。
+    len = std::min(len, readableBytes());
     if (0 == len) return std::string();
 
     std::string res(peek(), len);
@@ -46,6 +42,7 @@ void Buffer::ensureWritableBytes(size_t len)
 void Buffer::append(const char *data, size_t len)
 {
     if (0 == len) return;
+    if (!data) throw std::invalid_argument("Buffer::append(): data must not be nullptr");
 
     ensureWritableBytes(len);
     std::copy(data, data + len, beginWrite());
@@ -78,6 +75,9 @@ void Buffer::makeSpace(size_t len)
     // 否则需要扩容，这里选择暂时不处理 xxx 已读部分的数据，扩容只扩充数组尾部，因此前面的指针都不用动。
     else
     {
+        // 用减法检查，避免加法直接溢出。
+        if (len > m_buffer.max_size() - m_writerIndex) throw std::length_error("Buffer::makeSpace(): size exceeds max_size");
+
         m_buffer.resize(m_writerIndex + len);
     }
 }
