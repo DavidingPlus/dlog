@@ -63,6 +63,8 @@ LogFile::LogFile(const std::filesystem::path &basePath, int64_t rollsize)
     : m_basePath((FileUtil::executableDirectory() / basePath).lexically_normal()), m_rollsize(rollsize), m_rollingEnabled(true)
 {
     if (basePath.empty() || !m_basePath.is_absolute()) throw std::invalid_argument("LogFile::constructor(): invalid base path");
+    // 在创建目录或扫描前拒绝内嵌空字符，避免文件接口截断路径。
+    if (std::filesystem::path::string_type::npos != basePath.native().find(std::filesystem::path::value_type{})) throw std::invalid_argument("LogFile::constructor(): path must not contain null characters");
 
     rollFile();
 }
@@ -139,6 +141,8 @@ int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std:
 
     // basePath 已在构造时转为绝对路径，扫描目录与底层文件写入保持一致。
     std::filesystem::path directory = basePath.parent_path();
+    // 通过轮转模式构造的时候，会通过调用链 LogFile::LogFile() -> rollFile() -> rollFileImpl() -> 首次创建 FindNextFileIndex() 走到这里，因此先创建可能缺失的父目录。
+    std::filesystem::create_directories(directory);
     // prefix 是运行时拼接得到的完整前缀，右侧表达式会创建临时 std::string，必须由 std::string 持有数据，不能直接声明为 std::string_view，否则语句结束后会悬空。
     // UTF-8 只用于比较文件名；实际打开文件时始终保留原生 path。
     std::string prefix = basePath.filename().u8string() + '.' + date + '.';
@@ -146,7 +150,7 @@ int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std:
     std::string_view suffix = ".log";
 
     // 2. 打开日志所在目录。
-    // 使用带 error_code 的构造函数，把目录不存在、无权限等错误转换成带路径上下文的异常。
+    // 使用带 error_code 的构造函数，把目录无法访问等错误转换成带路径上下文的异常。
     std::error_code error;
     std::filesystem::directory_iterator entries(directory, error);
     if (error) throw std::filesystem::filesystem_error("LogFile::FindNextFileIndex", directory, error);

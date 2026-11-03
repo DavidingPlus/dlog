@@ -28,7 +28,7 @@ class DLOG_API_EXPORTED LogFile
 
 public:
 
-    // 普通模式。按完整文件名追加，不添加日期、序号，也不自动轮转；父目录需已存在。
+    // 普通模式。按完整文件名追加，不添加日期、序号，也不自动轮转；FileUtil 会自动创建缺失的父目录。
     explicit LogFile(const std::filesystem::path &filename) : m_file(std::make_unique<FileUtil>(filename)) {}
 
     // 轮转模式。构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
@@ -72,8 +72,7 @@ private:
     std::mutex m_mtx;
 
     // 轮转模式的基础路径，不是单独的目录，由“目录路径 + 基础文件名”组成，后续会在其后追加日期、序号和 .log 后缀。
-    // 构造时将相对路径解析到可执行文件目录并保存为绝对路径，保证扫描和写入使用同一目录，后续切换工作目录也不影响轮转。
-    // 父目录必须已经存在，LogFile 不负责创建目录。
+    // 构造时将相对路径解析到可执行文件目录并保存为绝对路径，保证扫描和写入使用同一目录，后续切换工作目录也不影响轮转。缺失的父目录会在轮转扫描前自动创建（见 FindNextFileIndex() 函数）。
     std::filesystem::path m_basePath;
 
     // 当前正在接收日志数据的文件对象。普通 append() 会持续写入这个对象，发生轮转时才替换为新的 FileUtil。

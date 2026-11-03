@@ -20,7 +20,9 @@ namespace
 
     class CurrentPathGuard
     {
+
     public:
+
         explicit CurrentPathGuard(const std::filesystem::path &path) : m_previous(std::filesystem::current_path()) { std::filesystem::current_path(path); }
         ~CurrentPathGuard()
         {
@@ -30,7 +32,9 @@ namespace
         CurrentPathGuard(const CurrentPathGuard &) = delete;
         CurrentPathGuard &operator=(const CurrentPathGuard &) = delete;
 
+
     private:
+
         std::filesystem::path m_previous;
     };
 
@@ -60,9 +64,15 @@ namespace
             std::error_code error;
             std::filesystem::remove(m_filePath, error);
             EXPECT_FALSE(error) << error.message();
+            if (!m_testDirectory.empty())
+            {
+                std::filesystem::remove_all(m_testDirectory, error);
+                EXPECT_FALSE(error) << error.message();
+            }
         }
 
         std::filesystem::path m_filePath;
+        std::filesystem::path m_testDirectory;
     };
 
 } // namespace
@@ -229,15 +239,42 @@ TEST_F(FileUtilTest, NullDataWithNonzeroLengthThrows)
 
 TEST_F(FileUtilTest, ConstructorThrowsWhenFileCannotBeOpened)
 {
-    const auto invalidPath = m_filePath.parent_path() /
-                             ("dlog_fileutil_missing_parent_" + m_filePath.stem().string()) /
-                             m_filePath.filename();
-
     EXPECT_THROW(
         {
-            FileUtil file(invalidPath.string());
+            FileUtil file(m_filePath.parent_path());
         },
         std::runtime_error);
+}
+
+TEST_F(FileUtilTest, CreatesMissingUnicodeParentDirectoriesAndReopensExistingOnes)
+{
+    m_testDirectory = m_filePath;
+    m_testDirectory += ".dir";
+    const auto filename = m_testDirectory / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680") / "nested" / "app.log";
+    ASSERT_FALSE(std::filesystem::exists(filename.parent_path()));
+    {
+        FileUtil file(filename);
+        file.append("first|", 6);
+        file.flush();
+        EXPECT_TRUE(std::filesystem::is_directory(filename.parent_path()));
+        EXPECT_TRUE(std::filesystem::is_regular_file(filename));
+        EXPECT_EQ(readBinaryFile(filename), "first|");
+    }
+    {
+        FileUtil file(filename);
+        file.append("next", 4);
+        file.flush();
+    }
+    EXPECT_EQ(readBinaryFile(filename), "first|next");
+}
+
+TEST_F(FileUtilTest, ReportsParentPathOccupiedByFileWithoutChangingIt)
+{
+    {
+        std::ofstream(m_filePath, std::ios::binary) << "keep";
+    }
+    EXPECT_THROW({ FileUtil file(m_filePath / "nested" / "app.log"); }, std::filesystem::filesystem_error);
+    EXPECT_EQ(readBinaryFile(m_filePath), "keep");
 }
 
 TEST_F(FileUtilTest, SupportsNativeUnicodePathWithSpaces)
@@ -275,16 +312,19 @@ TEST_F(FileUtilTest, RejectsEmbeddedNullBeforeOpeningPathPrefix)
 TEST_F(FileUtilTest, RelativePathUsesExecutableDirectoryAndNormalizesDotSegments)
 {
     const auto workingDirectoryPath = m_filePath;
-    m_filePath = FileUtil::executableDirectory() / m_filePath.filename();
+    m_testDirectory = FileUtil::executableDirectory() / (m_filePath.stem().string() + ".dir");
+    m_filePath = m_testDirectory / "nested" / m_filePath.filename();
     {
         CurrentPathGuard currentPath(workingDirectoryPath.parent_path());
-        FileUtil file(std::filesystem::path("unused") / ".." / m_filePath.filename());
+        FileUtil file(m_testDirectory.filename() / "unused" / ".." / "nested" / m_filePath.filename());
         file.append("relative", 8);
         file.flush();
     }
 
     EXPECT_EQ(readBinaryFile(m_filePath), "relative");
     EXPECT_FALSE(std::filesystem::exists(workingDirectoryPath));
+    EXPECT_FALSE(std::filesystem::exists(workingDirectoryPath.parent_path() / m_testDirectory.filename()));
+    EXPECT_FALSE(std::filesystem::exists(m_testDirectory / "unused"));
     std::error_code error;
     std::filesystem::remove(workingDirectoryPath, error);
     EXPECT_FALSE(error) << error.message();

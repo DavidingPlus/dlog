@@ -207,13 +207,20 @@ TEST_F(FileFlushTest, EmptyAndInvalidWritesLeaveNormalFileUnchanged)
     EXPECT_EQ(readFile(filename), "valid");
 }
 
-TEST_F(FileFlushTest, ReportsMissingParentDirectoryInBothModes)
+TEST_F(FileFlushTest, CreatesMissingParentDirectoriesInBothModes)
 {
-    const auto path = m_directory / "missing" / "app";
+    const auto normalPath = m_directory / "normal" / "nested" / "app.log";
+    const auto rollingPath = m_directory / "rolling" / "nested" / "app";
+    FileFlush normal(normalPath);
+    RollFileFlush rolling(rollingPath, 4);
+    normal.writeAndFlush("plain", 5);
+    rolling.writeAndFlush("roll", 4);
 
-    EXPECT_THROW({ FileFlush output(path); }, std::runtime_error);
-    EXPECT_THROW({ RollFileFlush output(path, 4); }, std::runtime_error);
-    EXPECT_FALSE(std::filesystem::exists(path.parent_path()));
+    EXPECT_EQ(readFile(normalPath), "plain");
+    std::vector<std::filesystem::path> paths;
+    for (const auto &entry : std::filesystem::directory_iterator(rollingPath.parent_path())) paths.push_back(entry.path());
+    ASSERT_EQ(paths.size(), 1u);
+    EXPECT_EQ(readFile(paths.front()), "roll");
 }
 
 TEST_F(FileFlushTest, ReopeningRollingFileKeepsOldContentsAndUsesNextIndex)
@@ -286,10 +293,15 @@ TEST_F(FileFlushTest, FactoryPropagatesConstructionErrors)
     EXPECT_THROW(LogFlushFactory::CreateLogFlush<FileFlush>(empty), std::invalid_argument);
     EXPECT_THROW(LogFlushFactory::CreateLogFlush<RollFileFlush>(empty, 4), std::invalid_argument);
 
-    const auto missing = m_directory / "missing" / "app";
-    EXPECT_THROW(LogFlushFactory::CreateLogFlush<FileFlush>(missing), std::runtime_error);
-    EXPECT_THROW(LogFlushFactory::CreateLogFlush<RollFileFlush>(missing, 4), std::runtime_error);
-    EXPECT_TRUE(files().empty());
+    const auto blocked = m_directory / "blocked";
+    {
+        std::ofstream(blocked, std::ios::binary) << "keep";
+    }
+    const auto path = blocked / "nested" / "app";
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<FileFlush>(path), std::filesystem::filesystem_error);
+    EXPECT_THROW(LogFlushFactory::CreateLogFlush<RollFileFlush>(path, 4), std::filesystem::filesystem_error);
+    EXPECT_EQ(readFile(blocked), "keep");
+    EXPECT_EQ(files().size(), 1u);
 }
 
 TEST(LogFlushFactoryTest, ForwardsLvalueAndMoveOnlyArgumentsAndSharesLifetime)

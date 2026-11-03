@@ -33,6 +33,9 @@ FileUtil::FileUtil(const std::filesystem::path &filePath)
     // XXX path 的 / 运算符规则：右侧为绝对路径时，直接使用右侧绝对路径；右侧为相对路径时，拼接到左侧的可执行文件目录形成新绝对路径。
     auto absoluteFilePath = (executableDirectory() / filePath).lexically_normal();
 
+    // 自动创建缺失的父目录，失败抛出 filesystem_error。
+    std::filesystem::create_directories(absoluteFilePath.parent_path());
+
 #if defined(DLOG_OS_WIN32)
     // Windows 直接使用 path 的宽字符路径，避免窄字符串转换丢失 Unicode；b 保留原始字节。
     m_file = ::_wfopen(absoluteFilePath.c_str(), L"ab");

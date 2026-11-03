@@ -228,12 +228,15 @@ TEST_F(LogFileTest, NormalModeRejectsManualRollWithoutChangingFile)
     EXPECT_EQ(std::distance(std::filesystem::directory_iterator(m_directory), std::filesystem::directory_iterator()), 1);
 }
 
-TEST_F(LogFileTest, NormalModeThrowsWhenParentDirectoryDoesNotExist)
+TEST_F(LogFileTest, NormalModeCreatesMissingParentDirectories)
 {
-    const auto filename = m_directory / "missing" / "app.log";
+    const auto filename = m_directory / "missing" / "nested" / "app.log";
 
-    EXPECT_THROW({ LogFile logFile(filename.string()); }, std::runtime_error);
-    EXPECT_FALSE(std::filesystem::exists(filename.parent_path()));
+    LogFile logFile(filename);
+    logFile.append("normal", 6);
+    logFile.flush();
+    EXPECT_TRUE(std::filesystem::is_directory(filename.parent_path()));
+    EXPECT_EQ(readFile(filename), "normal");
 }
 
 TEST_F(LogFileTest, NormalModeSupportsRelativeFilename)
@@ -431,15 +434,27 @@ TEST_F(LogFileTest, ThrowsWhenExistingIndexIsIntMax)
         std::overflow_error);
 }
 
-TEST_F(LogFileTest, ThrowsWhenBaseDirectoryDoesNotExist)
+TEST_F(LogFileTest, CreatesMissingBaseDirectoriesBeforeRollingScan)
 {
-    const std::filesystem::path missingBasePath = m_directory / "missing" / "app";
+    const auto basePath = m_directory / "missing" / "nested" / "app";
+    LogFile logFile(basePath, 4);
+    logFile.append("abcd", 4);
+    logFile.append("e", 1);
+    logFile.flush();
+    const auto paths = findLogFiles(basePath);
+    ASSERT_EQ(paths.size(), 2u);
+    EXPECT_EQ(readFile(paths[0]), "abcd");
+    EXPECT_EQ(readFile(paths[1]), "e");
+}
 
-    EXPECT_THROW(
-        {
-            LogFile logFile(missingBasePath.string(), 1024);
-        },
-        std::filesystem::filesystem_error);
+TEST_F(LogFileTest, RejectsEmbeddedNullBeforeCreatingRollingDirectory)
+{
+    const auto parent = m_directory / "missing";
+    auto native = (parent / "app").native();
+    native.push_back(std::filesystem::path::value_type{});
+    native += std::filesystem::path("suffix").native();
+    EXPECT_THROW({ LogFile logFile(std::filesystem::path(native), 4); }, std::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists(parent));
 }
 
 TEST_F(LogFileTest, SupportsRelativeBasePath)
