@@ -29,14 +29,14 @@ class DLOG_API_EXPORTED LogFile
 public:
 
     // 普通模式。按完整文件名追加，不添加日期、序号，也不自动轮转；父目录需已存在。
-    explicit LogFile(const std::string &filename) : m_file(std::make_unique<FileUtil>(filename)), m_flushInterval(3), m_lastFlush(Timestamp::Now().secondsSinceEpoch()) {}
+    explicit LogFile(const std::string &filename) : m_file(std::make_unique<FileUtil>(filename)) {}
 
     // 轮转模式。构造时 m_file 还没有指向有效文件对象。rollFile() 会根据 basePath 扫描当天已有序号，选择下一个可用序号并创建当前文件，避免程序重启时覆盖旧日志。
-    LogFile(const std::string &basePath, int64_t rollsize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollsize(rollsize), m_flushInterval(flushInterval), m_rollingEnabled(true) { rollFile(); }
+    LogFile(const std::string &basePath, int64_t rollsize) : m_basePath(basePath), m_rollsize(rollsize), m_rollingEnabled(true) { rollFile(); }
 
     ~LogFile() = default;
 
-    // 追加一段日志数据。普通模式直接追加。以下规则只适用于轮转模式：
+    // 追加数据，不主动刷新；刷新时机由调用方决定。以下规则只适用于轮转模式：
     // 1. 日期变化时，先切换到新日期的日志文件，再写入本次数据，避免跨天后的日志继续写入前一天的文件。
     // 2. 如果当前文件已有内容，且写入本次数据后会超过 m_rollsize，则先切换到下一个序号的文件，再写入本次数据。写入后刚好等于 m_rollsize 时不轮转，允许文件达到但不超过大小限制。
     // 3. 如果当前文件为空，即使本次数据本身大于 m_rollsize，也直接完整写入当前文件。这是“保持一次 append 数据完整”和“严格限制单个文件大小”之间的取舍：允许这一个文件超限，以避免先创建一个空的轮转文件，也避免拆分一段日志数据。
@@ -65,7 +65,7 @@ private:
 
     // 执行实际的轮转逻辑，但这是不加锁的内部版本。
     // append() 发现需要轮转时已经持有 m_mtx，不能再次调用同样会加锁的公共 rollFile()，否则同一线程会重复锁定 std::mutex 并发生死锁。
-    void rollFileImpl(time_t now, const std::string &date);
+    void rollFileImpl(const std::string &date);
 
 
     // 保护当前文件、日期、序号和 flush 状态，保证多线程追加、flush 和轮转时不会相互冲突。
@@ -82,17 +82,11 @@ private:
     // 单个日志文件允许达到的大小，单位是字节。下一次追加会超过该大小时，在写入前创建新文件。
     int64_t m_rollsize = 0;
 
-    // 两次 flush() 之间允许经过的最长时间，单位是秒，默认 3 秒。
-    unsigned int m_flushInterval = 0;
-
     // 当前文件所属的本地日期，例如：20260922。日期变化时会为新日期选择下一个可用序号。
     std::string m_currentDate;
 
     // 当前日期下正在使用的文件序号，例如 app.20260922.1.log 中的 1。
     int m_fileIndex = 0;
-
-    // 上一次将 FileUtil 缓冲区刷新到文件的时间（秒），用于判断是否达到 m_flushInterval。
-    time_t m_lastFlush = 0;
 
     // 模式由构造方式确定，普通文件不参与日期和大小轮转。
     bool m_rollingEnabled = false;

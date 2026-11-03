@@ -241,7 +241,7 @@ TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("first\n", 6);
         logFile.flush();
     }
@@ -255,7 +255,7 @@ TEST_F(LogFileTest, CreatesDateAndIndexBasedFileName)
 TEST_F(LogFileTest, AppendsMultipleMessagesToSameFileUntilLimit)
 {
     {
-        LogFile logFile(m_basePath.string(), 4, 60);
+        LogFile logFile(m_basePath.string(), 4);
         logFile.append("ab", 2);
         logFile.append("cd", 2);
         logFile.flush();
@@ -271,7 +271,7 @@ TEST_F(LogFileTest, RotatesOnlyWhenNextAppendWouldExceedLimit)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 4, 60);
+        LogFile logFile(m_basePath.string(), 4);
         logFile.append("abcd", 4); // 写入后刚好达到限制，不应轮转。
         logFile.append("e", 1);    // 下一条日志会超限，因此先轮转。
         logFile.flush();
@@ -286,7 +286,7 @@ TEST_F(LogFileTest, AllowsOversizedFirstAppendAndRotatesBeforeNextAppend)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 2, 60);
+        LogFile logFile(m_basePath.string(), 2);
         logFile.append("long", 4); // 空文件允许完整写入一条超过限制的日志。
         logFile.append("next", 4);
         logFile.flush();
@@ -301,7 +301,7 @@ TEST_F(LogFileTest, ZeroLengthAppendIsNoOp)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 1, 60);
+        LogFile logFile(m_basePath.string(), 1);
         logFile.append("oversized", 9);
         logFile.append(nullptr, 0);
         logFile.flush();
@@ -318,7 +318,7 @@ TEST_F(LogFileTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
     const std::string payload("abc\0def", 7);
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append(payload.data(), payload.size());
         logFile.flush();
     }
@@ -331,7 +331,7 @@ TEST_F(LogFileTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
 TEST_F(LogFileTest, DestructorFlushesCurrentFile)
 {
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("written by destructor", 21);
     }
 
@@ -345,7 +345,7 @@ TEST_F(LogFileTest, ManualRollCreatesNextFileWithoutDataLoss)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("before roll", 11);
         logFile.rollFile();
         logFile.append("after roll", 10);
@@ -361,13 +361,13 @@ TEST_F(LogFileTest, UsesNextIndexAfterRestart)
     const std::string date = currentDateString();
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("first run\n", 10);
         logFile.flush();
     }
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("second run\n", 11);
         logFile.flush();
     }
@@ -392,7 +392,7 @@ TEST_F(LogFileTest, StartsAfterHighestExistingIndexAndIgnoresMalformedNames)
     writeFile(std::filesystem::path(m_directory / ("other." + date + ".100.log")), "other base");
 
     {
-        LogFile logFile(m_basePath.string(), 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024);
         logFile.append("new", 3);
         logFile.flush();
     }
@@ -411,7 +411,7 @@ TEST_F(LogFileTest, ThrowsWhenExistingIndexIsIntMax)
 
     EXPECT_THROW(
         {
-            LogFile logFile(m_basePath.string(), 1024, 60);
+            LogFile logFile(m_basePath.string(), 1024);
         },
         std::overflow_error);
 }
@@ -422,7 +422,7 @@ TEST_F(LogFileTest, ThrowsWhenBaseDirectoryDoesNotExist)
 
     EXPECT_THROW(
         {
-            LogFile logFile(missingBasePath.string(), 1024, 60);
+            LogFile logFile(missingBasePath.string(), 1024);
         },
         std::filesystem::filesystem_error);
 }
@@ -434,7 +434,7 @@ TEST_F(LogFileTest, SupportsRelativeBasePath)
 
     {
         CurrentPathGuard currentPath(m_directory);
-        LogFile logFile("relative/app", 1024, 60);
+        LogFile logFile("relative/app", 1024);
         logFile.append("relative path", 13);
         logFile.flush();
     }
@@ -446,7 +446,7 @@ TEST_F(LogFileTest, SupportsRelativeBasePath)
 
 TEST_F(LogFileTest, RejectsNullDataWhenLengthIsPositive)
 {
-    LogFile logFile(m_basePath.string(), 1024, 60);
+    LogFile logFile(m_basePath.string(), 1024);
 
     EXPECT_THROW(logFile.append(nullptr, 1), std::invalid_argument);
 
@@ -463,7 +463,7 @@ TEST_F(LogFileTest, SerializesConcurrentAppends)
     const std::string payload = "thread-message\n";
 
     {
-        LogFile logFile(m_basePath.string(), 1024 * 1024, 60);
+        LogFile logFile(m_basePath.string(), 1024 * 1024);
         std::vector<std::thread> threads;
         threads.reserve(threadCount);
 

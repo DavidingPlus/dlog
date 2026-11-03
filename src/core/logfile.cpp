@@ -65,12 +65,10 @@ void LogFile::append(const char *data, size_t len)
 
     std::lock_guard<std::mutex> lock(m_mtx);
 
-    time_t now = Timestamp::Now().secondsSinceEpoch();
-
-    // 普通文件跳过日期、大小判断，写入和定时刷新仍共用下面的逻辑。
+    // 普通文件跳过日期、大小判断，只共用后面的文件追加。
     if (m_rollingEnabled)
     {
-        std::string currentDate = GetDateString(now);
+        std::string currentDate = GetDateString(Timestamp::Now().secondsSinceEpoch());
 
         // 处理策略见函数声明。
         // 处理日期。
@@ -79,17 +77,10 @@ void LogFile::append(const char *data, size_t len)
         bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollsize;
 
         // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
-        if (sizeExceeded || dateChanged) rollFileImpl(now, currentDate);
+        if (sizeExceeded || dateChanged) rollFileImpl(currentDate);
     }
 
     m_file->append(data, len);
-
-    // flush 与轮转相互独立：即使本次没有轮转，只要达到时间间隔也要刷新当前文件。
-    if (now - m_lastFlush >= m_flushInterval)
-    {
-        m_lastFlush = now;
-        m_file->flush();
-    }
 }
 
 void LogFile::flush()
@@ -105,8 +96,7 @@ void LogFile::rollFile()
 
     if (!m_rollingEnabled) throw std::logic_error("LogFile::rollFile(): rolling is disabled");
 
-    time_t now = Timestamp::Now().secondsSinceEpoch();
-    rollFileImpl(now, GetDateString(now));
+    rollFileImpl(GetDateString(Timestamp::Now().secondsSinceEpoch()));
 }
 
 std::string LogFile::GetDateString(time_t time)
@@ -166,7 +156,7 @@ int LogFile::FindNextFileIndex(const std::string &basePath, const std::string &d
     return nextIndex;
 }
 
-void LogFile::rollFileImpl(time_t now, const std::string &date)
+void LogFile::rollFileImpl(const std::string &date)
 {
     bool firstFile = !m_file;
     bool dateChanged = date != m_currentDate;
@@ -194,7 +184,6 @@ void LogFile::rollFileImpl(time_t now, const std::string &date)
 
     m_currentDate = date;
     m_fileIndex = nextIndex;
-    m_lastFlush = now;
 }
 
 

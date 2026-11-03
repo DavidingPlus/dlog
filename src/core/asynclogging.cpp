@@ -1,6 +1,6 @@
 #include "asynclogging.h"
 
-#include "logfile.h"
+#include "logflush.h"
 
 #include <chrono>
 
@@ -78,13 +78,13 @@ void AsyncLogging::stop()
 
     m_cond.notify_one();
 
-    // 等待后台线程取完剩余缓冲区并完成最后一次 flush，然后回收后台线程。
+    // 等待后台线程取完剩余缓冲区并完成写入、刷新，然后回收后台线程。
     m_thread.join();
 }
 
 void AsyncLogging::threadFunc()
 {
-    LogFile logFile(m_basePath, m_rollSize, m_flushInterval);
+    FileFlush output(m_basePath, m_rollSize);
 
     // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
     BufferPtr replaceBuffer = std::make_unique<LargeBuffer>();
@@ -104,7 +104,7 @@ void AsyncLogging::threadFunc()
                             { return !m_pendingBuffers.empty() || !m_running; });
 
             // m_running == false 只表示收到停止请求，不表示日志已经写完。
-            // 停止时仍需排空两处数据：m_pendingBuffers 中已交出的整块缓冲区，以及 m_producerBuffer 中未写满的尾部数据。上一轮的 buffersToWrite 在回到这里前已经写入 LogFile、清空并 flush，因此无需在退出条件中检查它。只有停止请求已到且这两处都为空时才退出；否则继续交接、写入，直到排空。
+            // 停止时仍需排空两处数据：m_pendingBuffers 中已交出的整块缓冲区，以及 m_producerBuffer 中未写满的尾部数据。上一轮的 buffersToWrite 已经通过输出目标写入并刷新，因此无需在退出条件中检查它。只有停止请求已到且这两处都为空时才退出；否则继续交接、写入，直到排空。
             // break 以后 lock 会自动释放。这里的 std::unique_lock 是局部对象；break 会退出整个 while 循环，离开它所在的作用域时，unique_lock 析构并自动解锁。
             if (!m_running && m_pendingBuffers.empty() && 0 == m_producerBuffer->length()) break;
 
@@ -116,10 +116,10 @@ void AsyncLogging::threadFunc()
             buffersToWrite.swap(m_pendingBuffers);
         }
 
-        // 磁盘写入放在锁外，避免阻塞前台 append()。
+        // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
         for (auto &buffer : buffersToWrite)
         {
-            if (buffer && buffer->length() > 0) logFile.append(buffer->data(), buffer->length());
+            if (buffer && buffer->length() > 0) output.writeAndFlush(buffer->data(), buffer->length());
         }
 
         // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。
@@ -133,13 +133,7 @@ void AsyncLogging::threadFunc()
         }
 
         buffersToWrite.clear();
-
-        // 每批写完后刷新；stop() 唤醒线程后会继续处理，直到待处理数据全部清空。
-        logFile.flush();
     }
-
-    // 退出前再做一次最终刷新，将 LogFile 内部缓冲中的数据提交到文件层。
-    logFile.flush();
 }
 
 

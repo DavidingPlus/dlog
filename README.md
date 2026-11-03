@@ -8,13 +8,16 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 - 日志格式：每条记录包含本地时间（精确到微秒）、源文件名、代码行号和消息正文，格式为 `[时间] [等级] [文件名:行号] 消息`。源文件名从编译器提供的文件路径中提取。
 - 消息拼接：日志宏采用流式写法，例如 `DLOG_INFO() << "request=" << requestId`。支持字符串、字符、布尔值、常见整数和浮点数；单条记录的 `Buffer` 按需增长，超过原先 4000 字节的正文也会完整保留。一条日志在完整表达式结束时统一输出。
 - 输出方式：默认写入 `stdout`，也可通过 `dlog::Logger::SetOutput()` 设置自定义回调。回调收到日志数据指针和有效字节长度；可选择输出 ANSI 等级颜色，写文件时可关闭颜色码。
-- 文件写入与轮转：`dlog::FileUtil` 为文件写入提供缓冲；`dlog::LogFile` 按本地日期和文件大小切换文件，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
-- 异步写盘：`dlog::AsyncLogging` 将前台收到的日志先放入内存缓冲区，再由后台线程批量写入 `dlog::LogFile`，减少业务线程直接执行文件写入的开销。停止运行中的后台线程时，`stop()` 会等待它处理完剩余数据并刷新文件。
+- 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
+- 文件输出接口：`dlog::FileFlush` 支持相同的两种构造方式，`writeAndFlush(data, len)` 一次完成写入和刷新；零长度直接返回。父目录需预先创建。
+- 异步写盘：`dlog::AsyncLogging` 将前台收到的日志先放入内存缓冲区，再由后台通过 `FileFlush` 按缓冲块写入并刷新文件。停止运行中的后台线程时，`stop()` 会等待它处理完剩余数据。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
 ## 基本用法
 
 直接使用 `LogStream::buffer()` 时，返回类型为 `const dlog::Buffer&`；通过 `peek()` 和 `readableBytes()` 读取内容。原 `SmallBuffer` 的返回类型和读取接口已替换，使用方需要同步调整并重新编译。
+
+直接使用 `LogFile` 时，`append()` 不再按时间主动刷新，应显式调用 `flush()` 或使用 `FileFlush::writeAndFlush()`。`LogFile` 和 `FileFlush` 不再接受刷新间隔参数；周期等待仍由 `AsyncLogging` 的 `flushInterval` 控制。
 
 ```cpp
 #include <dlog/core/logger.h>

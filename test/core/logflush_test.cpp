@@ -1,15 +1,62 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "logflush.h"
 
 
 using namespace dlog;
+
+
+namespace
+{
+
+    class FileFlushTest : public ::testing::Test
+    {
+    protected:
+        void SetUp() override
+        {
+            const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+            m_directory = std::filesystem::temp_directory_path() / ("dlog_fileflush_test_" + std::to_string(suffix));
+            std::filesystem::create_directories(m_directory);
+        }
+
+        void TearDown() override
+        {
+            std::error_code error;
+            std::filesystem::remove_all(m_directory, error);
+            EXPECT_FALSE(error) << error.message();
+        }
+
+        static std::string readFile(const std::filesystem::path &path)
+        {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error("failed to read test file: " + path.string());
+            return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        }
+
+        std::vector<std::filesystem::path> files() const
+        {
+            std::vector<std::filesystem::path> result;
+            for (const auto &entry : std::filesystem::directory_iterator(m_directory)) result.push_back(entry.path());
+            std::sort(result.begin(), result.end());
+            return result;
+        }
+
+        std::filesystem::path m_directory;
+    };
+
+} // namespace
 
 
 TEST(StdoutFlushTest, WritesCompleteBinaryDataAndRespectsExplicitLength)
@@ -92,4 +139,74 @@ TEST(StdoutFlushTest, FlushesNonemptyWritesAndIgnoresEmptyWrites)
 
     EXPECT_EQ(buffer.str(), "data");
     EXPECT_EQ(buffer.flushes, 1);
+}
+
+TEST_F(FileFlushTest, NormalFileIsReadableAfterEachWriteAndPreservesBinaryData)
+{
+    const auto filename = m_directory / "app.log";
+    std::string payload(5000, 'A');
+    payload[2500] = '\0';
+    std::unique_ptr<LogFlush> output = std::make_unique<FileFlush>(filename.string());
+    const char tail[] = {'t', 'a', 'i', 'l', '!'};
+
+    output->writeAndFlush(payload.data(), payload.size());
+    EXPECT_EQ(readFile(filename), payload);
+    output->writeAndFlush(tail, 4);
+    EXPECT_EQ(readFile(filename), payload + "tail");
+    ASSERT_EQ(files().size(), 1u);
+    EXPECT_EQ(files().front(), filename);
+}
+
+TEST_F(FileFlushTest, ReopeningNormalFileAppendsExistingContent)
+{
+    const auto filename = m_directory / "app.log";
+    {
+        FileFlush output(filename.string());
+        output.writeAndFlush("first|", 6);
+    }
+    FileFlush output(filename.string());
+    output.writeAndFlush("second", 6);
+
+    EXPECT_EQ(readFile(filename), "first|second");
+}
+
+TEST_F(FileFlushTest, RollingFileFlushesBeforeAndAfterRotation)
+{
+    FileFlush output((m_directory / "app").string(), 4);
+    output.writeAndFlush("abcd", 4);
+    ASSERT_EQ(files().size(), 1u);
+    EXPECT_EQ(readFile(files().front()), "abcd");
+
+    EXPECT_NO_THROW(output.writeAndFlush(nullptr, 0));
+    EXPECT_THROW(output.writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_EQ(files().size(), 1u);
+
+    output.writeAndFlush("e", 1);
+    const auto paths = files();
+    ASSERT_EQ(paths.size(), 2u);
+    EXPECT_EQ(readFile(paths[0]), "abcd");
+    EXPECT_EQ(readFile(paths[1]), "e");
+}
+
+TEST_F(FileFlushTest, EmptyAndInvalidWritesLeaveNormalFileUnchanged)
+{
+    const auto filename = m_directory / "app.log";
+    FileFlush output(filename.string());
+
+    EXPECT_NO_THROW(output.writeAndFlush(nullptr, 0));
+    EXPECT_NO_THROW(output.writeAndFlush("ignored", 0));
+    EXPECT_THROW(output.writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_TRUE(readFile(filename).empty());
+
+    output.writeAndFlush("valid", 5);
+    EXPECT_EQ(readFile(filename), "valid");
+}
+
+TEST_F(FileFlushTest, ReportsMissingParentDirectoryInBothModes)
+{
+    const auto path = m_directory / "missing" / "app";
+
+    EXPECT_THROW({ FileFlush output(path.string()); }, std::runtime_error);
+    EXPECT_THROW({ FileFlush output(path.string(), 4); }, std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(path.parent_path()));
 }

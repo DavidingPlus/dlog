@@ -9,11 +9,12 @@
 - [x] 动态 Buffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
 - [x] LogFile 统一支持普通和轮转模式：单参数构造使用完整文件名，现有构造方式继续启用轮转。
+- [x] StdoutFlush、FileFlush 实现 `writeAndFlush()`；LogFile 移除自动刷新策略，现有异步后端已通过 FileFlush 写出。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
 
-此前 Buffer 闭环验证为 Windows 全量 172 项测试通过、相关示例编译运行正常。本轮 LogFile 双模式改造新增 6 项测试，Windows 核心 144 项通过，默认构建通过；不代表下述待实施功能已经通过验收。日志器工厂等接口示例仍是待实现方案。
+此前 Buffer 闭环验证为 Windows 全量 172 项测试通过。LogFile 双模式改造后核心 144 项通过；本轮补充 5 项 FileFlush 测试，Windows 核心 149 项通过。不代表下述待实施功能已经通过验收，日志器工厂等接口示例仍是待实现方案。
 
 ## 2. 当前 dlog 与 Kama 的联系和区别
 
@@ -73,7 +74,9 @@ dlog::Shutdown();
 
 `"app"` 是日志器名称，`"logs/app"` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式则使用完整文件名。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
 
-底层 LogFile 已支持 `LogFile("logs/app.log")` 普通模式及原有 `LogFile("logs/app", rollSize)` 轮转模式。普通模式重开时追加已有内容，调用 `rollFile()` 抛出 `std::logic_error`；两种模式都要求父目录预先存在。FileFlush 及日志器工厂的对应接入仍待实施。
+底层 LogFile 和 FileFlush 均已支持单参数普通模式、双参数轮转模式。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都要求父目录预先存在。日志器工厂仍待实施。
+
+刷新职责已经分开：LogFile 提供 `append()` 与 `flush()`，不再保存刷新间隔或自动刷新；FileFlush 将两次调用组合成 `writeAndFlush()`。AsyncLogging 保留定时等待，每个非空缓冲块作为一个输出批次，不再另外调用 flush。直接使用 LogFile 的调用方需显式刷新，原三参数构造需改为两参数并重新编译。
 
 默认终端从同步改为异步后，调用返回不代表终端已经显示内容；正常退出需要排空。
 
@@ -152,7 +155,7 @@ DLOG_INFO()
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**现在只实施第一步：让现有后台线程通过统一输出接口写终端或文件，不先改名 Logger。** 每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
+**第一步已完成输出类及现有文件后端接入，后续再提取通用 AsyncWorker，支持通过同一工作器选择终端或文件。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 

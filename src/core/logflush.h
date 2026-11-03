@@ -21,7 +21,7 @@ public:
 
     virtual ~LogFlush() = default;
 
-    // 写入并刷新。
+    // 写入并刷新；len 为 0 时不操作。
     virtual void writeAndFlush(const char *data, size_t len) = 0;
 };
 
@@ -40,9 +40,13 @@ class DLOG_API_EXPORTED FileFlush : public LogFlush
 
 public:
 
-    FileFlush(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3);
+    // 文件模式由 LogFile 管理；两种模式都要求父目录已存在。
+    explicit FileFlush(const std::string &filename);
 
-    ~FileFlush() override = default;
+    FileFlush(const std::string &basePath, int64_t rollSize);
+
+    // LogFile 仅在此处前置声明，析构放到 .cpp 中定义。
+    ~FileFlush() override;
 
     void writeAndFlush(const char *data, size_t len) override;
 
