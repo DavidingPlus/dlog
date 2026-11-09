@@ -54,18 +54,35 @@ void AsyncLogging::append(const char *data, size_t length)
 
 void AsyncLogging::start()
 {
-    // 已经运行时重复 start() 不再创建第二个后台线程，stop() 完成后可再次启动。
-    if (m_running) return;
+    // start()/stop() 仍要求调用方串行执行；下面的局部锁不代表支持多个控制线程并发启停。
+    // m_running 表示“允许后台继续消费”，started() 表示“本轮线程已启动且尚未 join”，防止重复启动应检查后者。
+    // 例如同一控制线程按顺序调用：
+    // 1. 第一次 start()：started() == false，先设置 m_running = true，再创建后台线程。
+    // 2. 紧接着再次 start()：started() == true，直接返回，沿用同一个后台线程。
+    // 3. 调用 stop()：请求停止并 join；join 完成后，Thread 将 started() 恢复为 false。
+    // 4. 再次 start()：started() == false，可以创建新一轮线程，处理新追加的数据。
+    {
+        // 与 stop() 及后台使用同一把锁完成状态准备，锁的范围到此为止，不覆盖后面的线程启动和失败清理。
+        std::lock_guard<std::mutex> lock(m_mtx);
+        if (m_thread.started()) return;
 
-    // Thread::start() 创建线程时可能抛异常，catch 是为了回滚状态。如果没有回滚，m_running 会留在 true，之后再调用 start() 会误以为后台线程已经启动。
-    m_running = true;
+        // 必须在线程启动前设置 true：子线程一经创建就可能执行 threadFunc()，不能假定它一定晚于 start() 返回。
+        // 若先创建线程再设置 true，子线程可能先读到 false，在队列为空时直接退出；随后主线程才设置 true，便没有消费者了。
+        m_running = true;
+    }
+
+    // 创建线程、等待其登记 tid 均在锁外，后台可以及时取得 m_mtx；start() 返回只保证 tid 已登记，不代表已经输出数据。
     try
     {
         m_thread.start();
     }
     catch (...)
     {
-        m_running = false, throw;
+        // 例如第一次创建线程就失败：m_running 已为 true，但实际没有消费者，必须回滚后再把异常交给调用方。
+        // stop() 会持锁设置 false，并通过 Thread::join() 回收可能已启动的线程；未启动时 join() 自行忽略。
+        // 清理完成后再次 start() 仍可尝试启动；这里没有保存异常或增加失败状态。
+        // 此处必须在 m_mtx 的持锁作用域之外，否则 stop() 再次获取同一把非递归锁会死锁。
+        stop(), throw;
     }
 }
 
