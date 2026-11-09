@@ -2,7 +2,7 @@
 
 ## 1. 目标与进度
 
-更新日期：2026-11-09；本轮改动前代码基线：`bb6b13a`。本文合并原对比文档与迁移计划，后续只维护这一份。
+更新日期：2026-11-09；本轮改动前代码基线：`045c27e`。本文合并原对比文档与迁移计划，后续只维护这一份。
 
 采用 Kama 的核心用法：**长期存在的 AsyncLogger 管理工作器和输出目标，使用者创建日志器后直接写日志。** 保留 dlog 的流式宏，先完成终端和文件输出，不扩展成通用日志框架。
 
@@ -15,6 +15,7 @@
 - [x] 新增 RollFileFlush，复用 FileFlush 的写入与刷新及 LogFile 的轮转；两种输出类均接收 filesystem::path。
 - [x] LogFlushFactory 创建输出对象，覆盖参数转发、共享生命周期和构造异常传播。
 - [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
+- [x] Buffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
@@ -32,6 +33,8 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 父目录自动创建后，Windows 全量 206 项测试中 205 项通过、1 项跳过，无失败，构建通过。覆盖多级 Unicode 目录、已有目录重开追加、可执行目录下的相对路径创建、普通及轮转输出，以及目录位置被文件占用时的异常传播与原文件保留。FileUtil 打开前创建 parent_path，LogFile 在轮转扫描前准备目录；不保存额外路径成员或增加单独的目录操作接口。
 
 2026-11-09 完成 AsyncLogging 路径及输出类型迁移：路径参数和成员使用 filesystem::path，后台使用 RollFileFlush，FileFlush 的双参数构造收为 protected。测试及示例直接传入 path，异步测试按 UTF-8 文件名查找日志；示例和 README 移除预建目录步骤。本轮新增 2 项测试，覆盖中文、空格、emoji 目录及基础文件名、缺失父目录自动创建、轮转与重启保留旧内容，以及可执行文件目录下的相对 Unicode 路径和空字节。Windows 全量 208 项测试中 207 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败，库、测试及异步示例构建通过。通用 AsyncWorker 和后台失败处理仍待实施。
+
+本轮继续保留 Buffer 与 FixedBuffer，将两类、实现及测试从 core 移到 utils。公共接口统一为 storageData/capacity、readableBegin/readableBytes、writableBegin/writableBytes、append、clear、toString；Buffer 的 retrieve 系列改名为 consume 系列，retrieveAll 与 clear 合并，FixedBuffer 保留 bzero 进行物理清零。FixedBuffer 超限追加抛出 length_error，正长度空指针抛出 invalid_argument，失败保留原内容。FileUtil 通过 FixedBuffer<64 * 1024> 的 storageData/capacity 借出固定存储给 setvbuf，文件流状态仍由 C 运行库管理，fclose 完成前不修改或释放存储。Windows 全量 216 项测试中 215 项通过、1 项跳过，无失败；覆盖共同接口约定、部分消费后地址区别、固定容量超限及小块文件写入跨 64 KiB 边界和关闭刷尾。头文件路径、成员接口和 FileUtil 对象布局发生变化，使用方需迁移并重新编译。
 
 ## 2. 当前 dlog 与 Kama 的联系和区别
 
@@ -168,11 +171,11 @@ DLOG_INFO()
 | 顺序 | Kama 参考 | dlog 对照 | 重点 |
 | --- | --- | --- | --- |
 | 1 | [LogFlush.hpp][ref-flush] | [LogFile](../src/core/logfile.h)、[FileUtil](../src/utils/fileutil.h) | 输出接口、所有权、刷新和失败反馈 |
-| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncLogging](../src/core/asynclogging.cpp)、[Buffer](../src/core/buffer.h)、[FixedBuffer](../src/core/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
+| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncLogging](../src/core/asynclogging.cpp)、[Buffer](../src/utils/buffer.h)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**本轮已完成 AsyncLogging 的 RollFileFlush 接入与 path 适配，并同步迁移测试、示例和 README。下一步提取通用 AsyncWorker，支持通过同一工作器选择终端或文件，同时补齐后台失败反馈。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
+**本轮已完成 AsyncLogging 的 RollFileFlush 接入与 path 适配、缓冲区接口统一及 utils 模块迁移，并同步迁移测试、示例和 README。下一步提取通用 AsyncWorker，支持通过同一工作器选择终端或文件，同时补齐后台失败反馈。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 

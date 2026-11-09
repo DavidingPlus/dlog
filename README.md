@@ -15,7 +15,13 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 
 ## 基本用法
 
-直接使用 `LogStream::buffer()` 时，返回类型为 `const dlog::Buffer&`；通过 `peek()` 和 `readableBytes()` 读取内容。原 `SmallBuffer` 的返回类型和读取接口已替换，使用方需要同步调整并重新编译。
+`Buffer` 和 `FixedBuffer` 位于 utils 模块，公共头文件为 `<dlog/utils/buffer.h>`、`<dlog/utils/fixedbuffer.h>`。直接使用 `LogStream::buffer()` 时，返回类型为 `const dlog::Buffer&`；通过 `readableBegin()` 和 `readableBytes()` 读取内容。
+
+两者统一提供 `storageData()`、`capacity()`、`readableBegin()`、`readableBytes()`、`writableBegin()`、`writableBytes()`、`append()`、`clear()` 和 `toString()`。`storageData()` 指向整块存储，`readableBegin()` 指向尚未消费的数据，`writableBegin()` 指向尾部可写区域；`capacity()` 是全部存储的字节数，`writableBytes()` 只计算尾部连续空间。`clear()` 清空逻辑数据但不清零或缩容，`toString()` 复制可读数据而不消费。Buffer 的部分消费接口为 `consume()`、`consumeAsString()`、`consumeAllAsString()`，保留 `ensureWritableBytes()`；FixedBuffer 的物理清零接口为 `bzero()`。
+
+`append(nullptr, 0)` 是空操作，正长度空指针抛出 `std::invalid_argument`。Buffer 按需增长；FixedBuffer 超限追加抛出 `std::length_error`，保留原内容。旧的 `peek/beginWrite/length/avail/current/reset/retrieve*` 接口已替换；FixedBuffer 原 `data()` 调用读取内容时改用 `readableBegin()`，借用整块存储时改用 `storageData()`。头文件路径及 FileUtil 对象布局也已改变，使用方需迁移并重新编译。
+
+FileUtil 使用 `FixedBuffer<64 * 1024>` 为文件流提供固定存储，通过 `storageData()` 和 `capacity()` 传给 `setvbuf()`。借出后不再调用该对象的追加、清空或清零接口，存储在 `fclose()` 完成前始终有效；文件流的缓冲状态由 C 运行库维护，不能通过 FixedBuffer 的 `readableBytes()` 查询。
 
 直接使用 `LogFile` 时，`append()` 不再按时间主动刷新，应显式调用 `flush()` 或使用 `FileFlush::writeAndFlush()`。`LogFile` 和 `FileFlush` 不再接受刷新间隔参数；周期等待仍由 `AsyncLogging` 的 `flushInterval` 控制。
 
