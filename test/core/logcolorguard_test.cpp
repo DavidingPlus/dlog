@@ -19,7 +19,7 @@ namespace
     std::string_view streamContents(const LogStream &stream)
     {
         const Buffer &buffer = stream.buffer();
-        return {buffer.peek(), buffer.readableBytes()};
+        return {buffer.readableBegin(), buffer.readableBytes()};
     }
 
     struct LogColorExample

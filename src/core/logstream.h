@@ -33,7 +33,7 @@ public:
     const Buffer &buffer() const { return m_buffer; }
 
     // 重置缓冲区，将当前指针重置到缓冲区的起始位置。
-    void resetBuffer() { m_buffer.reset(); }
+    void resetBuffer() { m_buffer.clear(); }
 
     LogStream &operator<<(bool express);
 

@@ -7,7 +7,7 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-void Buffer::retrieve(size_t len)
+void Buffer::consume(size_t len)
 {
     // 说明应用只读取了可读缓冲区数据的一部分，就是 len 长度，还剩下 [m_readerIndex+=len, m_writerIndex] 的数据未读。
     if (len < readableBytes())
@@ -17,18 +17,18 @@ void Buffer::retrieve(size_t len)
     // len >= readableBytes()
     else
     {
-        retrieveAll();
+        clear();
     }
 }
 
-std::string Buffer::retrieveAsString(size_t len)
+std::string Buffer::consumeAsString(size_t len)
 {
-    // 与 retrieve() 保持一致：超长请求按全部可读数据处理，避免构造字符串时越界读取。
+    // 与 consume() 保持一致：超长请求按全部可读数据处理，避免构造字符串时越界读取。
     len = std::min(len, readableBytes());
     if (0 == len) return std::string();
 
-    std::string res(peek(), len);
-    retrieve(len);
+    std::string res(readableBegin(), len);
+    consume(len);
 
 
     return res;
@@ -45,7 +45,7 @@ void Buffer::append(const char *data, size_t len)
     if (!data) throw std::invalid_argument("Buffer::append(): data must not be nullptr");
 
     ensureWritableBytes(len);
-    std::copy(data, data + len, beginWrite());
+    std::copy(data, data + len, writableBegin());
     m_writerIndex += len;
 }
 
@@ -54,7 +54,7 @@ void Buffer::makeSpace(size_t len)
     // 初始情况下，全部 initialSize 字节都是可写空间。
     // 在 Buffer 工作中，需明确两个方向的语义：
     // append() 向 writable 区域写入数据，使其成为 readable 数据。
-    // retrieve() 消费 readable 数据，留下可回收的空间，下面用 xxx 表示。
+    // consume() 消费 readable 数据，留下可回收的空间，下面用 xxx 表示。
 
     // 某时刻内存布局长这样：
     // | xxx | readable | writable |，xxx 表示已经消费的数据。
@@ -67,7 +67,7 @@ void Buffer::makeSpace(size_t len)
         size_t readable = readableBytes();
 
         // 将未消费的数据移到起点，复用前部空间。
-        std::copy(begin() + m_readerIndex, begin() + m_writerIndex, begin());
+        std::copy(storageData() + m_readerIndex, storageData() + m_writerIndex, storageData());
 
         m_readerIndex = 0;
         m_writerIndex = readable;

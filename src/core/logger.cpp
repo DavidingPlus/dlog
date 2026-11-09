@@ -66,7 +66,7 @@ Logger::~Logger()
     const Buffer &buffer = stream().buffer();
 
     // 输出（默认项终端输出）。
-    g_outputCallback(buffer.peek(), buffer.readableBytes());
+    g_outputCallback(buffer.readableBegin(), buffer.readableBytes());
     // 输出 FATAL 的情况，刷新缓冲区并终止程序。
     if (LogLevel::FATAL == m_impl.m_level)
     {

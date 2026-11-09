@@ -44,26 +44,33 @@ public:
 
     ~Buffer() = default;
 
+    // 整块存储的起点及总字节数；capacity 包含已消费、可读和尾部可写区域。
+    char *storageData() { return m_buffer.data(); }
+
+    const char *storageData() const { return m_buffer.data(); }
+
+    size_t capacity() const { return m_buffer.size(); }
+
     size_t readableBytes() const { return m_writerIndex - m_readerIndex; }
 
     size_t writableBytes() const { return m_buffer.size() - m_writerIndex; }
 
     // 返回缓冲区中可读 readable 区域的起始地址。
-    const char *peek() const { return m_buffer.empty() ? begin() : begin() + m_readerIndex; }
+    const char *readableBegin() const { return m_buffer.empty() ? storageData() : storageData() + m_readerIndex; }
 
-    // 注意：以下这四个 retrieve 系列函数操控的都是可读 readable 区的数据，并且都只是逻辑上消费数据，实际并不会修改 Buffer 内存，在实际操作中为了效率也不能频繁修改 Buffer 内存。它们只是在逻辑上移动指针，维持可读和可写的语义，表示这部分数据已经被上层处理。下面的注释用“消费”这个词语描述。
+    // 复制可读数据，不消费；显式长度保留内嵌空字节。
+    std::string toString() const { return readableBytes() ? std::string(readableBegin(), readableBytes()) : std::string(); }
+
+    // consume 系列只推进读索引，不移动或清零数据。
 
     // 消费指定长度的可读数据；len 达到或超过可读长度时消费全部并重置缓冲区。
-    void retrieve(size_t len);
-
-    // 消费当前 Buffer 中全部可读数据。消费完以后，Buffer 的状态应该回到初始状态。
-    void retrieveAll() { reset(); }
+    void consume(size_t len);
 
     // 最多取 len 字节，复制为 string 并消费；len 达到或超过可读长度时取全部并重置缓冲区。
-    std::string retrieveAsString(size_t len);
+    std::string consumeAsString(size_t len);
 
     // 将 Buffer 当前所有可读数据复制为 string 返回，并消费全部数据。
-    std::string retrieveAllAsString() { return retrieveAsString(readableBytes()); }
+    std::string consumeAllAsString() { return consumeAsString(readableBytes()); }
 
     // 保证 Buffer 至少拥有 len 字节的连续可写空间，不够就调用 makeSpace() 扩充。
     void ensureWritableBytes(size_t len);
@@ -73,19 +80,15 @@ public:
     void append(const char *data, size_t len);
 
     // 返回缓冲区中可写 writable 区域的起始地址。
-    char *beginWrite() { return m_buffer.empty() ? begin() : begin() + m_writerIndex; }
+    char *writableBegin() { return m_buffer.empty() ? storageData() : storageData() + m_writerIndex; }
 
-    const char *beginWrite() const { return m_buffer.empty() ? begin() : begin() + m_writerIndex; }
+    const char *writableBegin() const { return m_buffer.empty() ? storageData() : storageData() + m_writerIndex; }
 
-    void reset() { m_readerIndex = 0, m_writerIndex = 0; }
+    // 清空逻辑数据，保留存储空间及原字节。
+    void clear() { m_readerIndex = 0, m_writerIndex = 0; }
 
 
 private:
-
-    // 返回缓冲区首个字节的地址。
-    char *begin() { return m_buffer.data(); }
-
-    const char *begin() const { return m_buffer.data(); }
 
     void makeSpace(size_t len);
 

@@ -15,7 +15,7 @@ int main()
     stream << "payload=" << payload << ", done\n";
 
     const dlog::Buffer &buffer = stream.buffer();
-    assert(std::string_view(buffer.peek(), buffer.readableBytes()) == "payload=" + payload + ", done\n");
+    assert(std::string_view(buffer.readableBegin(), buffer.readableBytes()) == "payload=" + payload + ", done\n");
     std::cout << "stream readable bytes: " << buffer.readableBytes() << '\n';
-    std::cout.write(buffer.peek(), buffer.readableBytes());
+    std::cout.write(buffer.readableBegin(), buffer.readableBytes());
 }

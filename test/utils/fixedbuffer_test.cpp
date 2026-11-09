@@ -3,6 +3,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 
@@ -33,8 +34,8 @@ TEST(FixedBufferSizeTest, NamedAliasesUseExpectedCapacities)
     SmallBuffer smallBuffer;
     auto largeBuffer = std::make_unique<LargeBuffer>();
 
-    EXPECT_EQ(smallBuffer.avail(), kSmallBufferSize);
-    EXPECT_EQ(largeBuffer->avail(), kLargeBufferSize);
+    EXPECT_EQ(smallBuffer.writableBytes(), kSmallBufferSize);
+    EXPECT_EQ(largeBuffer->writableBytes(), kLargeBufferSize);
 }
 
 
@@ -44,8 +45,8 @@ TEST(FixedBufferSizeTest, SmallBufferUsesSmallCapacity)
 
     buffer.append("small", 5);
 
-    EXPECT_EQ(buffer.length(), 5u);
-    EXPECT_EQ(buffer.avail(), kSmallBufferSize - 5u);
+    EXPECT_EQ(buffer.readableBytes(), 5u);
+    EXPECT_EQ(buffer.writableBytes(), kSmallBufferSize - 5u);
     EXPECT_EQ(buffer.toString(), "small");
 }
 
@@ -55,13 +56,13 @@ TEST(FixedBufferSizeTest, LargeBufferUsesLargeCapacityAndCanBeReused)
     auto buffer = std::make_unique<LargeBuffer>();
 
     buffer->append("large", 5);
-    EXPECT_EQ(buffer->length(), 5u);
-    EXPECT_EQ(buffer->avail(), kLargeBufferSize - 5u);
+    EXPECT_EQ(buffer->readableBytes(), 5u);
+    EXPECT_EQ(buffer->writableBytes(), kLargeBufferSize - 5u);
     EXPECT_EQ(buffer->toString(), "large");
 
-    buffer->reset();
-    EXPECT_EQ(buffer->length(), 0u);
-    EXPECT_EQ(buffer->avail(), kLargeBufferSize);
+    buffer->clear();
+    EXPECT_EQ(buffer->readableBytes(), 0u);
+    EXPECT_EQ(buffer->writableBytes(), kLargeBufferSize);
 }
 
 
@@ -69,24 +70,24 @@ TEST(FixedBufferTest, StartsEmpty)
 {
     TestBuffer buffer;
 
-    EXPECT_EQ(buffer.length(), 0);
-    EXPECT_EQ(buffer.avail(), 8u);
-    EXPECT_EQ(buffer.current(), buffer.data());
+    EXPECT_EQ(buffer.readableBytes(), 0);
+    EXPECT_EQ(buffer.writableBytes(), 8u);
+    EXPECT_EQ(buffer.writableBegin(), buffer.readableBegin());
     EXPECT_TRUE(buffer.toString().empty());
 }
 
-TEST(FixedBufferTest, DataPointsToTheBeginningAndCurrentPointsToNextWritePosition)
+TEST(FixedBufferTest, ReadableBeginPointsToDataAndWritableBeginPointsToNextWritePosition)
 {
     TestBuffer buffer;
     const char payload[] = "abc";
 
-    const char *begin = buffer.data();
+    const char *begin = buffer.readableBegin();
     buffer.append(payload, 3);
 
-    EXPECT_EQ(buffer.data(), begin);
-    EXPECT_EQ(buffer.current(), begin + 3);
-    EXPECT_EQ(buffer.length(), 3);
-    EXPECT_EQ(buffer.avail(), 5u);
+    EXPECT_EQ(buffer.readableBegin(), begin);
+    EXPECT_EQ(buffer.writableBegin(), begin + 3);
+    EXPECT_EQ(buffer.readableBytes(), 3);
+    EXPECT_EQ(buffer.writableBytes(), 5u);
 }
 
 TEST(FixedBufferTest, AppendsOnePayload)
@@ -96,10 +97,10 @@ TEST(FixedBufferTest, AppendsOnePayload)
 
     buffer.append(payload, 5);
 
-    EXPECT_EQ(buffer.length(), 5);
-    EXPECT_EQ(buffer.avail(), 3u);
+    EXPECT_EQ(buffer.readableBytes(), 5);
+    EXPECT_EQ(buffer.writableBytes(), 3u);
     EXPECT_EQ(buffer.toString(), "hello");
-    EXPECT_EQ(std::memcmp(buffer.data(), payload, 5), 0);
+    EXPECT_EQ(std::memcmp(buffer.readableBegin(), payload, 5), 0);
 }
 
 TEST(FixedBufferTest, AppendsMultiplePayloadsContiguously)
@@ -110,8 +111,8 @@ TEST(FixedBufferTest, AppendsMultiplePayloadsContiguously)
     buffer.append("cde", 3);
     buffer.append("f", 1);
 
-    EXPECT_EQ(buffer.length(), 6);
-    EXPECT_EQ(buffer.avail(), 2u);
+    EXPECT_EQ(buffer.readableBytes(), 6);
+    EXPECT_EQ(buffer.writableBytes(), 2u);
     EXPECT_EQ(buffer.toString(), "abcdef");
 }
 
@@ -122,9 +123,9 @@ TEST(FixedBufferTest, AcceptsPayloadThatExactlyFillsRemainingSpace)
     buffer.append("123", 3);
     buffer.append("45678", 5);
 
-    EXPECT_EQ(buffer.length(), 8);
-    EXPECT_EQ(buffer.avail(), 0u);
-    EXPECT_EQ(buffer.current(), buffer.data() + 8);
+    EXPECT_EQ(buffer.readableBytes(), 8);
+    EXPECT_EQ(buffer.writableBytes(), 0u);
+    EXPECT_EQ(buffer.writableBegin(), buffer.readableBegin() + 8);
     EXPECT_EQ(buffer.toString(), "12345678");
 }
 
@@ -133,15 +134,15 @@ TEST(FixedBufferTest, RejectsPayloadLargerThanRemainingSpaceWithoutPartialWrite)
     TestBuffer buffer;
 
     buffer.append("abc", 3);
-    const char *currentBefore = buffer.current();
-    const int lengthBefore = buffer.length();
-    const size_t availBefore = buffer.avail();
+    const char *currentBefore = buffer.writableBegin();
+    const size_t lengthBefore = buffer.readableBytes();
+    const size_t availBefore = buffer.writableBytes();
 
-    buffer.append("123456", 6);
+    EXPECT_THROW(buffer.append("123456", 6), std::length_error);
 
-    EXPECT_EQ(buffer.current(), currentBefore);
-    EXPECT_EQ(buffer.length(), lengthBefore);
-    EXPECT_EQ(buffer.avail(), availBefore);
+    EXPECT_EQ(buffer.writableBegin(), currentBefore);
+    EXPECT_EQ(buffer.readableBytes(), lengthBefore);
+    EXPECT_EQ(buffer.writableBytes(), availBefore);
     EXPECT_EQ(buffer.toString(), "abc");
 }
 
@@ -150,14 +151,14 @@ TEST(FixedBufferTest, RejectsAppendWhenBufferIsFull)
     TestBuffer buffer;
 
     buffer.append("12345678", 8);
-    const char *currentBefore = buffer.current();
-    const int lengthBefore = buffer.length();
+    const char *currentBefore = buffer.writableBegin();
+    const size_t lengthBefore = buffer.readableBytes();
 
-    buffer.append("x", 1);
+    EXPECT_THROW(buffer.append("x", 1), std::length_error);
 
-    EXPECT_EQ(buffer.current(), currentBefore);
-    EXPECT_EQ(buffer.length(), lengthBefore);
-    EXPECT_EQ(buffer.avail(), 0u);
+    EXPECT_EQ(buffer.writableBegin(), currentBefore);
+    EXPECT_EQ(buffer.readableBytes(), lengthBefore);
+    EXPECT_EQ(buffer.writableBytes(), 0u);
     EXPECT_EQ(buffer.toString(), "12345678");
 }
 
@@ -166,15 +167,16 @@ TEST(FixedBufferTest, ZeroLengthAppendDoesNotChangeState)
     TestBuffer buffer;
 
     buffer.append("abc", 3);
-    const char *currentBefore = buffer.current();
-    const int lengthBefore = buffer.length();
-    const size_t availBefore = buffer.avail();
+    const char *currentBefore = buffer.writableBegin();
+    const size_t lengthBefore = buffer.readableBytes();
+    const size_t availBefore = buffer.writableBytes();
 
     buffer.append("ignored", 0);
+    EXPECT_NO_THROW(buffer.append(nullptr, 0));
 
-    EXPECT_EQ(buffer.current(), currentBefore);
-    EXPECT_EQ(buffer.length(), lengthBefore);
-    EXPECT_EQ(buffer.avail(), availBefore);
+    EXPECT_EQ(buffer.writableBegin(), currentBefore);
+    EXPECT_EQ(buffer.readableBytes(), lengthBefore);
+    EXPECT_EQ(buffer.writableBytes(), availBefore);
     EXPECT_EQ(buffer.toString(), "abc");
 }
 
@@ -186,29 +188,29 @@ TEST(FixedBufferTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
 
     buffer.append(payload, sizeof(payload));
 
-    EXPECT_EQ(buffer.length(), 5);
+    EXPECT_EQ(buffer.readableBytes(), 5);
     EXPECT_EQ(buffer.toString(), expected);
-    EXPECT_EQ(std::memcmp(buffer.data(), payload, sizeof(payload)), 0);
+    EXPECT_EQ(std::memcmp(buffer.readableBegin(), payload, sizeof(payload)), 0);
 }
 
-TEST(FixedBufferTest, ResetClearsLogicalStateAndAllowsReuse)
+TEST(FixedBufferTest, ClearResetsLogicalStateAndAllowsReuse)
 {
     TestBuffer buffer;
-    const char *begin = buffer.data();
+    const char *begin = buffer.readableBegin();
 
     buffer.append("old", 3);
-    buffer.reset();
+    buffer.clear();
 
-    EXPECT_EQ(buffer.data(), begin);
-    EXPECT_EQ(buffer.current(), begin);
-    EXPECT_EQ(buffer.length(), 0);
-    EXPECT_EQ(buffer.avail(), 8u);
+    EXPECT_EQ(buffer.readableBegin(), begin);
+    EXPECT_EQ(buffer.writableBegin(), begin);
+    EXPECT_EQ(buffer.readableBytes(), 0);
+    EXPECT_EQ(buffer.writableBytes(), 8u);
     EXPECT_TRUE(buffer.toString().empty());
 
     buffer.append("new", 3);
 
-    EXPECT_EQ(buffer.current(), begin + 3);
-    EXPECT_EQ(buffer.length(), 3);
+    EXPECT_EQ(buffer.writableBegin(), begin + 3);
+    EXPECT_EQ(buffer.readableBytes(), 3);
     EXPECT_EQ(buffer.toString(), "new");
 }
 
@@ -218,15 +220,15 @@ TEST(FixedBufferTest, BzeroClearsPhysicalBytesWithoutChangingLogicalState)
     const std::array<char, 8> zeros{};
 
     buffer.append("abcd", 4);
-    const char *currentBefore = buffer.current();
+    const char *currentBefore = buffer.writableBegin();
 
     buffer.bzero();
 
-    EXPECT_EQ(buffer.current(), currentBefore);
-    EXPECT_EQ(buffer.length(), 4);
-    EXPECT_EQ(buffer.avail(), 4u);
+    EXPECT_EQ(buffer.writableBegin(), currentBefore);
+    EXPECT_EQ(buffer.readableBytes(), 4);
+    EXPECT_EQ(buffer.writableBytes(), 4u);
     EXPECT_EQ(buffer.toString(), std::string(4, '\0'));
-    EXPECT_EQ(std::memcmp(buffer.data(), zeros.data(), zeros.size()), 0);
+    EXPECT_EQ(std::memcmp(buffer.readableBegin(), zeros.data(), zeros.size()), 0);
 }
 
 TEST(FixedBufferTest, BzeroCanBeFollowedByAppendingMoreData)
@@ -237,7 +239,7 @@ TEST(FixedBufferTest, BzeroCanBeFollowedByAppendingMoreData)
     buffer.bzero();
     buffer.append("xyz", 3);
 
-    EXPECT_EQ(buffer.length(), 6);
+    EXPECT_EQ(buffer.readableBytes(), 6);
     EXPECT_EQ(buffer.toString(), std::string("\0\0\0xyz", 6));
 }
 

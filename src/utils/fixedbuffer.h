@@ -5,6 +5,7 @@
 
 #include <string>
 #include <cstring>
+#include <stdexcept>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -18,9 +19,11 @@ inline constexpr size_t kLargeBufferSize = 1000 * kSmallBufferSize;
 
 
 // 缓冲区有两种常见设计：
-// 1. C 字符串缓冲区：必须预留一个字节存放 '\0'。例如 bufferSize 为 8 时，最多存放 7 个有效字符，并保证 data() 返回的内容可以直接作为 C 字符串使用。
-// 2. 带显式长度的字节缓冲区：不要求末尾存在 '\0'，有效数据范围由 data() 和 length() 共同确定。例如 bufferSize 为 8 时，可以存放 8 个有效字节，也可以正确保存中间包含 '\0' 的数据。
-// FixedBuffer 采用第二种设计。bufferSize 表示全部可用的有效数据容量，不包含额外的 '\0' 保留位。因此 data() 只返回数据起始地址，不保证返回 C 字符串；读取数据时必须同时使用 length()，或调用 toString()。使用 data() 时不要调用依赖 '\0' 结尾的接口（例如 printf("%s", data())）。append() 在剩余空间不足时不会写入数据，也不会通过返回值报告失败，调用方应先通过 avail() 确认空间；reset() 只清除逻辑写入状态，bzero() 只清零物理内存且不改变状态。
+// 1. C 字符串缓冲区：必须预留一个字节存放 '\0'。例如 bufferSize 为 8 时，最多存放 7 个有效字符，并保证起始地址处的内容可以直接作为 C 字符串使用。
+// 2. 带显式长度的字节缓冲区：不要求末尾存在 '\0'，有效数据范围由 readableBegin() 和 readableBytes() 共同确定。例如 bufferSize 为 8 时，可以存放 8 个有效字节，也可以正确保存中间包含 '\0' 的数据。
+// FixedBuffer 采用第二种设计，不为 '\0' 预留空间；读取时使用显式长度或 toString()，不能直接当 C 字符串。
+// 与 Buffer 使用相同的读写接口；区别是容量固定，append() 超限抛出 length_error，且不改变原内容。
+// clear() 只清空逻辑数据，bzero() 只清零物理存储，二者不等价。
 // 使用模板参数指定缓冲区容量，使缓冲区大小在编译期确定，并将字符数组直接嵌入 FixedBuffer 对象中，避免缓冲区内部额外的动态内存分配（类似 std::array<>）。
 template <size_t bufferSize>
 class FixedBuffer
@@ -33,29 +36,37 @@ public:
     // 构造函数，初始化当前指针为缓冲区的起始位置。
     FixedBuffer() : m_cur(m_data) {}
 
-    // 返回缓冲区的起始地址。
-    const char *data() const { return m_data; }
+    // 整块存储的起点及总字节数；借给外部接口时，由外部接口维护其数据状态。
+    char *storageData() { return m_data; }
+
+    const char *storageData() const { return m_data; }
+
+    size_t capacity() const { return bufferSize; }
+
+    const char *readableBegin() const { return m_data; }
 
     // 返回当前指针的位置。不推荐调用方绕过 append() 直接修改这块内存。
-    char *current() { return m_cur; }
+    char *writableBegin() { return m_cur; }
+
+    const char *writableBegin() const { return m_cur; }
 
     // 返回缓冲区中当前有效数据的长度。
-    size_t length() const { return m_size; }
+    size_t readableBytes() const { return m_size; }
 
     // 返回缓冲区中剩余可用空间的大小。
-    size_t avail() const { return bufferSize - m_size; }
+    size_t writableBytes() const { return bufferSize - m_size; }
 
     // 按当前有效长度将缓冲区中的数据转换为 std::string 类型并返回。
-    std::string toString() const { return std::string(m_data, length()); }
+    std::string toString() const { return std::string(readableBegin(), readableBytes()); }
 
     // 将缓冲区的物理内存清零；不改变当前有效长度和写入位置。
     void bzero() { std::memset(m_data, 0, bufferSize); }
 
-    // 将指定长度的数据复制到当前写入位置，并更新缓冲区的写入状态。
+    // 零长度不操作；正长度空指针或容量不足时抛异常，保留原内容。不支持重叠追加。
     void append(const char *buf, size_t len);
 
     // 清除当前写入状态，使缓冲区恢复为空并从起始位置重新写入。
-    void reset();
+    void clear();
 
 
 private:
@@ -79,17 +90,16 @@ private:
 template <size_t bufferSize>
 void FixedBuffer<bufferSize>::append(const char *buf, size_t len)
 {
-    if (len <= avail())
-    {
-        // 复制数据到缓冲区。
-        std::memcpy(m_cur, buf, len);
-        // 更新缓冲区状态。
-        updateWriteState(len);
-    }
+    if (0 == len) return;
+    if (!buf) throw std::invalid_argument("FixedBuffer::append(): data must not be nullptr");
+    if (len > writableBytes()) throw std::length_error("FixedBuffer::append(): insufficient capacity");
+
+    std::memcpy(writableBegin(), buf, len);
+    updateWriteState(len);
 }
 
 template <size_t bufferSize>
-void FixedBuffer<bufferSize>::reset()
+void FixedBuffer<bufferSize>::clear()
 {
     m_cur = m_data;
     m_size = 0;
