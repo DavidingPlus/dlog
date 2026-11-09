@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "asynclogging.h"
+#include "fileutil.h"
 #include "logger.h"
 
 
@@ -36,12 +37,12 @@ namespace
     {
         std::vector<std::filesystem::path> files;
         const auto directory = basePath.has_parent_path() ? basePath.parent_path() : std::filesystem::path(".");
-        const std::string prefix = basePath.filename().string() + '.';
+        const std::string prefix = basePath.filename().u8string() + '.';
         const std::string suffix = ".log";
 
         for (const auto &entry : std::filesystem::directory_iterator(directory))
         {
-            const std::string filename = entry.path().filename().string();
+            const std::string filename = entry.path().filename().u8string();
             if (0 == filename.rfind(prefix, 0) &&
                 filename.size() >= suffix.size() &&
                 0 == filename.compare(filename.size() - suffix.size(), suffix.size(), suffix))
@@ -60,7 +61,7 @@ namespace
     std::string readAsyncLogFile(const std::filesystem::path &path)
     {
         std::ifstream input(path, std::ios::binary);
-        if (!input) throw std::runtime_error("failed to open async log file: " + path.string());
+        if (!input) throw std::runtime_error("failed to open async log file: " + path.u8string());
 
         return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
     }
@@ -129,7 +130,7 @@ namespace
 // 未启动时 stop() 是空操作，重复调用也安全。
 TEST_F(AsyncLoggingTest, StopBeforeStartIsSafeAndDoesNotCreateAFile)
 {
-    AsyncLogging logging(m_basePath.string(), 1024, 60);
+    AsyncLogging logging(m_basePath, 1024, 60);
 
     EXPECT_NO_THROW(logging.stop());
     EXPECT_NO_THROW(logging.stop());
@@ -139,7 +140,7 @@ TEST_F(AsyncLoggingTest, StopBeforeStartIsSafeAndDoesNotCreateAFile)
 // 空日志周期可以正常启动、停止；LogFile 会创建空文件，但不写入任何内容。
 TEST_F(AsyncLoggingTest, EmptyRunStopsCleanly)
 {
-    AsyncLogging logging(m_basePath.string(), 1024, 60);
+    AsyncLogging logging(m_basePath, 1024, 60);
 
     logging.start();
     logging.stop();
@@ -154,7 +155,7 @@ TEST_F(AsyncLoggingTest, EmptyRunStopsCleanly)
 TEST_F(AsyncLoggingTest, StopFlushesPartialProducerBuffer)
 {
     const std::string message = "tail-that-does-not-fill-a-buffer\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.start();
     logging.append(message.data(), message.size());
@@ -167,7 +168,7 @@ TEST_F(AsyncLoggingTest, StopFlushesPartialProducerBuffer)
 TEST_F(AsyncLoggingTest, FlushesDataAppendedBeforeStart)
 {
     const std::string message = "buffered-before-start\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.append(message.data(), message.size());
     logging.start();
@@ -180,7 +181,7 @@ TEST_F(AsyncLoggingTest, FlushesDataAppendedBeforeStart)
 TEST_F(AsyncLoggingTest, IgnoresNullAndZeroLengthAppends)
 {
     const std::string message = "valid\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.start();
     logging.append(nullptr, 8);
@@ -197,7 +198,7 @@ TEST_F(AsyncLoggingTest, PreservesEmbeddedNullBytes)
 {
     const char bytes[] = {'A', '\0', 'B', '\n'};
     const std::string expected(bytes, sizeof(bytes));
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.start();
     logging.append(bytes, sizeof(bytes));
@@ -210,7 +211,7 @@ TEST_F(AsyncLoggingTest, PreservesEmbeddedNullBytes)
 TEST_F(AsyncLoggingTest, HandlesExactBufferBoundaryAndRollsOnNextAppend)
 {
     const std::string fullBuffer(kLargeBufferSize, 'F');
-    AsyncLogging logging(m_basePath.string(), static_cast<int64_t>(kLargeBufferSize), 60);
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeBufferSize), 60);
 
     logging.start();
     logging.append(fullBuffer.data(), fullBuffer.size());
@@ -229,7 +230,7 @@ TEST_F(AsyncLoggingTest, HandlesExactBufferBoundaryAndRollsOnNextAppend)
 TEST_F(AsyncLoggingTest, WritesPayloadLargerThanMultipleBuffersWithoutLoss)
 {
     const std::string payload(2 * kLargeBufferSize + 137, 'L');
-    AsyncLogging logging(m_basePath.string(), static_cast<int64_t>(3 * kLargeBufferSize), 60);
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(3 * kLargeBufferSize), 60);
 
     logging.start();
     logging.append(payload.data(), payload.size());
@@ -238,11 +239,57 @@ TEST_F(AsyncLoggingTest, WritesPayloadLargerThanMultipleBuffersWithoutLoss)
     EXPECT_EQ(readAllAsyncLogs(m_basePath), payload);
 }
 
+TEST_F(AsyncLoggingTest, CreatesMissingUnicodeDirectoriesAndPreservesPathsAcrossRotationAndRestart)
+{
+    m_basePath = m_directory / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680") / "nested" / std::filesystem::u8path(u8"\u5e94\u7528 \U0001f984");
+    ASSERT_FALSE(std::filesystem::exists(m_basePath.parent_path()));
+    std::string payload(kLargeBufferSize, 'U');
+    payload[1] = '\0';
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeBufferSize), 60);
+
+    logging.start();
+    logging.append(payload.data(), payload.size());
+    logging.append("tail", 4);
+    logging.stop();
+
+    const auto files = findAsyncLogFiles(m_basePath);
+    ASSERT_EQ(files.size(), 2u);
+    EXPECT_EQ(readAsyncLogFile(files[0]), payload);
+    EXPECT_EQ(readAsyncLogFile(files[1]), "tail");
+
+    logging.start();
+    logging.append("restart", 7);
+    logging.stop();
+
+    EXPECT_EQ(findAsyncLogFiles(m_basePath).size(), 3u);
+    EXPECT_EQ(readAllAsyncLogs(m_basePath), payload + "tailrestart");
+}
+
+
+TEST_F(AsyncLoggingTest, ResolvesRelativeUnicodePathUnderExecutableDirectory)
+{
+    ASSERT_TRUE(std::filesystem::remove(m_directory));
+    m_directory = FileUtil::executableDirectory() / m_directory.filename();
+    const auto relativePath = m_directory.filename() / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680") / "nested" / std::filesystem::u8path(u8"\u5e94\u7528 \U0001f984");
+    m_basePath = FileUtil::executableDirectory() / relativePath;
+    ASSERT_FALSE(std::filesystem::exists(m_basePath.parent_path()));
+    const std::string payload("relative\0data\n", 14);
+    AsyncLogging logging(relativePath, 1024, 60);
+
+    logging.start();
+    logging.append(payload.data(), payload.size());
+    logging.stop();
+
+    EXPECT_TRUE(std::filesystem::is_directory(m_basePath.parent_path()));
+    EXPECT_EQ(readAllAsyncLogs(m_basePath), payload);
+}
+
+
 // flushInterval 为 0 时按实现约定至少等待一秒，尾部数据仍应周期性落到文件层。
 TEST_F(AsyncLoggingTest, ZeroFlushIntervalStillFlushesPartialDataPeriodically)
 {
     const std::string message = "periodic-flush\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 0);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 0);
 
     logging.start();
     logging.append(message.data(), message.size());
@@ -258,7 +305,7 @@ TEST_F(AsyncLoggingTest, ZeroFlushIntervalStillFlushesPartialDataPeriodically)
 TEST_F(AsyncLoggingTest, RepeatedStartAndStopAreSafe)
 {
     const std::string message = "written-once\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.start();
     logging.start();
@@ -275,7 +322,7 @@ TEST_F(AsyncLoggingTest, CanRestartAfterStop)
 {
     const std::string first = "first-run\n";
     const std::string second = "second-run\n";
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
 
     logging.start();
     logging.append(first.data(), first.size());
@@ -295,7 +342,7 @@ TEST_F(AsyncLoggingTest, DestructorStopsWorkerAndFlushesTail)
     const std::string message = "flushed-by-destructor\n";
 
     {
-        AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+        AsyncLogging logging(m_basePath, 1024 * 1024, 60);
         logging.start();
         logging.append(message.data(), message.size());
     }
@@ -309,7 +356,7 @@ TEST_F(AsyncLoggingTest, ConcurrentProducersPreserveEveryWholeRecord)
     constexpr int producerCount = 4;
     constexpr int recordsPerProducer = 100;
 
-    AsyncLogging logging(m_basePath.string(), 1024 * 1024, 60);
+    AsyncLogging logging(m_basePath, 1024 * 1024, 60);
     logging.start();
 
     std::vector<std::thread> producers;
@@ -345,7 +392,7 @@ TEST_F(AsyncLoggingTest, WritesCompleteLongLoggerRecordAcrossMultipleBuffers)
 {
     std::string payload(2 * kLargeBufferSize + 137, 'A');
     payload[kLargeBufferSize] = '\0';
-    AsyncLogging logging(m_basePath.string(), static_cast<int64_t>(4 * kLargeBufferSize), 60);
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(4 * kLargeBufferSize), 60);
     logging.start();
     std::string submitted;
     size_t calls = 0;

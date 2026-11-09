@@ -2,7 +2,7 @@
 
 ## 1. 目标与进度
 
-更新日期：2026-11-03；当前代码基线：`b2d0bf0`。本文合并原对比文档与迁移计划，后续只维护这一份。
+更新日期：2026-11-09；本轮改动前代码基线：`bb6b13a`。本文合并原对比文档与迁移计划，后续只维护这一份。
 
 采用 Kama 的核心用法：**长期存在的 AsyncLogger 管理工作器和输出目标，使用者创建日志器后直接写日志。** 保留 dlog 的流式宏，先完成终端和文件输出，不扩展成通用日志框架。
 
@@ -13,7 +13,8 @@
 - [x] FileUtil 构造参数改为 filesystem::path，Windows 使用宽字符打开接口，保留 FILE* 和缓冲写入。
 - [x] FileUtil 提供可执行文件路径及目录查询，相对路径以可执行文件目录为基准；LogFile 的轮转扫描与写入使用同一绝对路径。
 - [x] 新增 RollFileFlush，复用 FileFlush 的写入与刷新及 LogFile 的轮转；两种输出类均接收 filesystem::path。
-- [ ] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。完成后将 FileFlush 的双参数构造改为 protected。
+- [x] LogFlushFactory 创建输出对象，覆盖参数转发、共享生命周期和构造异常传播。
+- [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
@@ -22,13 +23,15 @@
 
 FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内嵌空字符拒绝。新增静态方法 `executableFullPath()` 和类体内隐式 inline 的 `executableDirectory()`；Windows 使用 32768 个宽字符的缓冲区获取进程 EXE 路径，检测到截断时抛出 system_error，Linux 读取 `/proc/self/exe`。相对路径拼接可执行文件目录后做词法规范化，绝对路径不会拼接目录。
 
-参考项目的 FileUtil 反复按路径查询文件，因此保存 m_path；当前 FileUtil 是打开后的追加写入器，只在构造时需要路径，暂不增加未使用的路径成员。LogFile 已使用 path 保存绝对轮转基准，并按 UTF-8 文件名匹配已有序号，避免更改工作目录或 Unicode 路径造成扫描和写入不一致。FileFlush、RollFileFlush 已接收原生 path，AsyncLogging 的字符串接口尚未迁移；缺失的父目录会在文件打开或轮转扫描前自动创建。
+参考项目的 FileUtil 反复按路径查询文件，因此保存 m_path；当前 FileUtil 是打开后的追加写入器，只在构造时需要路径，暂不增加未使用的路径成员。LogFile 已使用 path 保存绝对轮转基准，并按 UTF-8 文件名匹配已有序号，避免更改工作目录或 Unicode 路径造成扫描和写入不一致。FileFlush、RollFileFlush、AsyncLogging 均已接收原生 path；缺失的父目录会在文件打开或轮转扫描前自动创建。
 
 此前路径适配时 Windows 共 196 项测试，195 项通过，1 项因 MSVC 不支持负 time_t 而跳过，无失败；覆盖进程 EXE 路径查询、工作目录变化、相对路径词法规范化、绝对路径保留，以及相对目录和 Unicode 文件名下的轮转扫描。Linux 分支尚未运行验证。
 
-FileFlush / RollFileFlush 适配后，本轮单独运行 Windows 核心 152 项测试，全部通过；覆盖两种输出的 Unicode 路径、空字节、写后立即可读、空写入、无效输入，以及轮转后重开保持旧内容。未重跑工具测试，AsyncLogging 源码、测试和示例均未修改。
+此前 FileFlush / RollFileFlush 适配后，单独运行 Windows 核心 152 项测试，全部通过；覆盖两种输出的 Unicode 路径、空字节、写后立即可读、空写入、无效输入，以及轮转后重开保持旧内容。该轮未重跑工具测试，AsyncLogging 源码、测试和示例当时均未修改。
 
 父目录自动创建后，Windows 全量 206 项测试中 205 项通过、1 项跳过，无失败，构建通过。覆盖多级 Unicode 目录、已有目录重开追加、可执行目录下的相对路径创建、普通及轮转输出，以及目录位置被文件占用时的异常传播与原文件保留。FileUtil 打开前创建 parent_path，LogFile 在轮转扫描前准备目录；不保存额外路径成员或增加单独的目录操作接口。
+
+2026-11-09 完成 AsyncLogging 路径及输出类型迁移：路径参数和成员使用 filesystem::path，后台使用 RollFileFlush，FileFlush 的双参数构造收为 protected。测试及示例直接传入 path，异步测试按 UTF-8 文件名查找日志；示例和 README 移除预建目录步骤。本轮新增 2 项测试，覆盖中文、空格、emoji 目录及基础文件名、缺失父目录自动创建、轮转与重启保留旧内容，以及可执行文件目录下的相对 Unicode 路径和空字节。Windows 全量 208 项测试中 207 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败，库、测试及异步示例构建通过。通用 AsyncWorker 和后台失败处理仍待实施。
 
 ## 2. 当前 dlog 与 Kama 的联系和区别
 
@@ -88,7 +91,7 @@ dlog::Shutdown();
 
 `"app"` 是日志器名称，`"logs/app"` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式则使用完整文件名。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
 
-LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。FileFlush 的双参数构造暂时公开以保持现有 AsyncLogging 可用，待异步后端迁移后改为 protected。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。日志器工厂仍待实施。
+LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。AsyncLogging 已使用 RollFileFlush，FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。AsyncLogger 日志器工厂仍待实施，已有 LogFlushFactory 只创建输出对象。
 
 刷新职责已经分开：LogFile 提供 `append()` 与 `flush()`，不再保存刷新间隔或自动刷新；FileFlush 将两次调用组合成 `writeAndFlush()`。AsyncLogging 保留定时等待，每个非空缓冲块作为一个输出批次，不再另外调用 flush。直接使用 LogFile 的调用方需显式刷新，原三参数构造需改为两参数并重新编译。
 
@@ -119,8 +122,8 @@ DLOG_INFO()
 
 ### 第一步：输出目标与工作器解耦
 
-- 定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和文件输出。FileFlush / RollFileFlush 区分普通与轮转用途，共用写入与刷新，轮转仍委托 LogFile。先完成 AsyncLogging 的 RollFileFlush 接入与 path 适配，再提取通用工作器。后台按批调用，避免每条日志都单独刷新。
-- 从 AsyncLogging 提取工作器，把写死的 LogFile 改为调用输出目标，只保留一套消费循环。原 AsyncLogging 调用在迁移期间继续通过该循环工作，不另写一个后端。
+- 已定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和文件输出。FileFlush / RollFileFlush 区分普通与轮转用途，共用写入与刷新，轮转仍委托 LogFile。AsyncLogging 的 RollFileFlush 接入与 path 适配已完成，下一步提取通用工作器。后台按批调用，避免每条日志都单独刷新。
+- 从 AsyncLogging 提取工作器，把写死的 RollFileFlush 改为调用 LogFlush 输出目标，只保留一套消费循环。原 AsyncLogging 调用在迁移期间继续通过该循环工作，不另写一个后端。
 - 保留持锁整条追加、跨块顺序、锁外写出、周期刷新、重复启停和停止排空。
 - 后台捕获失败、保存错误状态并直接向 stderr 报告，避免异常逃出线程或递归记录。FileUtil 已有的报错返回路径也要检查，单加 catch 不够。
 
@@ -169,7 +172,7 @@ DLOG_INFO()
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**本轮仅完成 FileFlush / RollFileFlush 及 path 适配，不修改 AsyncLogging、其测试和示例。下一步先迁移异步后端的输出类型与路径接口，再提取通用 AsyncWorker，支持通过同一工作器选择终端或文件。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
+**本轮已完成 AsyncLogging 的 RollFileFlush 接入与 path 适配，并同步迁移测试、示例和 README。下一步提取通用 AsyncWorker，支持通过同一工作器选择终端或文件，同时补齐后台失败反馈。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 

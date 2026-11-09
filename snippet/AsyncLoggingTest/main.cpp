@@ -1,6 +1,5 @@
 #include "asynclogging.h"
 #include "logger.h"
-#include "fileutil.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -51,10 +50,7 @@ namespace
 
 int main()
 {
-    std::filesystem::path logDirectory("logs");
-    std::filesystem::create_directories(dlog::FileUtil::executableDirectory() / logDirectory);
-
-    std::string logBasePath = (logDirectory / "AsyncLoggingTest").string();
+    std::filesystem::path logBasePath = std::filesystem::path("logs") / "AsyncLoggingTest";
     dlog::AsyncLogging logging(logBasePath, kRollSize);
 
     // 先使用 dlog::Logger 的默认输出，确认日志格式化与异步输出切换前的行为。

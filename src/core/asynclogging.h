@@ -8,12 +8,13 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <filesystem>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// AsyncLogging 将日志生产和日志写盘分离：前端追加到内存，后台通过 FileFlush 批量写入并刷新。
+// AsyncLogging 将日志生产和日志写盘分离：前端追加到内存，后台通过 RollFileFlush 批量写入并刷新。
 class DLOG_API_EXPORTED AsyncLogging
 {
 
@@ -21,7 +22,7 @@ class DLOG_API_EXPORTED AsyncLogging
 
 public:
 
-    AsyncLogging(const std::string &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeBuffer>()) { m_pendingBuffers.reserve(16); }
+    AsyncLogging(const std::filesystem::path &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeBuffer>()) { m_pendingBuffers.reserve(16); }
 
     ~AsyncLogging() { stop(); }
 
@@ -53,7 +54,7 @@ private:
     std::atomic_bool m_running{false};
 
     // 日志文件的基础路径。
-    std::string m_basePath;
+    std::filesystem::path m_basePath;
 
     // 单个日志文件的轮转阈值，单位为字节。
     int64_t m_rollSize = 0;

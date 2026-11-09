@@ -84,7 +84,7 @@ void AsyncLogging::stop()
 
 void AsyncLogging::threadFunc()
 {
-    FileFlush output(m_basePath, m_rollSize);
+    RollFileFlush output(m_basePath, m_rollSize);
 
     // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
     BufferPtr replaceBuffer = std::make_unique<LargeBuffer>();

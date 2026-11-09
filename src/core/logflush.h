@@ -42,11 +42,14 @@ public:
 
     explicit FileFlush(const std::filesystem::path &filename) : m_file(std::make_unique<LogFile>(filename)) {}
 
-    FileFlush(const std::filesystem::path &basePath, int64_t rollSize) : m_file(std::make_unique<LogFile>(basePath, rollSize)) {}
-
     virtual ~FileFlush() override = default;
 
     virtual void writeAndFlush(const char *data, size_t len) override;
+
+
+protected:
+
+    FileFlush(const std::filesystem::path &basePath, int64_t rollSize) : m_file(std::make_unique<LogFile>(basePath, rollSize)) {}
 
 
 private:
