@@ -14,7 +14,7 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// AsyncLogging 将日志生产和日志写盘分离：前端追加到内存，后台通过 RollFileFlush 批量写入并刷新。
+// AsyncLogging 将日志生产和日志写盘分离：前端追加到内存，后台通过 LogFile 批量写入并刷新。
 class DLOG_API_EXPORTED AsyncLogging
 {
 

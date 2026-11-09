@@ -99,7 +99,7 @@ dlog::Shutdown();
 
 `"app"` 是日志器名称，`"logs/app"` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式则使用完整文件名。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
 
-LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。AsyncLogging 已使用 RollFileFlush，FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。AsyncLogger 日志器工厂仍待实施，已有 LogFlushFactory 只创建输出对象。
+LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。旧 AsyncLogging 直接使用 LogFile，在追加和刷新之间处理流写入错误。FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。AsyncLogger 日志器工厂仍待实施，已有 LogFlushFactory 只创建输出对象。
 
 刷新职责已经分开：LogFile 提供 `append()` 与 `flush()`，不再保存刷新间隔或自动刷新；FileFlush 将两次调用组合成 `writeAndFlush()`。AsyncLogging 保留定时等待，每个非空缓冲块作为一个输出批次，不再另外调用 flush。直接使用 LogFile 的调用方需显式刷新，原三参数构造需改为两参数并重新编译。
 
@@ -172,7 +172,7 @@ OutputFunc 在后台释放队列锁后执行，数据仅在本次回调期间有
 - 完整块入队后通知，未满数据按周期处理。停止状态的更新与等待谓词使用同一把锁，避免遗漏唤醒；正常退出要求停止请求已到、待处理队列和生产者尾部均为空。
 - 后台入口保存原异常，停止消费并放弃剩余待写数据。失败前已输出的字节无法回滚；失败状态保留到 Worker 销毁。
 - 前台轮换缓冲时先准备替换块，后台缺少备用块时也先分配再移交，避免分配失败后丢失生产者缓冲指针。
-- TODO：FileUtil 的 ferror 分支仍可能打印并返回，文件底层失败反馈留待后续处理。本轮不修改 FileUtil，不承诺底层 I/O 永久阻塞时的退出时限。
+- FileUtil 遇到流写入错误时保留已接收的字节数，并抛出带错误码的异常。FileFlush 将异常传给 Worker。旧 AsyncLogging 在追加处捕获这类错误，打印后继续刷新已接收的前缀。
 - 不移植 Kama 的容量等待：超出固定容量的消息可能一直等待，停止条件也需单独处理；不采用其单次扩容策略。停止及排空采用 dlog 当前规则。
 
 **验证范围。** Worker 测试覆盖输入复制、跨块和并发追加、周期处理、重复启停、正常排空、终端和文件回调，以及回调主动抛错后的异常传递。线程创建失败的回滚、Linux、持续压力和真实存储故障尚未验证。

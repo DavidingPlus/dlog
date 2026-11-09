@@ -2,7 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
-#include <iostream>
+#include <ios>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -71,6 +71,7 @@ void FileUtil::append(const char *data, size_t len)
     while (written < len)
     {
         size_t remain = len - written;
+        errno = 0;
         size_t n = write(data + written, remain);
         written += n;
 
@@ -79,13 +80,15 @@ void FileUtil::append(const char *data, size_t len)
         if (std::ferror(m_file))
         {
             // ferror() 表示当前 FILE* 流发生了写入错误。已经交给流的部分无法回滚，因此当前追加只能放弃剩余数据；这里采用日志系统常见的“尽力记录”策略，不让日志写入异常继续影响业务线程。fwrite() 已经写入的部分无法回滚，因此保留实际接受的字节数。ferror() 只返回错误标志，不返回具体 errno，具体错误码需要从 errno 获取。
-            std::cerr << "FileUtil::append() failed: " << ((0 != errno) ? std::error_code(errno, std::generic_category()).message() : "stream error") << '\n';
+            auto error = (0 != errno) ? std::error_code(errno, std::generic_category()) : std::make_error_code(std::errc::io_error);
+
+            // 已被流接受的字节无法回滚，退出前保留实际计数。
+            m_writtenBytes += static_cast<int64_t>(written);
 
             // 清除 FILE* 的错误标志，使后续 append() 仍有机会重新尝试写入。clearerr() 只清除流状态，不会修复底层 I/O 错误，也不会恢复已经丢失的数据。
             std::clearerr(m_file);
 
-            // 当前追加操作到此结束；剩余数据不再继续重试，避免在持续错误时陷入循环。
-            break;
+            throw std::ios_base::failure("FileUtil::append() failed: ", error);
         }
 
         // 没有错误标志却没有任何写入进展时，继续重试会造成死循环，直接抛出异常。

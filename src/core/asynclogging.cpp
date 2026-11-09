@@ -1,8 +1,9 @@
 #include "asynclogging.h"
 
-#include "logflush.h"
+#include "logfile.h"
 
 #include <chrono>
+#include <iostream>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
@@ -114,7 +115,7 @@ void AsyncLogging::stop()
 
 void AsyncLogging::threadFunc()
 {
-    RollFileFlush output(m_basePath, m_rollSize);
+    LogFile output(m_basePath, m_rollSize);
 
     // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
     BufferPtr replaceBuffer = std::make_unique<LargeFixedBuffer>();
@@ -151,7 +152,19 @@ void AsyncLogging::threadFunc()
         // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
         for (auto &buffer : buffersToWrite)
         {
-            if (buffer && buffer->readableBytes() > 0) output.writeAndFlush(buffer->readableBegin(), buffer->readableBytes());
+            if (buffer && buffer->readableBytes() > 0)
+            {
+                try
+                {
+                    output.append(buffer->readableBegin(), buffer->readableBytes());
+                }
+                catch (const std::ios_base::failure &error)
+                {
+                    // 旧后端继续报告短写并刷新已接收的前缀。
+                    std::cerr << error.what() << '\n';
+                }
+                output.flush();
+            }
         }
 
         // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。

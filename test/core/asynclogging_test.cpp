@@ -151,6 +151,33 @@ TEST_F(AsyncLoggingTest, EmptyRunStopsCleanly)
     EXPECT_TRUE(readAsyncLogFile(files.front()).empty());
 }
 
+#if defined(DLOG_OS_LINUX)
+TEST_F(AsyncLoggingTest, ShortWriteIsReportedWithoutEscapingTheWorkerThread)
+{
+    if (!std::filesystem::exists("/dev/full")) GTEST_SKIP() << "/dev/full is unavailable";
+
+    const std::string fullBlock(kLargeFixedBufferSize, 'x');
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(fullBlock.size()), 60);
+    logging.start();
+    logging.append(fullBlock.data(), fullBlock.size());
+    ASSERT_TRUE(waitForAsyncLogSize(m_basePath, fullBlock.size(), 5s));
+
+    const auto firstFile = findAsyncLogFiles(m_basePath).front();
+    auto nextName = firstFile.stem();
+    nextName.replace_extension(".1.log");
+    std::filesystem::create_symlink("/dev/full", m_directory / nextName);
+
+    const std::string nextBatch(128 * 1024, 'y');
+    ::testing::internal::CaptureStderr();
+    logging.append(nextBatch.data(), nextBatch.size());
+    logging.stop();
+    const auto diagnostic = ::testing::internal::GetCapturedStderr();
+
+    EXPECT_NE(diagnostic.find("FileUtil::append() failed"), std::string::npos);
+    EXPECT_EQ(std::filesystem::file_size(firstFile), fullBlock.size());
+}
+#endif
+
 // 停止时会交出并写入尚未填满的生产者缓冲区。
 TEST_F(AsyncLoggingTest, StopFlushesPartialProducerBuffer)
 {

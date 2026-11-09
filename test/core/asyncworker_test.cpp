@@ -11,6 +11,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -242,6 +243,32 @@ TEST(AsyncWorkerTest, DeliversBytesToPlainFileFlush)
     }
     EXPECT_TRUE(std::filesystem::remove(filename));
 }
+
+#if defined(DLOG_OS_LINUX)
+TEST(AsyncWorkerTest, ReportsFileShortWriteAtStop)
+{
+    if (!std::filesystem::exists("/dev/full")) GTEST_SKIP() << "/dev/full is unavailable";
+
+    FileFlush output("/dev/full");
+    AsyncWorker worker([&output](const char *data, size_t len)
+                       { output.writeAndFlush(data, len); },
+                       60);
+    // 超过文件流的 64 KiB 缓冲，使错误在 append 而非 flush 时发生。
+    const std::string batch(128 * 1024, 'x');
+    worker.append(batch.data(), batch.size());
+    worker.start();
+
+    try
+    {
+        worker.stop();
+        ADD_FAILURE() << "Expected a file write failure";
+    }
+    catch (const std::system_error &error)
+    {
+        EXPECT_EQ(error.code(), std::errc::no_space_on_device);
+    }
+}
+#endif
 
 TEST(AsyncWorkerTest, DeliversBatchesToRollingFileFlush)
 {
