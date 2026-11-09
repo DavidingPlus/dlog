@@ -17,7 +17,7 @@ void Buffer::consume(size_t len)
     // len >= readableBytes()
     else
     {
-        clear();
+        consumeAll();
     }
 }
 

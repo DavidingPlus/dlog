@@ -61,10 +61,13 @@ public:
     // 复制可读数据，不消费；显式长度保留内嵌空字节。
     std::string toString() const { return readableBytes() ? std::string(readableBegin(), readableBytes()) : std::string(); }
 
-    // consume 系列只推进读索引，不移动或清零数据。
+    // 注意：以下这四个 consume 系列函数操控的都是可读 readable 区的数据，并且都只是逻辑上消费数据，实际并不会修改 Buffer 内存，在实际操作中为了效率也不能频繁修改 Buffer 内存。它们只是在逻辑上移动指针，维持可读和可写的语义，表示这部分数据已经被上层处理。下面的注释用“消费”这个词语描述。
 
     // 消费指定长度的可读数据；len 达到或超过可读长度时消费全部并重置缓冲区。
     void consume(size_t len);
+
+    // 消费全部可读数据并重置读写索引；保留存储空间及原字节。
+    void consumeAll() { clear(); }
 
     // 最多取 len 字节，复制为 string 并消费；len 达到或超过可读长度时取全部并重置缓冲区。
     std::string consumeAsString(size_t len);

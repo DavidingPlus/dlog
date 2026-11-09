@@ -313,20 +313,22 @@ TEST(BufferTest, ConsumeAtOrBeyondReadableLengthResetsBothPositions)
     }
 }
 
-TEST(BufferTest, ClearCanBeRepeatedAndFollowedByAppend)
+TEST(BufferTest, ConsumeAllCanBeRepeatedAndFollowedByAppend)
 {
     Buffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abcdef", 6);
     buffer.consume(2);
 
-    buffer.clear();
-    buffer.clear();
+    buffer.consumeAll();
+    buffer.consumeAll();
 
     EXPECT_EQ(buffer.readableBytes(), 0u);
     EXPECT_EQ(buffer.writableBytes(), 8u);
     EXPECT_EQ(buffer.readableBegin(), start);
     EXPECT_EQ(buffer.writableBegin(), start);
+    EXPECT_EQ(buffer.capacity(), 8u);
+    EXPECT_EQ(std::string(buffer.storageData(), 6), "abcdef");
     buffer.append("new", 3);
     EXPECT_EQ(buffer.consumeAllAsString(), "new");
 }
@@ -487,7 +489,6 @@ TYPED_TEST(BufferInterfaceTest, SharesReadWriteAndClearSemantics)
     EXPECT_EQ(std::memcmp(buffer.storageData(), payload.data(), capacity), 0);
 }
 
-
 TYPED_TEST(BufferInterfaceTest, RejectsNullSourceWithoutChangingData)
 {
     TypeParam buffer;
@@ -498,7 +499,6 @@ TYPED_TEST(BufferInterfaceTest, RejectsNullSourceWithoutChangingData)
     EXPECT_EQ(buffer.readableBytes(), 3u);
     EXPECT_EQ(buffer.writableBegin(), buffer.storageData() + 3);
 }
-
 
 TYPED_TEST(BufferInterfaceTest, ExternalStorageWritesDoNotAdvanceLogicalLength)
 {
