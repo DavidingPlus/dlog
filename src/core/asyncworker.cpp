@@ -28,6 +28,8 @@ void AsyncWorker::append(const char *data, size_t length)
         // 持锁完成整条日志的分段追加，避免并发调用把不同日志交错到缓冲区中。
         std::lock_guard<std::mutex> lock(m_mtx);
 
+        if (m_backgroundError) std::rethrow_exception(m_backgroundError);
+
         // currentData 指向这条日志中“接下来要复制的位置”。
         const char *currentData = data;
         // remaining 是还没复制的字节数。
@@ -72,6 +74,8 @@ void AsyncWorker::start()
         // 与 stop() 及后台使用同一把锁完成状态准备，锁的范围到此为止，不覆盖后面的线程启动和失败清理。
         std::lock_guard<std::mutex> lock(m_mtx);
 
+        if (m_backgroundError) std::rethrow_exception(m_backgroundError);
+
         if (m_thread.started()) return;
 
         // 必须在线程启动前设置 true：子线程一经创建就可能执行 threadFunc()，不能假定它一定晚于 start() 返回。若先创建线程再设置 true，子线程可能先读到 false，在队列为空时直接退出；随后主线程才设置 true，便没有消费者了。
@@ -85,13 +89,20 @@ void AsyncWorker::start()
     }
     catch (...)
     {
-        // 例如第一次创建线程就失败：m_running 已为 true，但实际没有消费者，必须回滚后再把异常交给调用方。stop() 会持锁设置 false，并通过 Thread::join() 回收可能已启动的线程；未启动时 join() 自行忽略。清理完成后再次 start() 仍可尝试启动；这里没有保存异常或增加失败状态。
-        // 此处必须在 m_mtx 的持锁作用域之外，否则 stop() 再次获取同一把非递归锁会死锁。
-        stop(), throw;
+        // 清理启动状态后，保留线程启动时抛出的异常。
+        stopAndJoin(), throw;
     }
 }
 
 void AsyncWorker::stop()
+{
+    stopAndJoin();
+
+    // join 完成后，后台线程不会再修改 m_backgroundError，遇到后台 error 正常抛出。
+    if (m_backgroundError) std::rethrow_exception(m_backgroundError);
+}
+
+void AsyncWorker::stopAndJoin()
 {
     // m_running 是原子变量，单独读写它不会发生数据竞争；这里加锁是为了协调条件变量的“检查条件 -> 进入等待”。notify_one() 不会保存通知：通知发生时若还没有线程等待，之后进入等待的线程不会收到这次通知。例如 m_flushInterval == 60 秒，不持锁修改停止标志时可能出现以下时序：
     // 1. 后台线程持有 m_mtx，检查到队列为空且 m_running == true，等待谓词返回 false。
@@ -116,57 +127,68 @@ void AsyncWorker::stop()
 
 void AsyncWorker::threadFunc()
 {
-    // TODO 确定后台异常的报告、停止及后续追加策略；当前异常若逃出线程入口会终止进程。
-
-    // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
-    BufferPtr replaceBuffer = std::make_unique<LargeFixedBuffer>();
-
-    // 后台在每批次中要写盘的缓冲区，实际过程中和前台 m_pendingBuffers 进行交换获得数据。
-    BufferVector buffersToWrite;
-    buffersToWrite.reserve(16);
-
-    while (true)
+    try
     {
+        // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
+        BufferPtr replaceBuffer = std::make_unique<LargeFixedBuffer>();
+
+        // 后台在每批次中要写盘的缓冲区，实际过程中和前台 m_pendingBuffers 进行交换获得数据。
+        BufferVector buffersToWrite;
+        buffersToWrite.reserve(16);
+
+        while (true)
         {
-            std::unique_lock<std::mutex> lock(m_mtx);
+            {
+                std::unique_lock<std::mutex> lock(m_mtx);
 
-            // m_flushInterval 为 0 会让 wait_for 立即返回并造成空转，保证至少等待 1 秒。
-            // wait_for()：最多等 interval 这么久；如果待写队列有数据，或者线程已停止，就提前结束等待。
-            // 谓词在持有 lock 时检查；需要等待时，wait_for 原子地释放 m_mtx 并进入等待，醒来后重新持锁检查。stop() 必须用同一把 m_mtx 修改停止标志，具体的遗漏通知时序见 stop() 中的例子。
-            m_cond.wait_for(lock, std::chrono::seconds(m_flushInterval > 0 ? m_flushInterval : 1), [this]
-                            { return !m_pendingBuffers.empty() || !m_running; });
+                // m_flushInterval 为 0 会让 wait_for 立即返回并造成空转，保证至少等待 1 秒。
+                // wait_for()：最多等 interval 这么久；如果待写队列有数据，或者线程已停止，就提前结束等待。
+                // 谓词在持有 lock 时检查；需要等待时，wait_for 原子地释放 m_mtx 并进入等待，醒来后重新持锁检查。stop() 必须用同一把 m_mtx 修改停止标志，具体的遗漏通知时序见 stop() 中的例子。
+                m_cond.wait_for(lock, std::chrono::seconds(m_flushInterval > 0 ? m_flushInterval : 1), [this]
+                                { return !m_pendingBuffers.empty() || !m_running; });
 
-            // m_running == false 只表示收到停止请求，不表示日志已经写完。
-            // 停止时仍需排空两处数据：m_pendingBuffers 中已交出的整块缓冲区，以及 m_producerBuffer 中未写满的尾部数据。上一轮的 buffersToWrite 已经通过输出目标写入并刷新，因此无需在退出条件中检查它。只有停止请求已到且这两处都为空时才退出；否则继续交接、写入，直到排空。
-            // break 以后 lock 会自动释放。这里的 std::unique_lock 是局部对象；break 会退出整个 while 循环，离开它所在的作用域时，unique_lock 析构并自动解锁。
-            if (!m_running && m_pendingBuffers.empty() && 0 == m_producerBuffer->readableBytes()) break;
+                // m_running == false 只表示收到停止请求，不表示日志已经写完。
+                // 停止时仍需排空两处数据：m_pendingBuffers 中已交出的整块缓冲区，以及 m_producerBuffer 中未写满的尾部数据。上一轮的 buffersToWrite 已经通过输出目标写入并刷新，因此无需在退出条件中检查它。只有停止请求已到且这两处都为空时才退出；否则继续交接、写入，直到排空。
+                // break 以后 lock 会自动释放。这里的 std::unique_lock 是局部对象；break 会退出整个 while 循环，离开它所在的作用域时，unique_lock 析构并自动解锁。
+                if (!m_running && m_pendingBuffers.empty() && 0 == m_producerBuffer->readableBytes()) break;
 
-            // 把生产者缓冲区交给后台，并尝试用 replaceBuffer 立即给前台换一块新的。
-            if (!replaceBuffer) replaceBuffer = std::make_unique<LargeFixedBuffer>();
-            m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
-            m_producerBuffer = std::move(replaceBuffer);
+                // 把生产者缓冲区交给后台，并尝试用 replaceBuffer 立即给前台换一块新的。
+                if (!replaceBuffer) replaceBuffer = std::make_unique<LargeFixedBuffer>();
+                m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
+                m_producerBuffer = std::move(replaceBuffer);
 
-            // 把待处理队列交给后台本地批次。解锁后前台可以继续填充新的 m_pendingBuffers。
-            buffersToWrite.swap(m_pendingBuffers);
+                // 把待处理队列交给后台本地批次。解锁后前台可以继续填充新的 m_pendingBuffers。
+                buffersToWrite.swap(m_pendingBuffers);
+            }
+
+            // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
+            for (auto &buffer : buffersToWrite)
+            {
+                if (buffer && buffer->readableBytes() > 0) m_output(buffer->readableBegin(), buffer->readableBytes());
+            }
+
+            // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。
+            if (buffersToWrite.size() > 1) buffersToWrite.resize(1);
+
+            if (!replaceBuffer && !buffersToWrite.empty())
+            {
+                replaceBuffer = std::move(buffersToWrite.back());
+                buffersToWrite.pop_back();
+                replaceBuffer->clear();
+            }
+
+            buffersToWrite.clear();
         }
+    }
+    catch (...)
+    {
+        std::lock_guard<std::mutex> lock(m_mtx);
 
-        // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
-        for (auto &buffer : buffersToWrite)
-        {
-            if (buffer && buffer->readableBytes() > 0) m_output(buffer->readableBegin(), buffer->readableBytes());
-        }
-
-        // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。
-        if (buffersToWrite.size() > 1) buffersToWrite.resize(1);
-
-        if (!replaceBuffer && !buffersToWrite.empty())
-        {
-            replaceBuffer = std::move(buffersToWrite.back());
-            buffersToWrite.pop_back();
-            replaceBuffer->clear();
-        }
-
-        buffersToWrite.clear();
+        m_backgroundError = std::current_exception();
+        m_running = false;
+        // 已输出的前缀无法回滚，放弃剩余数据，避免重试造成重复写入。
+        m_pendingBuffers.clear();
+        m_producerBuffer->clear();
     }
 }
 

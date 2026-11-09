@@ -96,6 +96,29 @@ TEST(AsyncWorkerTest, DestructorDrainsPartialBlock)
     EXPECT_EQ(actual, message);
 }
 
+TEST(AsyncWorkerTest, StopRethrowsOriginalBackgroundError)
+{
+    AsyncWorker worker([](const char *, size_t)
+                       { throw std::runtime_error("output failed"); },
+                       60);
+    worker.append("tail", 4);
+    worker.start();
+
+    try
+    {
+        worker.stop();
+        ADD_FAILURE() << "Expected the background error";
+    }
+    catch (const std::runtime_error &error)
+    {
+        EXPECT_STREQ(error.what(), "output failed");
+    }
+
+    EXPECT_THROW(worker.append("more", 4), std::runtime_error);
+    EXPECT_THROW(worker.start(), std::runtime_error);
+    EXPECT_THROW(worker.stop(), std::runtime_error);
+}
+
 TEST(AsyncWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
 {
     std::promise<std::string> delivered;
