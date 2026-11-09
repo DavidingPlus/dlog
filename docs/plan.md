@@ -17,11 +17,13 @@
 - [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
 - [x] FlexibleBuffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
 - [x] 可增长缓冲区命名为 FlexibleBuffer；固定容量常量及类型别名命名为 kSmallFixedBufferSize / kLargeFixedBufferSize、SmallFixedBuffer / LargeFixedBuffer，同步文件名、调用方及文档。
-- [ ] 输出目标与异步工作器解耦。
+- [x] 独立 AsyncWorker 完成正常路径的缓冲、后台消费、回调输出及停止排空；旧调用链暂保留。
+- [ ] Worker 后台异常策略，仅留 TODO，架构确认后再实现。
+- [ ] 旧后端接入统一日志器及 FileUtil 底层失败反馈。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
 
-2026-11-09 已记录下文第一步中的 Worker 迁移方案：采用批次输出回调，保留现有固定块队列和启停行为。方案尚未实施，AsyncWorker、对应失败状态接口及新增验收项均未完成；此前测试结果仅覆盖现有代码。
+2026-11-09 已完成独立 AsyncWorker 正常路径的实现与验证，保留现有固定块队列并使用批次输出回调。当前为架构设计版本，后台异常策略仅留 TODO；原 Logger、AsyncLogging 及调用链保留。旧后端与长期日志器的衔接留待后续设计，第三节的目标接口仍未实现。
 
 此前 FlexibleBuffer 闭环验证为 Windows 全量 172 项测试通过。LogFile 双模式改造后核心 144 项通过；本轮补充 5 项 FileFlush 测试，Windows 核心 149 项通过。不代表下述待实施功能已经通过验收，日志器工厂等接口示例仍是待实现方案。
 
@@ -35,7 +37,7 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 
 父目录自动创建后，Windows 全量 206 项测试中 205 项通过、1 项跳过，无失败，构建通过。覆盖多级 Unicode 目录、已有目录重开追加、可执行目录下的相对路径创建、普通及轮转输出，以及目录位置被文件占用时的异常传播与原文件保留。FileUtil 打开前创建 parent_path，LogFile 在轮转扫描前准备目录；不保存额外路径成员或增加单独的目录操作接口。
 
-2026-11-09 完成 AsyncLogging 路径及输出类型迁移：路径参数和成员使用 filesystem::path，后台使用 RollFileFlush，FileFlush 的双参数构造收为 protected。测试及示例直接传入 path，异步测试按 UTF-8 文件名查找日志；示例和 README 移除预建目录步骤。本轮新增 2 项测试，覆盖中文、空格、emoji 目录及基础文件名、缺失父目录自动创建、轮转与重启保留旧内容，以及可执行文件目录下的相对 Unicode 路径和空字节。Windows 全量 208 项测试中 207 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败，库、测试及异步示例构建通过。通用 AsyncWorker 和后台失败处理仍待实施。
+2026-11-09 完成 AsyncLogging 路径及输出类型迁移：路径参数和成员使用 filesystem::path，后台使用 RollFileFlush，FileFlush 的双参数构造收为 protected。测试及示例直接传入 path，异步测试按 UTF-8 文件名查找日志；示例和 README 移除预建目录步骤。本轮新增 2 项测试，覆盖中文、空格、emoji 目录及基础文件名、缺失父目录自动创建、轮转与重启保留旧内容，以及可执行文件目录下的相对 Unicode 路径和空字节。Windows 全量 208 项测试中 207 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败，库、测试及异步示例构建通过。当时通用 AsyncWorker 和后台失败处理仍待实施；本轮进度见下文第一步。
 
 本轮继续保留 FlexibleBuffer 与 FixedBuffer，将两类、实现及测试从 core 移到 utils。公共接口统一为 storageData/capacity、readableBegin/readableBytes、writableBegin/writableBytes、append、clear、toString；FlexibleBuffer 的 retrieve 系列改名为 consume 系列，retrieveAll 对应 consumeAll，内部复用 clear 并保留独立接口，FixedBuffer 保留 bzero 进行物理清零。FixedBuffer 超限追加抛出 length_error，正长度空指针抛出 invalid_argument，失败保留原内容。FileUtil 通过 FixedBuffer<64 * 1024> 的 storageData/capacity 借出固定存储给 setvbuf，文件流状态仍由 C 运行库管理，fclose 完成前不修改或释放存储。Windows 全量 216 项测试中 215 项通过、1 项跳过，无失败；覆盖共同接口约定、部分消费后地址区别、固定容量超限及小块文件写入跨 64 KiB 边界和关闭刷尾。头文件路径、成员接口和 FileUtil 对象布局发生变化，使用方需迁移并重新编译。
 
@@ -109,13 +111,13 @@ LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 Fi
 | --- | --- |
 | 现有 Logger / LogStream / FlexibleBuffer | 构造单条记录，完成后提交；保留格式、空字节和超长支持 |
 | AsyncLogger | 长期持有工作器与输出目标，接收完整记录 |
-| AsyncWorker | 从 AsyncLogging 提取，负责字节复制、缓冲队列、后台线程、周期处理、停止排空及失败记录；通过回调交付批次 |
-| 过渡期 AsyncLogging | 保留轮转文件的便捷入口，管理路径、轮转大小和当前输出对象，启停及追加转发给同一个 Worker |
+| AsyncWorker | 从 AsyncLogging 提取，负责字节复制、缓冲队列、后台线程、周期处理和正常停止排空；通过回调交付批次，异常策略留 TODO |
+| 现有 AsyncLogging | 本轮保留原文件后端及其调用链，尚未接入 Worker；后续统一到确认后的日志器设计，不作为 AsyncLogger 的接口模板 |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
 | StdoutFlush / FileFlush / RollFileFlush | 分别输出到终端、普通文件、轮转文件；文件类共用写入与刷新，轮转行为由 LogFile 决定 |
 | 简单管理器 | 保存默认和命名 AsyncLogger，统一关闭 |
 
-以下是目标数据流；批次回调由外层提供，输出对象由 AsyncLogger 或过渡期 AsyncLogging 管理。
+以下是后续目标数据流，尚未接通；批次回调由长期日志器提供，输出对象由该日志器管理。临时记录对象的最终类名待确认。
 
 ```text
 DLOG_INFO()
@@ -130,24 +132,13 @@ DLOG_INFO()
 
 ## 5. 分三步实施
 
-### 第一步：输出目标与工作器解耦
+### 第一步：独立 AsyncWorker（架构版本，正常路径已实现）
 
-- 已定义 LogFlush 的 `writeAndFlush(data, len)` 接口，一次完成写入与刷新，实现终端和文件输出。FileFlush / RollFileFlush 区分普通与轮转用途，共用写入与刷新，轮转仍委托 LogFile。AsyncLogging 的 RollFileFlush 接入与 path 适配已完成，下一步提取通用工作器。后台按批调用，避免每条日志都单独刷新。
-- 从 AsyncLogging 提取工作器，把写死的 RollFileFlush 改为调用批次输出回调，由外层将字节交给 LogFlush。Worker 不直接持有 LogFlush，只保留一套消费循环；原 AsyncLogging 调用在迁移期间继续通过该循环工作，不另写一个后端。
-- 保留持锁整条追加、跨块顺序、锁外写出、周期刷新、重复启停和停止排空。
-- 后台捕获失败、保存错误状态并直接向 stderr 报告，避免异常逃出线程或递归记录。FileUtil 已有的报错返回路径也要检查，单加 catch 不够。
+本轮先完成 `src/core/asyncworker.h/.cpp` 和直接测试，不实施 AsyncLogger。原 AsyncLogging、测试和异步示例保留原调用链。Worker 复用原后端的固定块组织和消费流程，但不保存文件路径、轮转大小或 LogFlush，输出完全由批次回调决定。旧 AsyncLogging 尚未接入 Worker，待日志器与现有 Logger 的职责确认后再统一替换旧后端，不将旧文件后端改名为 AsyncLogger。
 
-验收：后台可输出到终端或文件；长记录、空字节、跨块、重启与排空测试通过；失败可识别，停止不会因自身状态或条件变量处理而遗漏线程回收或陷入等待。底层 I/O 永久阻塞时能否限时退出不在本步保证范围内。
+**与 Kama 的对应关系。** [Kama Worker][ref-worker] 接收字节、管理缓冲和线程，再把批次交给回调；[Kama AsyncLogger][ref-logger] 持有输出目标并提供日志业务入口。dlog Worker 采用同一职责边界，保留现有 LargeFixedBuffer 块队列、整条记录持锁追加、跨块顺序、锁外输出和备用块复用，不移植 SAFE / UNSAFE 模式或双 vector 缓冲。Kama Worker 在构造时启动；本轮保留已审阅的显式 start/stop，后续由长期日志器内部管理，业务层不再重复暴露线程启停。参考源码仅作静态阅读，未运行 Kama 验证。
 
-涉及：`src/core/asynclogging.*`、新增 `src/core/asyncworker.h/.cpp`、现有 `logflush.*` 接入、必要的 `logfile.*` / `fileutil.*` 调整及对应测试、示例和公共头文件验证。
-
-#### Worker 迁移方案（待实施）
-
-**参考范围与选择。** 本方案参考 [Kama Worker][ref-worker]、[Kama Buffer][ref-buffer] 和 [Kama Logger][ref-logger] 的职责划分。Kama Worker 管理缓冲和线程，调用外部回调交付批次；Logger 持有输出目标并在 RealFlush 中实际输出。dlog 采用相同分工，但回调只暴露显式长度的字节范围，不暴露可修改的缓冲区对象。以下均为静态阅读后的迁移设计，未运行 Kama 验证。
-
-保留现有 LargeFixedBuffer 块队列、整条记录持锁追加、跨块顺序、锁外输出及备用块复用；本步不改成 Kama 的双 vector 交换，也不增加 SAFE / UNSAFE 模式。FlexibleBuffer 继续用于前端记录拼接。现有整块入队通知、未满数据周期处理的策略先保持；以后调整终端低流量延迟时，需同时检查通知时机和等待谓词，不能仅增加 notify_one。
-
-**接口草案。** 以下接口尚未实现，错误查询接口的具体命名可在实施前调整：
+**已实现接口。**
 
 ```cpp
 class AsyncWorker
@@ -162,72 +153,31 @@ public:
     void append(const char *data, size_t len);
     void start();
     void stop();
-    std::exception_ptr error() const;
 };
 ```
 
-| 接口 | 语义约定 |
+| 接口 | 当前语义 |
 | --- | --- |
-| 构造 | 保存有效的输出回调、准备缓冲，不在构造时启动线程；空回调在初始化处拒绝 |
-| append | 将输入字节复制到 Worker 自有缓冲，返回不代表输出完成；保留启动前追加能力，不保存调用方的临时数据指针 |
-| start | 启动后台消费者；运行中重复调用不创建第二个线程，正常 stop 后允许重启；线程创建失败回滚运行状态 |
-| stop | 正常情况下处理完已接收数据并等待线程退出；重复调用安全；输出失败时仍回收线程，但不能把失败当成成功排空 |
-| error | 以同步方式返回后台保存的失败信息；失败不自动清除或重试，恢复策略另行设计 |
-| 析构 | 停止并回收线程，后台输出异常不得逃出析构；不得依赖 Thread 的 detach 兜底 |
+| 构造 | 拒绝空回调，准备生产者缓冲，不启动线程；周期间隔单位为秒，0 在等待时按 1 秒处理 |
+| append | 复制字节，可在首次启动前或正常停止后追加；空指针或零长度沿用旧后端的空操作约定；长输入按块有序追加，返回不代表输出完成 |
+| start | 由调用方串行控制；运行中重复调用无效，正常停止后可重启；线程启动异常时回滚运行状态并回收可能已启动的线程 |
+| stop | 未启动时不输出已缓存数据；已启动时正常排空并 join，重复调用安全；调用前应结束生产者，之后追加的数据留待下一轮启动 |
+| 析构 | 正常情况下停止并回收已启动线程，不依赖 Thread 析构中的 detach；后台异常处理尚未设计 |
 
-OutputFunc 在后台线程、释放队列锁后执行。数据指针仅在本次回调期间有效，回调应在返回前完成批次处理；若要交给其他线程，接收方必须自行复制。保留每个非空缓冲块作为一个输出批次，由输出类完成 writeAndFlush，不另加每条记录的同步刷新。Worker 的 start/stop 供内部控制，后续由 AsyncLogger 管理自动启动和关闭。
+OutputFunc 在后台释放队列锁后执行，数据仅在本次回调期间有效；异步转交其他线程必须自行复制。每个非空块为一个批次；输出目标和回调捕获对象必须活到 Worker stop/join 完成之后。不得从回调中启停或销毁 Worker，避免线程 join 自身。控制操作串行执行，多个生产者可并发 append。
 
-**成员与职责迁移。**
+**当前状态与待设计事项。**
 
-| 当前 AsyncLogging 的内容 | 目标位置 |
-| --- | --- |
-| m_basePath、m_rollSize | 留在过渡期 AsyncLogging 的文件输出封装层 |
-| 创建及释放 RollFileFlush | 外层负责，移出 Worker 消费循环 |
-| m_thread、运行及停止状态、m_mtx、m_cond | AsyncWorker |
-| m_producerBuffer、m_pendingBuffers、周期等待间隔 | AsyncWorker |
-| append 的跨块复制、队列交换、备用块复用、停止排空 | AsyncWorker，保留一套实现 |
-| 对每个非空块调用 output.writeAndFlush | 改为调用 OutputFunc，由外层转交当前 LogFlush |
+- 成员包括输出回调、周期间隔、运行标志、Thread、互斥锁、条件变量、生产者缓冲和待处理块队列。后台本轮消费的块及备用块留在线程局部变量中。
+- 完整块入队后通知，未满数据按周期处理。停止状态的更新与等待谓词使用同一把锁，避免遗漏唤醒；正常退出要求停止请求已到、待处理队列和生产者尾部均为空。
+- TODO：确定后台异常的报告、停止、后续追加及恢复策略。目前不提供错误查询，不保存异常或失败标志，不实现跨线程重抛；当前回调须不抛出异常，异常若逃出线程入口会终止进程。对应异常策略测试待设计确认后再补。
+- 前台轮换缓冲时先准备替换块，后台缺少备用块时也先分配再移交，避免分配失败后丢失生产者缓冲指针。
+- TODO：FileUtil 的 ferror 分支仍可能打印并返回，文件底层失败反馈留待后续处理。本轮不修改 FileUtil，不承诺底层 I/O 永久阻塞时的退出时限。
+- 不移植 Kama 的容量等待：超出固定容量的消息可能一直等待，停止条件也需单独处理；不采用其单次扩容策略。停止及排空采用 dlog 当前规则。
 
-Worker 不保存路径、轮转大小、日志等级、源文件位置或日志器名称。AsyncLogger 或过渡期 AsyncLogging 持有 Worker 和输出对象。若回调引用外层对象，外层必须先 stop 并 join Worker，再销毁输出对象；不得捕获拥有自身的 shared_ptr 形成循环，也不得从后台输出回调调用 stop 导致线程 join 自身。配置和控制操作按现有约定串行执行。
+**验证范围。** Worker 的直接测试只覆盖正常路径：输入复制、空字节、跨多块、后台线程回调、重复启停、停止后追加并重启、周期处理、析构排空、并发长记录不交错、慢回调不阻塞生产者锁，以及终端、普通文件和轮转文件回调。线程创建失败的回滚沿用原启停逻辑，尚未注入实际创建失败；后台异常策略、Linux、持续压力和真实存储故障尚未验证。
 
-**过渡期文件输出的生命周期。** 保留现有测试规定的“未启动不创建文件”“启动前追加可在启动后处理”“正常停止后重启新建轮转文件”：
-
-```text
-构造 AsyncLogging
-  保存路径和轮转大小，准备 Worker 和回调，不打开文件
-  ↓
-start()
-  首次启动或上一轮已停止时，在调用线程创建新的 RollFileFlush
-  文件准备成功后启动 Worker；运行中的重复 start 不重建输出对象
-  ↓
-后台处理
-  Worker 交付字节批次 → 回调 → 当前 RollFileFlush
-  ↓
-stop()
-  请求 Worker 停止，正常情况下排空并 join，再释放当前输出对象
-  ↓
-再次 start()
-  创建新的 RollFileFlush，重新扫描轮转序号，再启动 Worker
-```
-
-输出对象的初始化失败直接在 start 报告，不留给后台线程。该顺序应保留现有 CanRestartAfterStop 测试中两轮运行产生两个轮转文件的行为。外层不再另建缓冲或消费线程，避免形成两套后端；后续 AsyncLogger 创建资源并启动 Worker，继续沿用同一消费实现。
-
-**失败处理与参考实现的限制。**
-
-- Kama 的 SAFE 等待条件要求单次消息完整放入剩余空间；超出固定容量的消息可能一直等待，且等待条件未处理停止请求。dlog 继续使用跨块追加，不照搬该容量等待。
-- Kama 的 UNSAFE 缓冲只扩容一次，不能保证扩容后能容纳任意长度追加；本步不迁移其扩容策略。
-- Kama Stop 无条件 join，消费循环以 while (!stop_) 为入口条件，存在重复停止和停止时跳过待写数据的问题。dlog 保留停止请求已到且待写队列、生产者尾部均为空才正常退出的规则，缓冲状态判断遵循同一加锁约定。
-- 后台捕获输出异常，保存失败信息并直接向 stderr 报告，停止继续接收无从处理的数据；不递归调用日志入口，不默默重试可能已部分输出的批次。
-- 当前 stop 中的 `if (!m_running.exchange(false)) return;` 不能原样用于失败路径：后台失败可能先把运行标志置为 false，但线程仍需 join。应分别处理“是否继续消费”与“线程是否已启动、尚待回收”，即使运行标志已为 false 也必须回收已启动线程。
-- FileUtil::append 当前 ferror 分支打印错误、清除标志后返回，必须补成上层可识别的失败反馈，并保留实际接受的字节统计。仅在 Worker 增加 catch 无法发现被底层吞掉的失败；异常不得越过后台线程入口。
-- 正常停止保证处理完已接收数据；发生输出失败时，只能报告失败并安全回收资源，不能承诺剩余数据完整落盘，也不承诺底层 I/O 阻塞的退出时限。
-
-**实施顺序与验收。**
-
-1. 提取 AsyncWorker 并完成调用迁移：复用现有缓冲和消费循环，接入字节批次回调；AsyncLogging 改为薄封装，同步测试及示例。验证内存捕获、终端、普通文件和轮转文件输出；保留空追加、空字节、长记录、跨块顺序、并发追加、周期处理、重复启停、启动前追加、重启和停止排空等现有行为。
-2. 补齐失败路径：处理输出异常、错误查询、失败后停止及析构回收、线程创建失败回滚，以及 FileUtil 部分写入和刷新失败。使用可控的抛异常输出目标验证错误可观察、线程可回收；检查停止后追加、失败后重启的接受规则并明确写入接口约定。两部分完成后才将本节第一步标为完成，再接 AsyncLogger。
-
-每部分的实现、调用方、测试及相关文档应作为同一功能范围验收。实施与提交均等待用户明确指令，本次仅记录方案，不代表开始迁移或获得 Git 提交授权。
+2026-11-09 清理后 Windows 全量 228 项测试中 227 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败；核心 130 项通过，其中 Worker 正常路径 11 项。构建通过。后台异常策略已留 TODO，不属于本次验证范围。
 
 ### 第二步：增加 AsyncLogger，打通默认使用
 
@@ -266,11 +216,11 @@ stop()
 | 顺序 | Kama 参考 | dlog 对照 | 重点 |
 | --- | --- | --- | --- |
 | 1 | [LogFlush.hpp][ref-flush] | [LogFile](../src/core/logfile.h)、[FileUtil](../src/utils/fileutil.h) | 输出接口、所有权、刷新和失败反馈 |
-| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncLogging](../src/core/asynclogging.cpp)、[FlexibleBuffer](../src/utils/flexiblebuffer.h)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
+| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncWorker](../src/core/asyncworker.cpp)、[现有 AsyncLogging](../src/core/asynclogging.cpp)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**本轮已完成 AsyncLogging 的 RollFileFlush 接入与 path 适配、缓冲区接口统一及 utils 模块迁移，并同步迁移测试、示例和 README；Worker 迁移方案已记录，尚未实施。后续按第五节方案提取基于批次回调的 AsyncWorker，保留现有固定块队列和文件启停行为，同时补齐后台失败反馈。** 不先改名 Logger。每步迁完调用方、测试和示例，验证后再进入下一步；仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
+**本轮完成独立 AsyncWorker 的正常缓冲、批次回调及启停排空；异常策略仅留 TODO，原 Logger / AsyncLogging 调用链保留。后续先确认长期日志器与现有记录对象的职责，再替换旧后端。** 未确认的机制只记录 TODO；仅在用户明确要求时提交 Git，按功能组织实现、调用方、测试和文档。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 

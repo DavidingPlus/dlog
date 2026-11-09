@@ -11,6 +11,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
 - 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
 - 异步写盘：`dlog::AsyncLogging` 将前台收到的日志先放入内存缓冲区，再由后台通过 `RollFileFlush` 按缓冲块写入并刷新文件。停止运行中的后台线程时，`stop()` 会等待它处理完剩余数据。
+- 独立工作器：`dlog::AsyncWorker` 只处理字节缓冲与后台批次回调，可连接内存、终端或文件输出。现有 `AsyncLogging` 调用链暂时保留；Logger 的职责协调方案见 [`docs/plan.md`](docs/plan.md)，尚未实现新的 AsyncLogger。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
 ## 基本用法
@@ -106,4 +107,26 @@ logging.stop();
 ```
 
 日志文件名形如 `logs/app.YYYYMMDD.0.log`。更多示例见 [`snippet/AsyncLoggingTest/main.cpp`](snippet/AsyncLoggingTest/main.cpp)。
+
+## 独立 Worker
+
+Worker 不格式化日志、不保存文件配置，输出方式由回调决定。构造不启动线程；可以先追加数据，再启动和停止：
+
+```cpp
+#include <dlog/core/asyncworker.h>
+#include <string>
+
+std::string received;
+dlog::AsyncWorker worker([&received](const char *data, size_t length) {
+    received.append(data, length);
+});
+worker.append("hello\n", 6);
+worker.start();
+worker.stop();
+// stop/join 完成后读取 received，内容为 "hello\n"。
+```
+
+回调在后台、队列锁外执行，数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop/join 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。默认按整块唤醒、未满块周期处理，间隔为秒，传入 0 时至少等待 1 秒。
+
+当前为架构设计版本，只实现正常消费路径。后台异常的报告、停止及后续追加策略留作 TODO，不保存异常或失败标志；当前回调须不抛出异常，异常逃出线程入口会终止进程。未启动时 stop 不输出缓存数据。
 
