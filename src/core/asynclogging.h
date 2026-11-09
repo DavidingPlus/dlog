@@ -66,7 +66,7 @@ private:
     Thread m_thread;
 
     // 保护前台生产者缓冲区和待处理队列，协调 append() 与后台批量取队列。
-    std::mutex m_mtx;
+    mutable std::mutex m_mtx;
 
     // 前台移交新批次后唤醒后台线程；后台线程也可配合定时等待。
     std::condition_variable m_cond;

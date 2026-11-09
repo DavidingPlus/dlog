@@ -54,7 +54,6 @@ public:
 
 private:
 
-
     struct RollingState
     {
         // 将 time_t 转换为本地日期字符串，格式为 YYYYMMDD，例如：20260922。
@@ -88,7 +87,7 @@ private:
 
 
     // 两种模式共用。保护当前文件及可选轮转状态 RollingState，串行执行追加、flush 和轮转。
-    std::mutex m_mtx;
+    mutable std::mutex m_mtx;
 
     // 两种模式共用。当前接收日志的文件，只有轮转时才替换为新的 FileUtil。
     std::unique_ptr<FileUtil> m_file;
