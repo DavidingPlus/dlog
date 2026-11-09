@@ -210,8 +210,8 @@ TEST_F(AsyncLoggingTest, PreservesEmbeddedNullBytes)
 // 恰好填满一个缓冲区时不丢字节；下一次追加超过文件轮转阈值后写入新文件。
 TEST_F(AsyncLoggingTest, HandlesExactBufferBoundaryAndRollsOnNextAppend)
 {
-    const std::string fullBuffer(kLargeBufferSize, 'F');
-    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeBufferSize), 60);
+    const std::string fullBuffer(kLargeFixedBufferSize, 'F');
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeFixedBufferSize), 60);
 
     logging.start();
     logging.append(fullBuffer.data(), fullBuffer.size());
@@ -229,8 +229,8 @@ TEST_F(AsyncLoggingTest, HandlesExactBufferBoundaryAndRollsOnNextAppend)
 // 一次 append 大于两块缓冲区时会分段排队，停止时仍需写完所有整块和最后的尾部。
 TEST_F(AsyncLoggingTest, WritesPayloadLargerThanMultipleBuffersWithoutLoss)
 {
-    const std::string payload(2 * kLargeBufferSize + 137, 'L');
-    AsyncLogging logging(m_basePath, static_cast<int64_t>(3 * kLargeBufferSize), 60);
+    const std::string payload(2 * kLargeFixedBufferSize + 137, 'L');
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(3 * kLargeFixedBufferSize), 60);
 
     logging.start();
     logging.append(payload.data(), payload.size());
@@ -243,9 +243,9 @@ TEST_F(AsyncLoggingTest, CreatesMissingUnicodeDirectoriesAndPreservesPathsAcross
 {
     m_basePath = m_directory / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680") / "nested" / std::filesystem::u8path(u8"\u5e94\u7528 \U0001f984");
     ASSERT_FALSE(std::filesystem::exists(m_basePath.parent_path()));
-    std::string payload(kLargeBufferSize, 'U');
+    std::string payload(kLargeFixedBufferSize, 'U');
     payload[1] = '\0';
-    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeBufferSize), 60);
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(kLargeFixedBufferSize), 60);
 
     logging.start();
     logging.append(payload.data(), payload.size());
@@ -390,9 +390,9 @@ TEST_F(AsyncLoggingTest, ConcurrentProducersPreserveEveryWholeRecord)
 // 从日志宏走到文件，覆盖前端增长和后端跨 4,000,000 字节缓冲块的交接。
 TEST_F(AsyncLoggingTest, WritesCompleteLongLoggerRecordAcrossMultipleBuffers)
 {
-    std::string payload(2 * kLargeBufferSize + 137, 'A');
-    payload[kLargeBufferSize] = '\0';
-    AsyncLogging logging(m_basePath, static_cast<int64_t>(4 * kLargeBufferSize), 60);
+    std::string payload(2 * kLargeFixedBufferSize + 137, 'A');
+    payload[kLargeFixedBufferSize] = '\0';
+    AsyncLogging logging(m_basePath, static_cast<int64_t>(4 * kLargeFixedBufferSize), 60);
     logging.start();
     std::string submitted;
     size_t calls = 0;

@@ -37,9 +37,9 @@ namespace
 
     void testRollover()
     {
-        // 每块大小等于一个 dlog::LargeBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
-        std::string firstBuffer(dlog::kLargeBufferSize, 'A');
-        std::string secondBuffer(dlog::kLargeBufferSize, 'B');
+        // 每块大小等于一个 dlog::LargeFixedBuffer。当前 rollSize 为 1 MiB：空文件允许写入首块 4 MiB，第二块追加时会滚动到新文件。
+        std::string firstBuffer(dlog::kLargeFixedBufferSize, 'A');
+        std::string secondBuffer(dlog::kLargeFixedBufferSize, 'B');
 
         g_asyncLog->append(firstBuffer.data(), firstBuffer.size());
         g_asyncLog->append(secondBuffer.data(), secondBuffer.size());

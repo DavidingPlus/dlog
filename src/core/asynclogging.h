@@ -22,7 +22,7 @@ class DLOG_API_EXPORTED AsyncLogging
 
 public:
 
-    AsyncLogging(const std::filesystem::path &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeBuffer>()) { m_pendingBuffers.reserve(16); }
+    AsyncLogging(const std::filesystem::path &basePath, int64_t rollSize, unsigned int flushInterval = 3) : m_basePath(basePath), m_rollSize(rollSize), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncLogging::threadFunc, this), "Logging"), m_producerBuffer(std::make_unique<LargeFixedBuffer>()) { m_pendingBuffers.reserve(16); }
 
     ~AsyncLogging() { stop(); }
 
@@ -40,7 +40,7 @@ public:
 private:
 
     // 缓冲区的独占所有权指针；队列交换和缓冲区轮换时移动指针即可。
-    using BufferPtr = std::unique_ptr<LargeBuffer>;
+    using BufferPtr = std::unique_ptr<LargeFixedBuffer>;
 
     // 待写缓冲区队列的动态数组类型。
     using BufferVector = std::vector<BufferPtr>;

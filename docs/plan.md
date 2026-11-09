@@ -16,7 +16,7 @@
 - [x] LogFlushFactory 创建输出对象，覆盖参数转发、共享生命周期和构造异常传播。
 - [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
 - [x] FlexibleBuffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
-- [x] 可增长缓冲区命名为 FlexibleBuffer，同步文件名、调用方及文档。
+- [x] 可增长缓冲区命名为 FlexibleBuffer；固定容量常量及类型别名命名为 kSmallFixedBufferSize / kLargeFixedBufferSize、SmallFixedBuffer / LargeFixedBuffer，同步文件名、调用方及文档。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
@@ -49,13 +49,13 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 | 默认输出 | 同步 stdout | 默认日志器异步输出终端 | 迁为默认异步终端，属于可见的行为变化 |
 | 输出目标 | 回调连接文件等后端 | LogFlush 接口及输出目标列表 | 先单目标，再支持列表 |
 | 日志器管理 | 进程共享回调 | LoggerManager 保存默认和命名日志器 | 使用简单管理器 |
-| 缓冲 | 单条记录用动态 FlexibleBuffer，后台用 LargeBuffer 块队列 | 两个 vector 缓冲区交换；SAFE 等待、UNSAFE 扩容 | 保留 dlog 已验证的缓冲组织，不直接替换 |
+| 缓冲 | 单条记录用动态 FlexibleBuffer，后台用 LargeFixedBuffer 块队列 | 两个 vector 缓冲区交换；SAFE 等待、UNSAFE 扩容 | 保留 dlog 已验证的缓冲组织，不直接替换 |
 | 唤醒 | 整块入队通知，未满数据周期处理，默认 3 秒 | 每次 Push 通知消费者 | 核心迁移先保留；终端低流量延迟需观察再调整 |
 | 文件与轮转 | LogFile 统一管理普通文件与按日期、大小轮转的文件；FileUtil 补写部分写入 | FileFlush / RollFileFlush，按批次检查大小 | FileFlush / RollFileFlush 区分用途，底层仍由 LogFile 管理两种模式 |
 | FATAL | 输出、刷新回调、abort；异步回调未自动接通 | 等待备份后提交异步输出，不主动终止进程 | 保留 dlog 的终止语义，退出前排空目标 |
 | 配置及平台 | 构造参数；Windows / Linux 适配 | JSON、Builder、全局指针；偏向 POSIX | 本轮不迁配置、Builder、网络备份或线程池 |
 
-原先 4000 字节 SmallBuffer 导致正文整段丢失的问题已经修复；后端轮转只能处理已收到的数据，无法恢复前端曾经丢弃的字节。不要继续把旧问题列为未完成项。
+原先 4000 字节 SmallFixedBuffer 导致正文整段丢失的问题已经修复；后端轮转只能处理已收到的数据，无法恢复前端曾经丢弃的字节。不要继续把旧问题列为未完成项。
 
 ### 参考实现值得借鉴，但不能原样复制的部分
 
@@ -120,7 +120,7 @@ DLOG_INFO()
   → StdoutFlush、FileFlush 或 RollFileFlush
 ```
 
-每个 AsyncLogger 一个工作器，先不共享线程池。现有 FlexibleBuffer、LargeBuffer、跨块追加和文件轮转继续复用；FixedBuffer 不承担日志截断、分片策略或警告输出。
+每个 AsyncLogger 一个工作器，先不共享线程池。现有 FlexibleBuffer、LargeFixedBuffer、跨块追加和文件轮转继续复用；FixedBuffer 不承担日志截断、分片策略或警告输出。
 
 ## 5. 分三步实施
 

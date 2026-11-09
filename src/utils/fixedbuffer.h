@@ -12,10 +12,10 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 // 日志系统预设的小缓冲区和大缓冲区容量。
-// 这两个值是编译期常量，调用方包含头文件后即可直接参与数组长度和模板参数计算，例如 FixedBuffer<kSmallBufferSize> 等价于 FixedBuffer<4000>，不需要在运行时从 DLL 中读取一个变量。因此这里不使用 DLOG_API_EXPORTED 导出变量符号。
+// 这两个值是编译期常量，调用方包含头文件后即可直接参与数组长度和模板参数计算，例如 FixedBuffer<kSmallFixedBufferSize> 等价于 FixedBuffer<4000>，不需要在运行时从 DLL 中读取一个变量。因此这里不使用 DLOG_API_EXPORTED 导出变量符号。
 // inline 允许该定义出现在多个源文件包含的头文件中，并按照 C++17 的 inline 变量规则处理重复定义；constexpr 则保证它可以作为常量表达式使用。修改容量会影响模板类型和对象布局，发布新版本时需要让使用方重新编译。
-inline constexpr size_t kSmallBufferSize = 4000;
-inline constexpr size_t kLargeBufferSize = 1000 * kSmallBufferSize;
+inline constexpr size_t kSmallFixedBufferSize = 4000;
+inline constexpr size_t kLargeFixedBufferSize = 1000 * kSmallFixedBufferSize;
 
 
 // 缓冲区有两种常见设计：
@@ -113,16 +113,16 @@ void FixedBuffer<bufferSize>::updateWriteState(size_t len)
 }
 
 
-// SmallBuffer 是容量为 4,000 字节的固定缓冲区；LogStream 已改用可增长的 FlexibleBuffer。
-// LargeBuffer 用于 AsyncLogging 的生产者缓冲区和待写缓冲块，容量为 4,000,000 字节，即 SmallBuffer 的 1,000 倍。
+// SmallFixedBuffer 是容量为 4,000 字节的固定缓冲区；LogStream 已改用可增长的 FlexibleBuffer。
+// LargeFixedBuffer 用于 AsyncLogging 的生产者缓冲区和待写缓冲块，容量为 4,000,000 字节，即 SmallFixedBuffer 的 1,000 倍。
 // using 为对应的 FixedBuffer 特化提供语义名称的别名。它既不创建新的派生类型，也不负责生成模板代码。
-using SmallBuffer = FixedBuffer<kSmallBufferSize>;
-using LargeBuffer = FixedBuffer<kLargeBufferSize>;
+using SmallFixedBuffer = FixedBuffer<kSmallFixedBufferSize>;
+using LargeFixedBuffer = FixedBuffer<kLargeFixedBufferSize>;
 
 
 // 模板显式实例化声明：这两个常用特化的非内联模板成员由 .cpp 提供，其他翻译单元无需重复隐式实例化。因为模板定义仍保留在本头文件中，因此调用方仍可使用 FixedBuffer<8> 等其他容量；未列出的特化照常按需实例化。
-extern template class FixedBuffer<kSmallBufferSize>;
-extern template class FixedBuffer<kLargeBufferSize>;
+extern template class FixedBuffer<kSmallFixedBufferSize>;
+extern template class FixedBuffer<kLargeFixedBufferSize>;
 
 
 DLOG_NAMESPACE_END

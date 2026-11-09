@@ -29,7 +29,7 @@ void AsyncLogging::append(const char *data, size_t length)
             // chunkLength 取“待复制字节数”和“剩余空间”中较小的那个，保证这次不会写过缓冲区边界。
             size_t chunkLength = std::min(remaining, m_producerBuffer->writableBytes());
 
-            // 单条日志可能大于一个 LargeBuffer；分段按顺序入队，保证每次追加不超过 FixedBuffer 的剩余容量。
+            // 单条日志可能大于一个 LargeFixedBuffer；分段按顺序入队，保证每次追加不超过 FixedBuffer 的剩余容量。
             m_producerBuffer->append(currentData, chunkLength);
             currentData += chunkLength;
             remaining -= chunkLength;
@@ -41,7 +41,7 @@ void AsyncLogging::append(const char *data, size_t length)
                 m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
 
                 // 写满后分配新块，继续处理剩余字节（本版本暂不预留备用缓冲区）。
-                m_producerBuffer = std::make_unique<LargeBuffer>();
+                m_producerBuffer = std::make_unique<LargeFixedBuffer>();
 
                 queuedBuffer = true;
             }
@@ -87,7 +87,7 @@ void AsyncLogging::threadFunc()
     RollFileFlush output(m_basePath, m_rollSize);
 
     // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
-    BufferPtr replaceBuffer = std::make_unique<LargeBuffer>();
+    BufferPtr replaceBuffer = std::make_unique<LargeFixedBuffer>();
 
     // 后台在每批次中要写盘的缓冲区，实际过程中和前台 m_pendingBuffers 进行交换获得数据。
     BufferVector buffersToWrite;
@@ -110,7 +110,7 @@ void AsyncLogging::threadFunc()
 
             // 把生产者缓冲区交给后台，并尝试用 replaceBuffer 立即给前台换一块新的。
             m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
-            m_producerBuffer = replaceBuffer ? std::move(replaceBuffer) : std::make_unique<LargeBuffer>();
+            m_producerBuffer = replaceBuffer ? std::move(replaceBuffer) : std::make_unique<LargeFixedBuffer>();
 
             // 把待处理队列交给后台本地批次。解锁后前台可以继续填充新的 m_pendingBuffers。
             buffersToWrite.swap(m_pendingBuffers);

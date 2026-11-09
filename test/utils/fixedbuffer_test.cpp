@@ -23,46 +23,46 @@ namespace
 
 TEST(FixedBufferSizeTest, DefinesExpectedSmallAndLargeCapacities)
 {
-    EXPECT_EQ(kSmallBufferSize, 4000u);
-    EXPECT_EQ(kLargeBufferSize, 4000000u);
-    EXPECT_EQ(kLargeBufferSize, kSmallBufferSize * 1000u);
+    EXPECT_EQ(kSmallFixedBufferSize, 4000u);
+    EXPECT_EQ(kLargeFixedBufferSize, 4000000u);
+    EXPECT_EQ(kLargeFixedBufferSize, kSmallFixedBufferSize * 1000u);
 }
 
 
 TEST(FixedBufferSizeTest, NamedAliasesUseExpectedCapacities)
 {
-    SmallBuffer smallBuffer;
-    auto largeBuffer = std::make_unique<LargeBuffer>();
+    SmallFixedBuffer smallBuffer;
+    auto largeBuffer = std::make_unique<LargeFixedBuffer>();
 
-    EXPECT_EQ(smallBuffer.writableBytes(), kSmallBufferSize);
-    EXPECT_EQ(largeBuffer->writableBytes(), kLargeBufferSize);
+    EXPECT_EQ(smallBuffer.writableBytes(), kSmallFixedBufferSize);
+    EXPECT_EQ(largeBuffer->writableBytes(), kLargeFixedBufferSize);
 }
 
 
-TEST(FixedBufferSizeTest, SmallBufferUsesSmallCapacity)
+TEST(FixedBufferSizeTest, SmallFixedBufferUsesSmallCapacity)
 {
-    SmallBuffer buffer;
+    SmallFixedBuffer buffer;
 
     buffer.append("small", 5);
 
     EXPECT_EQ(buffer.readableBytes(), 5u);
-    EXPECT_EQ(buffer.writableBytes(), kSmallBufferSize - 5u);
+    EXPECT_EQ(buffer.writableBytes(), kSmallFixedBufferSize - 5u);
     EXPECT_EQ(buffer.toString(), "small");
 }
 
 
-TEST(FixedBufferSizeTest, LargeBufferUsesLargeCapacityAndCanBeReused)
+TEST(FixedBufferSizeTest, LargeFixedBufferUsesLargeCapacityAndCanBeReused)
 {
-    auto buffer = std::make_unique<LargeBuffer>();
+    auto buffer = std::make_unique<LargeFixedBuffer>();
 
     buffer->append("large", 5);
     EXPECT_EQ(buffer->readableBytes(), 5u);
-    EXPECT_EQ(buffer->writableBytes(), kLargeBufferSize - 5u);
+    EXPECT_EQ(buffer->writableBytes(), kLargeFixedBufferSize - 5u);
     EXPECT_EQ(buffer->toString(), "large");
 
     buffer->clear();
     EXPECT_EQ(buffer->readableBytes(), 0u);
-    EXPECT_EQ(buffer->writableBytes(), kLargeBufferSize);
+    EXPECT_EQ(buffer->writableBytes(), kLargeFixedBufferSize);
 }
 
 
