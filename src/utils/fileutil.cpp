@@ -46,9 +46,8 @@ FileUtil::FileUtil(const std::filesystem::path &filePath)
 
     if (!m_file) throw makeError("constructor");
 
-    // 参考实现使用 ::setbuffer(m_file, m_buffer, sizeof(m_buffer)) 设置全缓冲。::setbuffer 是 Unix/BSD 扩展；当 m_buffer 非空时，它等价于：std::setvbuf(m_file, m_buffer, _IOFBF, sizeof(m_buffer));
-    // 这里使用标准 C 接口 setvbuf，以兼容 Windows 和 Linux。_IOFBF 表示全缓冲，只有当缓冲区写满，或显式调用 flush()/析构关闭文件时，数据才会被刷新。setvbuf 必须在文件发生任何读写之前调用；m_buffer 是成员变量，生命周期覆盖文件使用期。
-    if (std::setvbuf(m_file, m_buffer, _IOFBF, sizeof(m_buffer)))
+    // setvbuf 在文件读写前接收整块固定存储；运行库自行维护缓冲状态，借出后不调用 append/clear/bzero，直到 fclose 完成。
+    if (std::setvbuf(m_file, m_buffer.storageData(), _IOFBF, m_buffer.capacity()))
     {
         std::fclose(m_file);
         m_file = nullptr;

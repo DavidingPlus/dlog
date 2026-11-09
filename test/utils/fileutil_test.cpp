@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -217,6 +218,27 @@ TEST_F(FileUtilTest, HandlesDataLargerThanInternalBuffer)
     ASSERT_EQ(std::filesystem::file_size(m_filePath), data.size());
     EXPECT_EQ(readBinaryFile(m_filePath), data);
 }
+
+TEST_F(FileUtilTest, SmallWritesCrossFixedStorageBoundaryAndCloseFlushesTail)
+{
+    std::string payload(2 * 64 * 1024 + 137, '\0');
+    for (size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>(i % 251);
+    {
+        FileUtil file(m_filePath);
+        for (size_t offset = 0; offset < payload.size();)
+        {
+            const auto length = std::min(size_t{257}, payload.size() - offset);
+            file.append(payload.data() + offset, length);
+            offset += length;
+        }
+        EXPECT_EQ(file.writtenBytes(), static_cast<int64_t>(payload.size()));
+        file.flush();
+        EXPECT_EQ(readBinaryFile(m_filePath), payload);
+        file.append("tail", 4);
+    }
+    EXPECT_EQ(readBinaryFile(m_filePath), payload + "tail");
+}
+
 
 TEST_F(FileUtilTest, EmptyAppendDoesNotChangeFile)
 {

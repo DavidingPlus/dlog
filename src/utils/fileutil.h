@@ -3,6 +3,8 @@
 
 #include "globalmacros.h"
 
+#include "fixedbuffer.h"
+
 #include <filesystem>
 
 
@@ -50,8 +52,8 @@ private:
     // 文件指针，用于操作文件。
     FILE *m_file = nullptr;
 
-    // 文件操作的缓冲区，大小为 64 KB，用于提高写入效率。
-    char m_buffer[64 * 1024]{};
+    // 仅借出固定的 64 KiB 存储供 FILE* 使用，不通过 FixedBuffer 维护文件流的有效数据长度。
+    FixedBuffer<64 * 1024> m_buffer;
 
     // 记录已写入文件的总字节数，int64_t 类型用于大文件支持。
     int64_t m_writtenBytes = 0;
