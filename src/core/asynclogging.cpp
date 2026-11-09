@@ -71,14 +71,27 @@ void AsyncLogging::start()
 
 void AsyncLogging::stop()
 {
-    // m_running.exchange(false) 原子地把运行标志设为 false，并返回它原来的值。
-    // 1. 原来是 true：这是一次有效的停止请求，继续执行。
-    // 2. 原来已经是 false：直接返回，避免重复通知和 join()。
-    if (!m_running.exchange(false)) return;
+    // m_running 是原子变量，单独读写它不会发生数据竞争；这里加锁是为了协调条件变量的“检查条件 -> 进入等待”。
+    // notify_one() 不会保存通知：通知发生时若还没有线程等待，之后进入等待的线程不会收到这次通知。
+    // 例如 m_flushInterval == 60 秒，不持锁修改停止标志时可能出现以下时序：
+    // 1. 后台线程持有 m_mtx，检查到队列为空且 m_running == true，等待谓词返回 false。
+    // 2. 后台还没进入等待，控制线程就将 m_running 改为 false，并调用 notify_one()；此时通知可能无人接收。
+    // 3. 后台随后进入等待，可能直到 60 秒定时到期才重新检查停止标志，导致 stop() 中的 join() 额外等待。
+    // atomic 只保证标志读写安全，并不能把“检查谓词”和“进入等待”合成一个与控制线程协调的过程。
+    {
+        // 修改标志与后台检查谓词使用同一把锁，因此只会出现以下两种正常时序：
+        // 1. stop() 先拿到锁：设置 false 后解锁；后台之后检查谓词时直接看到停止请求，不再进入等待。
+        // 2. 后台先拿到锁：stop() 暂时阻塞；后台通过 wait_for 原子地释放锁并进入等待后，stop() 才能拿锁设置 false。
+        //    随后的 notify_one() 就能唤醒后台，消除“检查完了却还没开始等待”时遗漏停止通知的窗口。
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_running = false;
+    }
 
+    // 解锁后再通知，后台被唤醒后才能取得 m_mtx，继续交接尾部数据并判断退出。
     m_cond.notify_one();
 
-    // 等待后台线程取完剩余缓冲区并完成写入、刷新，然后回收后台线程。
+    // join 必须在锁外：后台还需要 m_mtx 来排空数据并退出，持锁等待它结束会造成死锁。
+    // Thread::join() 已处理未启动及重复调用，因此不需要用 m_running 提前返回。
     m_thread.join();
 }
 
@@ -100,6 +113,8 @@ void AsyncLogging::threadFunc()
 
             // m_flushInterval 为 0 会让 wait_for 立即返回并造成空转，保证至少等待 1 秒。
             // wait_for()：最多等 interval 这么久；如果待写队列有数据，或者线程已停止，就提前结束等待。
+            // 谓词在持有 lock 时检查；需要等待时，wait_for 原子地释放 m_mtx 并进入等待，醒来后重新持锁检查。
+            // stop() 必须用同一把 m_mtx 修改停止标志，具体的遗漏通知时序见 stop() 中的例子。
             m_cond.wait_for(lock, std::chrono::seconds(m_flushInterval > 0 ? m_flushInterval : 1), [this]
                             { return !m_pendingBuffers.empty() || !m_running; });
 
