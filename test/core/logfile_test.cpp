@@ -374,6 +374,28 @@ TEST_F(LogFileTest, ManualRollCreatesNextFileWithoutDataLoss)
     EXPECT_EQ(readFile(makeLogPath(m_basePath, date, "1")), "after roll");
 }
 
+TEST_F(LogFileTest, FailedManualRollKeepsCurrentFileAndIndex)
+{
+    const auto date = currentDateString();
+    const auto nextFile = makeLogPath(m_basePath, date, "1");
+    LogFile logFile(m_basePath, 1024);
+    logFile.append("before|", 7);
+
+    // 用目录占住下一个文件名，模拟新文件打开失败。
+    ASSERT_TRUE(std::filesystem::create_directory(nextFile));
+    EXPECT_THROW(logFile.rollFile(), std::runtime_error);
+    logFile.append("after", 5);
+    logFile.flush();
+    EXPECT_EQ(readFile(makeLogPath(m_basePath, date, "0")), "before|after");
+
+    ASSERT_TRUE(std::filesystem::remove(nextFile));
+    logFile.rollFile();
+    logFile.append("retry", 5);
+    logFile.flush();
+    EXPECT_EQ(readFile(nextFile), "retry");
+    EXPECT_EQ(findLogFiles(m_basePath).size(), 2u);
+}
+
 TEST_F(LogFileTest, UsesNextIndexAfterRestart)
 {
     const std::string date = currentDateString();

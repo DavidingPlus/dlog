@@ -59,16 +59,15 @@ namespace
 } // namespace
 
 
-LogFile::LogFile(const std::filesystem::path &basePath, int64_t rollsize)
-    : m_basePath((FileUtil::executableDirectory() / basePath).lexically_normal()), m_rollsize(rollsize), m_rollingEnabled(true)
+LogFile::LogFile(const std::filesystem::path &basePath, int64_t rollSize)
+    : m_rollingState(RollingState{(FileUtil::executableDirectory() / basePath).lexically_normal(), rollSize})
 {
-    if (basePath.empty() || !m_basePath.is_absolute()) throw std::invalid_argument("LogFile::constructor(): invalid base path");
+    if (basePath.empty() || !m_rollingState->m_basePath.is_absolute()) throw std::invalid_argument("LogFile::constructor(): invalid base path");
     // 在创建目录或扫描前拒绝内嵌空字符，避免文件接口截断路径。
     if (std::filesystem::path::string_type::npos != basePath.native().find(std::filesystem::path::value_type{})) throw std::invalid_argument("LogFile::constructor(): path must not contain null characters");
 
     rollFile();
 }
-
 
 void LogFile::append(const char *data, size_t len)
 {
@@ -77,15 +76,17 @@ void LogFile::append(const char *data, size_t len)
     std::lock_guard<std::mutex> lock(m_mtx);
 
     // 普通文件跳过日期、大小判断，只共用后面的文件追加。
-    if (m_rollingEnabled)
+    if (m_rollingState.has_value())
     {
-        std::string currentDate = GetDateString(Timestamp::Now().secondsSinceEpoch());
+        std::string currentDate = RollingState::GetDateString(Timestamp::Now().secondsSinceEpoch());
 
         // 处理策略见函数声明。
+
         // 处理日期。
-        bool dateChanged = currentDate != m_currentDate;
+        // std::optional<> 的 m_rollingState->m_currentDate 访问模式等价于 m_rollingState.value().m_currentDate。
+        bool dateChanged = currentDate != m_rollingState->m_currentDate;
         // 处理大小。
-        bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollsize;
+        bool sizeExceeded = m_file->writtenBytes() > 0 && static_cast<int64_t>(len) + m_file->writtenBytes() > m_rollingState->m_rollSize;
 
         // 大小和日期是两个独立的轮转条件，任一条件满足就只轮转一次。
         if (sizeExceeded || dateChanged) rollFileImpl(currentDate);
@@ -105,36 +106,36 @@ void LogFile::rollFile()
 {
     std::lock_guard<std::mutex> lock(m_mtx);
 
-    if (!m_rollingEnabled) throw std::logic_error("LogFile::rollFile(): rolling is disabled");
+    if (!m_rollingState.has_value()) throw std::logic_error("LogFile::rollFile(): rolling is disabled");
 
-    rollFileImpl(GetDateString(Timestamp::Now().secondsSinceEpoch()));
+    rollFileImpl(RollingState::GetDateString(Timestamp::Now().secondsSinceEpoch()));
 }
 
-std::string LogFile::GetDateString(time_t time)
+std::string LogFile::RollingState::GetDateString(time_t time)
 {
     // 同 Timestamp::toFormattedString() 函数。
     std::tm localTime{};
 
 #if defined(DLOG_OS_WIN32)
-    if (::localtime_s(&localTime, &time)) throw std::runtime_error("LogFile::GetDateString(): localtime_s failed");
+    if (::localtime_s(&localTime, &time)) throw std::runtime_error("LogFile::RollingState::GetDateString(): localtime_s failed");
 #elif defined(DLOG_OS_LINUX)
-    if (!::localtime_r(&time, &localTime)) throw std::runtime_error("LogFile::GetDateString(): localtime_r failed");
+    if (!::localtime_r(&time, &localTime)) throw std::runtime_error("LogFile::RollingState::GetDateString(): localtime_r failed");
 #else
-    throw std::runtime_error("LogFile::GetDateString(): Unsupported Operating System");
+    throw std::runtime_error("LogFile::RollingState::GetDateString(): Unsupported Operating System");
 #endif
 
 
     return (std::ostringstream() << std::put_time(&localTime, "%Y%m%d")).str();
 }
 
-std::filesystem::path LogFile::GetLogFileName(const std::filesystem::path &basePath, const std::string &date, int fileIndex)
+std::filesystem::path LogFile::RollingState::GetLogFileName(const std::filesystem::path &basePath, const std::string &date, int fileIndex)
 {
     auto filename = basePath;
     filename += '.' + date + '.' + std::to_string(fileIndex) + ".log";
     return filename;
 }
 
-int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std::string &date)
+int LogFile::RollingState::FindNextFileIndex(const std::filesystem::path &basePath, const std::string &date)
 {
     // 1. 把 basePath 拆成“扫描目录”和“文件名前缀”。
     // 例如 basePath 为 "logs/app"、date 为 "20260923" 时：directory == "logs"，prefix == "app.20260923."，suffix == ".log"，最终只匹配 "app.20260923.<数字>.log"。
@@ -153,7 +154,7 @@ int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std:
     // 使用带 error_code 的构造函数，把目录无法访问等错误转换成带路径上下文的异常。
     std::error_code error;
     std::filesystem::directory_iterator entries(directory, error);
-    if (error) throw std::filesystem::filesystem_error("LogFile::FindNextFileIndex", directory, error);
+    if (error) throw std::filesystem::filesystem_error("LogFile::RollingState::FindNextFileIndex", directory, error);
 
     // 3. 扫描所有目录项，维护“最大序号加一”。
     // 注：这里返回的不是最小空缺序号。例如已有 .0 和 .2 时返回 3，避免重启后复用旧序号。
@@ -165,7 +166,7 @@ int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std:
         if (!tryParseLogFileIndex(entry.path().filename().u8string(), prefix, suffix, index)) continue;
 
         // std::numeric_limits<int>::max() 是合法的现有序号，但无法再生成 index + 1，因此不能继续轮转。
-        if (std::numeric_limits<int>::max() == index) throw std::overflow_error("LogFile::FindNextFileIndex(): LogFile file index overflow");
+        if (std::numeric_limits<int>::max() == index) throw std::overflow_error("LogFile::RollingState::FindNextFileIndex(): LogFile file index overflow");
 
         // 维护最大序号加一的返回值。
         nextIndex = std::max(nextIndex, 1 + index);
@@ -178,31 +179,31 @@ int LogFile::FindNextFileIndex(const std::filesystem::path &basePath, const std:
 void LogFile::rollFileImpl(const std::string &date)
 {
     bool firstFile = !m_file;
-    bool dateChanged = date != m_currentDate;
+    bool dateChanged = date != m_rollingState->m_currentDate;
 
     int nextIndex = 0;
     // 首次创建或日期变化。
     if (firstFile || dateChanged)
     {
         // 扫描已有文件，选择当天最大已有序号之后的序号。
-        nextIndex = FindNextFileIndex(m_basePath, date);
+        nextIndex = RollingState::FindNextFileIndex(m_rollingState->m_basePath, date);
     }
     // 否则是大小超限。
     else
     {
-        if (std::numeric_limits<int>::max() == m_fileIndex) throw std::overflow_error("LogFile::rollFileImpl(): LogFile file index overflow");
+        if (std::numeric_limits<int>::max() == m_rollingState->m_fileIndex) throw std::overflow_error("LogFile::rollFileImpl(): LogFile file index overflow");
         // 使用下一个序号。
-        nextIndex = 1 + m_fileIndex;
+        nextIndex = 1 + m_rollingState->m_fileIndex;
     }
 
-    std::filesystem::path filename = GetLogFileName(m_basePath, date, nextIndex);
+    std::filesystem::path filename = RollingState::GetLogFileName(m_rollingState->m_basePath, date, nextIndex);
 
     // 先打开新文件，再替换旧的 FileUtil。新文件打开失败时，可以保留旧文件对象。
     auto newFile = std::make_unique<FileUtil>(filename);
     m_file = std::move(newFile);
 
-    m_currentDate = date;
-    m_fileIndex = nextIndex;
+    m_rollingState->m_currentDate = date;
+    m_rollingState->m_fileIndex = nextIndex;
 }
 
 
