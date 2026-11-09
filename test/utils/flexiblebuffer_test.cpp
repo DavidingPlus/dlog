@@ -6,26 +6,26 @@
 #include <string>
 #include <type_traits>
 
-#include "buffer.h"
+#include "flexiblebuffer.h"
 #include "fixedbuffer.h"
 
 
 using namespace dlog;
 
 
-TEST(BufferTest, DefaultConstructionProvidesExpectedWritableSpace)
+TEST(FlexibleBufferTest, DefaultConstructionProvidesExpectedWritableSpace)
 {
-    Buffer buffer;
+    FlexibleBuffer buffer;
 
-    EXPECT_EQ(Buffer::kInitialSize, 1024u);
+    EXPECT_EQ(FlexibleBuffer::kInitialSize, 1024u);
     EXPECT_EQ(buffer.readableBytes(), 0u);
-    EXPECT_EQ(buffer.writableBytes(), Buffer::kInitialSize);
+    EXPECT_EQ(buffer.writableBytes(), FlexibleBuffer::kInitialSize);
     EXPECT_EQ(buffer.readableBegin(), buffer.writableBegin());
 }
 
-TEST(BufferTest, StorageAndReadableRegionsStayDistinctAfterConsumption)
+TEST(FlexibleBufferTest, StorageAndReadableRegionsStayDistinctAfterConsumption)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const auto storage = buffer.storageData();
     buffer.append("abcdef", 6);
     buffer.consume(2);
@@ -45,9 +45,9 @@ TEST(BufferTest, StorageAndReadableRegionsStayDistinctAfterConsumption)
 }
 
 
-TEST(BufferTest, StartsAtStorageBeginningAndUsesAllInitialSpace)
+TEST(FlexibleBufferTest, StartsAtStorageBeginningAndUsesAllInitialSpace)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
 
     EXPECT_EQ(buffer.readableBytes(), 0u);
@@ -63,9 +63,9 @@ TEST(BufferTest, StartsAtStorageBeginningAndUsesAllInitialSpace)
     EXPECT_EQ(buffer.writableBytes(), 8u);
 }
 
-TEST(BufferTest, ReclaimsConsumedSpaceAtStorageBeginningWithoutGrowing)
+TEST(FlexibleBufferTest, ReclaimsConsumedSpaceAtStorageBeginningWithoutGrowing)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abcdef", 6);
     buffer.consume(4);
@@ -78,10 +78,10 @@ TEST(BufferTest, ReclaimsConsumedSpaceAtStorageBeginningWithoutGrowing)
     EXPECT_EQ(buffer.consumeAllAsString(), "efWXYZ");
 }
 
-TEST(BufferTest, ZeroInitialSizeSupportsEmptyOperationsAndGrowth)
+TEST(FlexibleBufferTest, ZeroInitialSizeSupportsEmptyOperationsAndGrowth)
 {
-    Buffer buffer(0);
-    const Buffer &view = buffer;
+    FlexibleBuffer buffer(0);
+    const FlexibleBuffer &view = buffer;
 
     EXPECT_EQ(buffer.readableBytes(), 0u);
     EXPECT_EQ(buffer.writableBytes(), 0u);
@@ -102,9 +102,9 @@ TEST(BufferTest, ZeroInitialSizeSupportsEmptyOperationsAndGrowth)
     EXPECT_EQ(buffer.consumeAllAsString(), payload);
 }
 
-TEST(BufferTest, ConsumeAsStringConsumesOnlyRequestedReadableBytes)
+TEST(FlexibleBufferTest, ConsumeAsStringConsumesOnlyRequestedReadableBytes)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("abcdef", 6);
     const char *start = buffer.readableBegin();
 
@@ -118,12 +118,12 @@ TEST(BufferTest, ConsumeAsStringConsumesOnlyRequestedReadableBytes)
     EXPECT_EQ(buffer.consumeAllAsString(), "cdef");
 }
 
-TEST(BufferTest, ConsumeAsStringAtOrBeyondReadableLengthConsumesAllAndResets)
+TEST(FlexibleBufferTest, ConsumeAsStringAtOrBeyondReadableLengthConsumesAllAndResets)
 {
     for (size_t length : {size_t{4}, size_t{5}, std::numeric_limits<size_t>::max()})
     {
         SCOPED_TRACE(length);
-        Buffer buffer(8);
+        FlexibleBuffer buffer(8);
         const char *start = buffer.readableBegin();
         buffer.append("xxabcd", 6);
         buffer.consume(2);
@@ -139,9 +139,9 @@ TEST(BufferTest, ConsumeAsStringAtOrBeyondReadableLengthConsumesAllAndResets)
     }
 }
 
-TEST(BufferTest, RejectsPositiveLengthNullSourceWithoutChangingState)
+TEST(FlexibleBufferTest, RejectsPositiveLengthNullSourceWithoutChangingState)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("xxdata", 6);
     buffer.consume(2);
     const char *start = buffer.readableBegin();
@@ -156,9 +156,9 @@ TEST(BufferTest, RejectsPositiveLengthNullSourceWithoutChangingState)
     EXPECT_EQ(buffer.consumeAllAsString(), "data");
 }
 
-TEST(BufferTest, RejectsOversizedGrowthAndAppendWithoutChangingState)
+TEST(FlexibleBufferTest, RejectsOversizedGrowthAndAppendWithoutChangingState)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("xxdata", 6);
     buffer.consume(2);
     const char *start = buffer.readableBegin();
@@ -178,9 +178,9 @@ TEST(BufferTest, RejectsOversizedGrowthAndAppendWithoutChangingState)
 }
 
 // 对照 FixedBuffer：检查显式长度、连续追加及读写位置。
-TEST(BufferTest, AppendsExplicitLengthWithoutRequiringNullTerminator)
+TEST(FlexibleBufferTest, AppendsExplicitLengthWithoutRequiringNullTerminator)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char payload[] = {'h', 'e', 'l', 'l', 'o'};
     const char *start = buffer.readableBegin();
 
@@ -193,9 +193,9 @@ TEST(BufferTest, AppendsExplicitLengthWithoutRequiringNullTerminator)
     EXPECT_EQ(buffer.consumeAllAsString(), "hello");
 }
 
-TEST(BufferTest, AppendsMultiplePayloadsContiguously)
+TEST(FlexibleBufferTest, AppendsMultiplePayloadsContiguously)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("ab", 2);
     buffer.append("cde", 3);
     buffer.append("f", 1);
@@ -205,13 +205,13 @@ TEST(BufferTest, AppendsMultiplePayloadsContiguously)
     EXPECT_EQ(buffer.consumeAllAsString(), "abcdef");
 }
 
-TEST(BufferTest, ReadAndWritePointersTrackDifferentPositions)
+TEST(FlexibleBufferTest, ReadAndWritePointersTrackDifferentPositions)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abcdef", 6);
     buffer.consume(2);
-    const Buffer &view = buffer;
+    const FlexibleBuffer &view = buffer;
 
     EXPECT_EQ(buffer.readableBegin(), start + 2);
     EXPECT_EQ(buffer.writableBegin(), start + 6);
@@ -220,9 +220,9 @@ TEST(BufferTest, ReadAndWritePointersTrackDifferentPositions)
     EXPECT_EQ(buffer.writableBytes(), 2u);
 }
 
-TEST(BufferTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
+TEST(FlexibleBufferTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
 {
-    Buffer buffer(2);
+    FlexibleBuffer buffer(2);
     const char payload[] = {'a', '\0', 'b', '\0', 'c'};
     buffer.append(payload, sizeof(payload));
 
@@ -232,9 +232,9 @@ TEST(BufferTest, PreservesExplicitLengthAndEmbeddedNullCharacters)
     EXPECT_EQ(buffer.consumeAllAsString(), std::string(payload + 3, 2));
 }
 
-TEST(BufferTest, ZeroLengthAppendPreservesExistingDataAndPointers)
+TEST(FlexibleBufferTest, ZeroLengthAppendPreservesExistingDataAndPointers)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("abcdef", 6);
     buffer.consume(2);
     const char *read = buffer.readableBegin();
@@ -250,10 +250,10 @@ TEST(BufferTest, ZeroLengthAppendPreservesExistingDataAndPointers)
     EXPECT_EQ(buffer.consumeAllAsString(), "cdef");
 }
 
-// Buffer 应增长并保留全部数据，不能沿用 FixedBuffer 的超限拒绝期望。
-TEST(BufferTest, GrowsForPayloadLargerThanRemainingSpaceWithoutLosingPrefix)
+// FlexibleBuffer 应增长并保留全部数据，不能沿用 FixedBuffer 的超限拒绝期望。
+TEST(FlexibleBufferTest, GrowsForPayloadLargerThanRemainingSpaceWithoutLosingPrefix)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("abc", 3);
     buffer.append("123456", 6);
 
@@ -261,9 +261,9 @@ TEST(BufferTest, GrowsForPayloadLargerThanRemainingSpaceWithoutLosingPrefix)
     EXPECT_EQ(buffer.consumeAllAsString(), "abc123456");
 }
 
-TEST(BufferTest, GrowsWhenAppendingToAFullBuffer)
+TEST(FlexibleBufferTest, GrowsWhenAppendingToAFullBuffer)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("123", 3);
     buffer.append("45678", 5);
     ASSERT_EQ(buffer.writableBytes(), 0u);
@@ -274,9 +274,9 @@ TEST(BufferTest, GrowsWhenAppendingToAFullBuffer)
     EXPECT_EQ(buffer.consumeAllAsString(), "12345678x");
 }
 
-TEST(BufferTest, ConsumeZeroAndPartialLengthOnlyMovesReadPosition)
+TEST(FlexibleBufferTest, ConsumeZeroAndPartialLengthOnlyMovesReadPosition)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("abcdef", 6);
     const char *start = buffer.readableBegin();
 
@@ -292,12 +292,12 @@ TEST(BufferTest, ConsumeZeroAndPartialLengthOnlyMovesReadPosition)
     EXPECT_EQ(buffer.consumeAllAsString(), "cdef");
 }
 
-TEST(BufferTest, ConsumeAtOrBeyondReadableLengthResetsBothPositions)
+TEST(FlexibleBufferTest, ConsumeAtOrBeyondReadableLengthResetsBothPositions)
 {
     for (size_t length : {size_t{4}, size_t{5}, std::numeric_limits<size_t>::max()})
     {
         SCOPED_TRACE(length);
-        Buffer buffer(8);
+        FlexibleBuffer buffer(8);
         const char *start = buffer.readableBegin();
         buffer.append("xxdata", 6);
         buffer.consume(2);
@@ -313,9 +313,9 @@ TEST(BufferTest, ConsumeAtOrBeyondReadableLengthResetsBothPositions)
     }
 }
 
-TEST(BufferTest, ConsumeAllCanBeRepeatedAndFollowedByAppend)
+TEST(FlexibleBufferTest, ConsumeAllCanBeRepeatedAndFollowedByAppend)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abcdef", 6);
     buffer.consume(2);
@@ -333,9 +333,9 @@ TEST(BufferTest, ConsumeAllCanBeRepeatedAndFollowedByAppend)
     EXPECT_EQ(buffer.consumeAllAsString(), "new");
 }
 
-TEST(BufferTest, ClearRetainsGrownStorageAndAllowsReuse)
+TEST(FlexibleBufferTest, ClearRetainsGrownStorageAndAllowsReuse)
 {
-    Buffer buffer(2);
+    FlexibleBuffer buffer(2);
     buffer.append("abcdef", 6);
     buffer.consume(2);
     const char *start = buffer.readableBegin() - 2;
@@ -352,9 +352,9 @@ TEST(BufferTest, ClearRetainsGrownStorageAndAllowsReuse)
     EXPECT_EQ(buffer.consumeAllAsString(), "new");
 }
 
-TEST(BufferTest, EnsureWritableWithinAvailableSpaceDoesNotChangeState)
+TEST(FlexibleBufferTest, EnsureWritableWithinAvailableSpaceDoesNotChangeState)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abc", 3);
 
@@ -368,9 +368,9 @@ TEST(BufferTest, EnsureWritableWithinAvailableSpaceDoesNotChangeState)
     EXPECT_EQ(buffer.consumeAllAsString(), "abc");
 }
 
-TEST(BufferTest, EnsureWritableReclaimsExactlyEnoughConsumedSpace)
+TEST(FlexibleBufferTest, EnsureWritableReclaimsExactlyEnoughConsumedSpace)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     const char *start = buffer.readableBegin();
     buffer.append("abcdef", 6);
     buffer.consume(3);
@@ -385,9 +385,9 @@ TEST(BufferTest, EnsureWritableReclaimsExactlyEnoughConsumedSpace)
     EXPECT_EQ(buffer.consumeAllAsString(), "def12345");
 }
 
-TEST(BufferTest, EnsureWritableGrowsWhenReclaimedSpaceWouldBeInsufficient)
+TEST(FlexibleBufferTest, EnsureWritableGrowsWhenReclaimedSpaceWouldBeInsufficient)
 {
-    Buffer buffer(8);
+    FlexibleBuffer buffer(8);
     buffer.append("abcdefgh", 8);
     buffer.consume(3);
 
@@ -400,15 +400,15 @@ TEST(BufferTest, EnsureWritableGrowsWhenReclaimedSpaceWouldBeInsufficient)
     EXPECT_EQ(buffer.consumeAllAsString(), "defgh123456");
 }
 
-// 新 Buffer 允许值拷贝；验证非零读索引及副本增长不会影响原对象。
-TEST(BufferTest, CopyConstructionPreservesReadPositionAndOwnsIndependentStorage)
+// 新 FlexibleBuffer 允许值拷贝；验证非零读索引及副本增长不会影响原对象。
+TEST(FlexibleBufferTest, CopyConstructionPreservesReadPositionAndOwnsIndependentStorage)
 {
-    EXPECT_TRUE(std::is_copy_constructible_v<Buffer>);
-    Buffer original(8);
+    EXPECT_TRUE(std::is_copy_constructible_v<FlexibleBuffer>);
+    FlexibleBuffer original(8);
     original.append("xxdata", 6);
     original.consume(2);
 
-    Buffer copy(original);
+    FlexibleBuffer copy(original);
     EXPECT_NE(copy.readableBegin(), original.readableBegin());
     EXPECT_EQ(copy.readableBytes(), original.readableBytes());
     EXPECT_EQ(copy.writableBytes(), original.writableBytes());
@@ -419,13 +419,13 @@ TEST(BufferTest, CopyConstructionPreservesReadPositionAndOwnsIndependentStorage)
     EXPECT_EQ(original.consumeAllAsString(), "data");
 }
 
-TEST(BufferTest, CopyAssignmentReplacesExistingDataAndKeepsStorageIndependent)
+TEST(FlexibleBufferTest, CopyAssignmentReplacesExistingDataAndKeepsStorageIndependent)
 {
-    EXPECT_TRUE(std::is_copy_assignable_v<Buffer>);
-    Buffer original(8);
+    EXPECT_TRUE(std::is_copy_assignable_v<FlexibleBuffer>);
+    FlexibleBuffer original(8);
     original.append("xxdata", 6);
     original.consume(2);
-    Buffer copy(16);
+    FlexibleBuffer copy(16);
     copy.append("old", 3);
 
     copy = original;
@@ -439,9 +439,9 @@ TEST(BufferTest, CopyAssignmentReplacesExistingDataAndKeepsStorageIndependent)
     EXPECT_EQ(original.consumeAllAsString(), "other");
 }
 
-TEST(BufferTest, RejectsUnrepresentableInitialSize)
+TEST(FlexibleBufferTest, RejectsUnrepresentableInitialSize)
 {
-    EXPECT_THROW(Buffer{std::numeric_limits<size_t>::max()}, std::length_error);
+    EXPECT_THROW(FlexibleBuffer{std::numeric_limits<size_t>::max()}, std::length_error);
 }
 
 
@@ -451,7 +451,7 @@ class BufferInterfaceTest : public ::testing::Test
 {
 };
 
-using BufferTypes = ::testing::Types<Buffer, FixedBuffer<8>>;
+using BufferTypes = ::testing::Types<FlexibleBuffer, FixedBuffer<8>>;
 TYPED_TEST_SUITE(BufferInterfaceTest, BufferTypes);
 
 

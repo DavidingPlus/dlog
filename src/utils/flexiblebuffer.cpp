@@ -1,4 +1,4 @@
-#include "buffer.h"
+#include "flexiblebuffer.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -7,7 +7,7 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-void Buffer::consume(size_t len)
+void FlexibleBuffer::consume(size_t len)
 {
     // 说明应用只读取了可读缓冲区数据的一部分，就是 len 长度，还剩下 [m_readerIndex+=len, m_writerIndex] 的数据未读。
     if (len < readableBytes())
@@ -21,7 +21,7 @@ void Buffer::consume(size_t len)
     }
 }
 
-std::string Buffer::consumeAsString(size_t len)
+std::string FlexibleBuffer::consumeAsString(size_t len)
 {
     // 与 consume() 保持一致：超长请求按全部可读数据处理，避免构造字符串时越界读取。
     len = std::min(len, readableBytes());
@@ -34,25 +34,25 @@ std::string Buffer::consumeAsString(size_t len)
     return res;
 }
 
-void Buffer::ensureWritableBytes(size_t len)
+void FlexibleBuffer::ensureWritableBytes(size_t len)
 {
     if (writableBytes() < len) makeSpace(len);
 }
 
-void Buffer::append(const char *data, size_t len)
+void FlexibleBuffer::append(const char *data, size_t len)
 {
     if (0 == len) return;
-    if (!data) throw std::invalid_argument("Buffer::append(): data must not be nullptr");
+    if (!data) throw std::invalid_argument("FlexibleBuffer::append(): data must not be nullptr");
 
     ensureWritableBytes(len);
     std::copy(data, data + len, writableBegin());
     m_writerIndex += len;
 }
 
-void Buffer::makeSpace(size_t len)
+void FlexibleBuffer::makeSpace(size_t len)
 {
     // 初始情况下，全部 initialSize 字节都是可写空间。
-    // 在 Buffer 工作中，需明确两个方向的语义：
+    // 在 FlexibleBuffer 工作中，需明确两个方向的语义：
     // append() 向 writable 区域写入数据，使其成为 readable 数据。
     // consume() 消费 readable 数据，留下可回收的空间，下面用 xxx 表示。
 
@@ -76,7 +76,7 @@ void Buffer::makeSpace(size_t len)
     else
     {
         // 用减法检查，避免加法直接溢出。
-        if (len > m_buffer.max_size() - m_writerIndex) throw std::length_error("Buffer::makeSpace(): size exceeds max_size");
+        if (len > m_buffer.max_size() - m_writerIndex) throw std::length_error("FlexibleBuffer::makeSpace(): size exceeds max_size");
 
         m_buffer.resize(m_writerIndex + len);
     }

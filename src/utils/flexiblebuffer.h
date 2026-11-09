@@ -1,5 +1,5 @@
-#ifndef _DLOG_BUFFER_H_
-#define _DLOG_BUFFER_H_
+#ifndef _DLOG_FLEXIBLEBUFFER_H_
+#define _DLOG_FLEXIBLEBUFFER_H_
 
 #include "globalmacros.h"
 
@@ -11,11 +11,11 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 /**
- * @class Buffer
- * @brief Buffer 类其实是封装了一个用户缓冲区，以及向这个缓冲区写数据读数据等一系列控制方法。
+ * @class FlexibleBuffer
+ * @brief 容量按需增长的字节缓冲区，支持追加数据和部分消费。
  * @ref https://github.com/DavidingPlus/dmuduo/blob/master/src/core/buffer.h
  *
- * Buffer 使用一块连续内存，通过 m_readerIndex 和 m_writerIndex 两个索引分别表示读位置和写位置。
+ * FlexibleBuffer 使用一块连续内存，通过 m_readerIndex 和 m_writerIndex 两个索引分别表示读位置和写位置。
  *
  * 内存布局：
  *
@@ -32,7 +32,7 @@ DLOG_NAMESPACE_BEGIN(dlog)
  * 1. 优先利用前面已经读取的数据空间；
  * 2. 如果空间仍然不足，则扩容。
  */
-class DLOG_API_EXPORTED Buffer
+class DLOG_API_EXPORTED FlexibleBuffer
 {
 
 public:
@@ -40,9 +40,9 @@ public:
     // 初始预留的 readable 和 writable 数据空间大小。初始时 readableBytes 为 0，writableBytes 为 kInitialSize，这个是符合语义的。
     static constexpr size_t kInitialSize = 1024;
 
-    explicit Buffer(size_t initialSize = kInitialSize) : m_buffer(initialSize) {}
+    explicit FlexibleBuffer(size_t initialSize = kInitialSize) : m_buffer(initialSize) {}
 
-    ~Buffer() = default;
+    ~FlexibleBuffer() = default;
 
     // 整块存储的起点及总字节数；capacity 包含已消费、可读和尾部可写区域。
     char *storageData() { return m_buffer.data(); }
@@ -61,7 +61,7 @@ public:
     // 复制可读数据，不消费；显式长度保留内嵌空字节。
     std::string toString() const { return readableBytes() ? std::string(readableBegin(), readableBytes()) : std::string(); }
 
-    // 注意：以下这四个 consume 系列函数操控的都是可读 readable 区的数据，并且都只是逻辑上消费数据，实际并不会修改 Buffer 内存，在实际操作中为了效率也不能频繁修改 Buffer 内存。它们只是在逻辑上移动指针，维持可读和可写的语义，表示这部分数据已经被上层处理。下面的注释用“消费”这个词语描述。
+    // 注意：以下这四个 consume 系列函数操控的都是可读 readable 区的数据，并且都只是逻辑上消费数据，实际并不会修改 FlexibleBuffer 内存，在实际操作中为了效率也不能频繁修改 FlexibleBuffer 内存。它们只是在逻辑上移动指针，维持可读和可写的语义，表示这部分数据已经被上层处理。下面的注释用“消费”这个词语描述。
 
     // 消费指定长度的可读数据；len 达到或超过可读长度时消费全部并重置缓冲区。
     void consume(size_t len);
@@ -72,10 +72,10 @@ public:
     // 最多取 len 字节，复制为 string 并消费；len 达到或超过可读长度时取全部并重置缓冲区。
     std::string consumeAsString(size_t len);
 
-    // 将 Buffer 当前所有可读数据复制为 string 返回，并消费全部数据。
+    // 将 FlexibleBuffer 当前所有可读数据复制为 string 返回，并消费全部数据。
     std::string consumeAllAsString() { return consumeAsString(readableBytes()); }
 
-    // 保证 Buffer 至少拥有 len 字节的连续可写空间，不够就调用 makeSpace() 扩充。
+    // 保证 FlexibleBuffer 至少拥有 len 字节的连续可写空间，不够就调用 makeSpace() 扩充。
     void ensureWritableBytes(size_t len);
 
     // 把 [data, data + len) 的数据追加到 writable 区。len 为 0 时不操作，正长度空指针会抛异常。

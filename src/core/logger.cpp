@@ -63,7 +63,7 @@ Logger::~Logger()
 {
     m_impl.finish();
 
-    const Buffer &buffer = stream().buffer();
+    const FlexibleBuffer &buffer = stream().buffer();
 
     // 输出（默认项终端输出）。
     g_outputCallback(buffer.readableBegin(), buffer.readableBytes());

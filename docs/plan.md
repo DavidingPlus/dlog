@@ -2,11 +2,11 @@
 
 ## 1. 目标与进度
 
-更新日期：2026-11-09；本轮改动前代码基线：`045c27e`。本文合并原对比文档与迁移计划，后续只维护这一份。
+更新日期：2026-11-09；本轮改动前代码基线：`db911ec`。本文合并原对比文档与迁移计划，后续只维护这一份。
 
 采用 Kama 的核心用法：**长期存在的 AsyncLogger 管理工作器和输出目标，使用者创建日志器后直接写日志。** 保留 dlog 的流式宏，先完成终端和文件输出，不扩展成通用日志框架。
 
-- [x] 动态 Buffer 接入 LogStream 和 Logger，超长记录完整交付。
+- [x] 动态 FlexibleBuffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
 - [x] LogFile 统一支持普通和轮转模式：单参数构造使用完整文件名，现有构造方式继续启用轮转。
 - [x] StdoutFlush、FileFlush 实现 `writeAndFlush()`；LogFile 移除自动刷新策略，现有异步后端已通过 FileFlush 写出。
@@ -15,12 +15,13 @@
 - [x] 新增 RollFileFlush，复用 FileFlush 的写入与刷新及 LogFile 的轮转；两种输出类均接收 filesystem::path。
 - [x] LogFlushFactory 创建输出对象，覆盖参数转发、共享生命周期和构造异常传播。
 - [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
-- [x] Buffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
+- [x] FlexibleBuffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
+- [x] 可增长缓冲区命名为 FlexibleBuffer，同步文件名、调用方及文档。
 - [ ] 输出目标与异步工作器解耦。
 - [ ] AsyncLogger、默认入口、自动启动关闭及 FATAL 排空。
 - [ ] 简单命名管理和多个输出目标。
 
-此前 Buffer 闭环验证为 Windows 全量 172 项测试通过。LogFile 双模式改造后核心 144 项通过；本轮补充 5 项 FileFlush 测试，Windows 核心 149 项通过。不代表下述待实施功能已经通过验收，日志器工厂等接口示例仍是待实现方案。
+此前 FlexibleBuffer 闭环验证为 Windows 全量 172 项测试通过。LogFile 双模式改造后核心 144 项通过；本轮补充 5 项 FileFlush 测试，Windows 核心 149 项通过。不代表下述待实施功能已经通过验收，日志器工厂等接口示例仍是待实现方案。
 
 FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内嵌空字符拒绝。新增静态方法 `executableFullPath()` 和类体内隐式 inline 的 `executableDirectory()`；Windows 使用 32768 个宽字符的缓冲区获取进程 EXE 路径，检测到截断时抛出 system_error，Linux 读取 `/proc/self/exe`。相对路径拼接可执行文件目录后做词法规范化，绝对路径不会拼接目录。
 
@@ -34,7 +35,7 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 
 2026-11-09 完成 AsyncLogging 路径及输出类型迁移：路径参数和成员使用 filesystem::path，后台使用 RollFileFlush，FileFlush 的双参数构造收为 protected。测试及示例直接传入 path，异步测试按 UTF-8 文件名查找日志；示例和 README 移除预建目录步骤。本轮新增 2 项测试，覆盖中文、空格、emoji 目录及基础文件名、缺失父目录自动创建、轮转与重启保留旧内容，以及可执行文件目录下的相对 Unicode 路径和空字节。Windows 全量 208 项测试中 207 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败，库、测试及异步示例构建通过。通用 AsyncWorker 和后台失败处理仍待实施。
 
-本轮继续保留 Buffer 与 FixedBuffer，将两类、实现及测试从 core 移到 utils。公共接口统一为 storageData/capacity、readableBegin/readableBytes、writableBegin/writableBytes、append、clear、toString；Buffer 的 retrieve 系列改名为 consume 系列，retrieveAll 对应 consumeAll，内部复用 clear 并保留独立接口，FixedBuffer 保留 bzero 进行物理清零。FixedBuffer 超限追加抛出 length_error，正长度空指针抛出 invalid_argument，失败保留原内容。FileUtil 通过 FixedBuffer<64 * 1024> 的 storageData/capacity 借出固定存储给 setvbuf，文件流状态仍由 C 运行库管理，fclose 完成前不修改或释放存储。Windows 全量 216 项测试中 215 项通过、1 项跳过，无失败；覆盖共同接口约定、部分消费后地址区别、固定容量超限及小块文件写入跨 64 KiB 边界和关闭刷尾。头文件路径、成员接口和 FileUtil 对象布局发生变化，使用方需迁移并重新编译。
+本轮继续保留 FlexibleBuffer 与 FixedBuffer，将两类、实现及测试从 core 移到 utils。公共接口统一为 storageData/capacity、readableBegin/readableBytes、writableBegin/writableBytes、append、clear、toString；FlexibleBuffer 的 retrieve 系列改名为 consume 系列，retrieveAll 对应 consumeAll，内部复用 clear 并保留独立接口，FixedBuffer 保留 bzero 进行物理清零。FixedBuffer 超限追加抛出 length_error，正长度空指针抛出 invalid_argument，失败保留原内容。FileUtil 通过 FixedBuffer<64 * 1024> 的 storageData/capacity 借出固定存储给 setvbuf，文件流状态仍由 C 运行库管理，fclose 完成前不修改或释放存储。Windows 全量 216 项测试中 215 项通过、1 项跳过，无失败；覆盖共同接口约定、部分消费后地址区别、固定容量超限及小块文件写入跨 64 KiB 边界和关闭刷尾。头文件路径、成员接口和 FileUtil 对象布局发生变化，使用方需迁移并重新编译。
 
 ## 2. 当前 dlog 与 Kama 的联系和区别
 
@@ -48,7 +49,7 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 | 默认输出 | 同步 stdout | 默认日志器异步输出终端 | 迁为默认异步终端，属于可见的行为变化 |
 | 输出目标 | 回调连接文件等后端 | LogFlush 接口及输出目标列表 | 先单目标，再支持列表 |
 | 日志器管理 | 进程共享回调 | LoggerManager 保存默认和命名日志器 | 使用简单管理器 |
-| 缓冲 | 单条记录用动态 Buffer，后台用 LargeBuffer 块队列 | 两个 vector 缓冲区交换；SAFE 等待、UNSAFE 扩容 | 保留 dlog 已验证的缓冲组织，不直接替换 |
+| 缓冲 | 单条记录用动态 FlexibleBuffer，后台用 LargeBuffer 块队列 | 两个 vector 缓冲区交换；SAFE 等待、UNSAFE 扩容 | 保留 dlog 已验证的缓冲组织，不直接替换 |
 | 唤醒 | 整块入队通知，未满数据周期处理，默认 3 秒 | 每次 Push 通知消费者 | 核心迁移先保留；终端低流量延迟需观察再调整 |
 | 文件与轮转 | LogFile 统一管理普通文件与按日期、大小轮转的文件；FileUtil 补写部分写入 | FileFlush / RollFileFlush，按批次检查大小 | FileFlush / RollFileFlush 区分用途，底层仍由 LogFile 管理两种模式 |
 | FATAL | 输出、刷新回调、abort；异步回调未自动接通 | 等待备份后提交异步输出，不主动终止进程 | 保留 dlog 的终止语义，退出前排空目标 |
@@ -104,7 +105,7 @@ LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 Fi
 
 | 组件 | 职责与迁移方式 |
 | --- | --- |
-| 现有 Logger / LogStream / Buffer | 构造单条记录，完成后提交；保留格式、空字节和超长支持 |
+| 现有 Logger / LogStream / FlexibleBuffer | 构造单条记录，完成后提交；保留格式、空字节和超长支持 |
 | AsyncLogger | 长期持有工作器与输出目标，接收完整记录 |
 | AsyncWorker | 从 AsyncLogging 提取，负责字节复制、后台写出、周期刷新、停止排空 |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
@@ -113,13 +114,13 @@ LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 Fi
 
 ```text
 DLOG_INFO()
-  → 临时 Logger + LogStream + Buffer
+  → 临时 Logger + LogStream + FlexibleBuffer
   → 长期 AsyncLogger
   → AsyncWorker
   → StdoutFlush、FileFlush 或 RollFileFlush
 ```
 
-每个 AsyncLogger 一个工作器，先不共享线程池。现有 Buffer、LargeBuffer、跨块追加和文件轮转继续复用；FixedBuffer 不承担日志截断、分片策略或警告输出。
+每个 AsyncLogger 一个工作器，先不共享线程池。现有 FlexibleBuffer、LargeBuffer、跨块追加和文件轮转继续复用；FixedBuffer 不承担日志截断、分片策略或警告输出。
 
 ## 5. 分三步实施
 
@@ -137,7 +138,7 @@ DLOG_INFO()
 ### 第二步：增加 AsyncLogger，打通默认使用
 
 - AsyncLogger 负责创建资源、启动工作器和关闭排空；默认首次使用时创建终端日志器，提供文件创建函数、SetDefaultLogger 和 Shutdown。
-- 临时 Logger 构造时取得目标 AsyncLogger 强引用，析构时提交一次；异步接收立即复制字节，后台不保存临时 Buffer 指针。
+- 临时 Logger 构造时取得目标 AsyncLogger 强引用，析构时提交一次；异步接收立即复制字节，后台不保存临时 FlexibleBuffer 指针。
 - 库内部连接输出和刷新，示例使用第三节的写法；旧静态回调只保留已有必要用途，不扩展兼容框架。
 - FATAL 提交后停止并排空目标，再 abort。后台失败应报告后再终止；暂不增加可重复调用的异步 flush 屏障。
 - Shutdown 排空本轮创建的日志器，重复关闭安全；旧对象关闭后拒绝追加并报告。工作器先退出，再释放输出目标，不能 join 自身或形成 shared_ptr 循环。
@@ -171,7 +172,7 @@ DLOG_INFO()
 | 顺序 | Kama 参考 | dlog 对照 | 重点 |
 | --- | --- | --- | --- |
 | 1 | [LogFlush.hpp][ref-flush] | [LogFile](../src/core/logfile.h)、[FileUtil](../src/utils/fileutil.h) | 输出接口、所有权、刷新和失败反馈 |
-| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncLogging](../src/core/asynclogging.cpp)、[Buffer](../src/utils/buffer.h)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
+| 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncLogging](../src/core/asynclogging.cpp)、[FlexibleBuffer](../src/utils/flexiblebuffer.h)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 

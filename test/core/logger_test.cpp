@@ -436,13 +436,13 @@ TEST(LoggerOutputTest, AppendsNewlineWhenInitialBufferIsExactlyFull)
     {
         Logger logger(__FILE__, 456, LogLevel::INFO);
         const size_t prefixLength = logger.stream().buffer().readableBytes();
-        ASSERT_LT(prefixLength, Buffer::kInitialSize);
-        payload.assign(Buffer::kInitialSize - prefixLength, 'X');
+        ASSERT_LT(prefixLength, FlexibleBuffer::kInitialSize);
+        payload.assign(FlexibleBuffer::kInitialSize - prefixLength, 'X');
         logger.stream() << payload;
         EXPECT_EQ(logger.stream().buffer().writableBytes(), 0u);
     });
 
-    ASSERT_EQ(output.size(), Buffer::kInitialSize + 1);
+    ASSERT_EQ(output.size(), FlexibleBuffer::kInitialSize + 1);
     EXPECT_EQ(output.substr(output.size() - payload.size() - 1), payload + '\n');
 }
 

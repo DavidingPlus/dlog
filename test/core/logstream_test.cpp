@@ -16,7 +16,7 @@ namespace
 
     std::string_view streamContents(const LogStream &stream)
     {
-        const Buffer &buffer = stream.buffer();
+        const FlexibleBuffer &buffer = stream.buffer();
         return {buffer.readableBegin(), buffer.readableBytes()};
     }
 
@@ -28,7 +28,7 @@ TEST(LogStreamTest, StartsEmptyAndIsNonCopyable)
     LogStream stream;
 
     EXPECT_EQ(stream.buffer().readableBytes(), 0u);
-    EXPECT_EQ(stream.buffer().writableBytes(), Buffer::kInitialSize);
+    EXPECT_EQ(stream.buffer().writableBytes(), FlexibleBuffer::kInitialSize);
     EXPECT_FALSE(std::is_copy_constructible_v<LogStream>);
     EXPECT_FALSE(std::is_copy_assignable_v<LogStream>);
     EXPECT_FALSE(std::is_move_constructible_v<LogStream>);
@@ -220,7 +220,7 @@ TEST(LogStreamTest, ResetBufferClearsDataAndAllowsReuse)
     stream.resetBuffer();
 
     EXPECT_EQ(stream.buffer().readableBytes(), 0u);
-    EXPECT_EQ(stream.buffer().writableBytes(), Buffer::kInitialSize);
+    EXPECT_EQ(stream.buffer().writableBytes(), FlexibleBuffer::kInitialSize);
     EXPECT_TRUE(streamContents(stream).empty());
 
     stream << "new value";
@@ -231,7 +231,7 @@ TEST(LogStreamTest, ResetBufferClearsDataAndAllowsReuse)
 TEST(LogStreamTest, GrowsWhenAccumulatedFieldsExceedInitialCapacity)
 {
     LogStream stream;
-    const std::string payload(Buffer::kInitialSize - 2, 'x');
+    const std::string payload(FlexibleBuffer::kInitialSize - 2, 'x');
     stream << std::string_view(payload);
     ASSERT_EQ(stream.buffer().writableBytes(), 2u);
 
@@ -254,7 +254,7 @@ TEST(LogStreamTest, PreservesOversizedPayloadAndSurroundingFields)
 TEST(LogStreamTest, GrowsWhenFormattedIntegerExceedsRemainingSpace)
 {
     LogStream stream;
-    const std::string payload(Buffer::kInitialSize - 1, 'x');
+    const std::string payload(FlexibleBuffer::kInitialSize - 1, 'x');
     stream << payload;
     ASSERT_EQ(stream.buffer().writableBytes(), 1u);
 
@@ -266,7 +266,7 @@ TEST(LogStreamTest, GrowsWhenFormattedIntegerExceedsRemainingSpace)
 TEST(LogStreamTest, AppendsNewlineAfterExactlyFillingInitialCapacity)
 {
     LogStream stream;
-    const std::string payload(Buffer::kInitialSize, 'x');
+    const std::string payload(FlexibleBuffer::kInitialSize, 'x');
     stream << payload;
     ASSERT_EQ(stream.buffer().writableBytes(), 0u);
 

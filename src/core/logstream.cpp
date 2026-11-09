@@ -46,7 +46,7 @@ LogStream &LogStream::operator<<(const unsigned char *str)
 LogStream &LogStream::operator<<(std::string_view sv)
 {
     // string_view::size() 是数据的显式长度，不会像 strlen() 一样在遇到 '\0' 时提前停止。
-    // Buffer 按需增长，按显式长度保留全部数据和嵌入式 '\0'。
+    // FlexibleBuffer 按需增长，按显式长度保留全部数据和嵌入式 '\0'。
     if (!sv.empty()) m_buffer.append(sv.data(), sv.size());
     return *this;
 }

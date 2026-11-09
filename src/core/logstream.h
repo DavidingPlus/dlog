@@ -3,7 +3,7 @@
 
 #include "globalmacros.h"
 
-#include "buffer.h"
+#include "flexiblebuffer.h"
 
 #include <charconv>
 #include <limits>
@@ -30,7 +30,7 @@ public:
     void append(const char *buffer, size_t len) { m_buffer.append(buffer, len); }
 
     // 返回当前缓冲区的常量引用。
-    const Buffer &buffer() const { return m_buffer; }
+    const FlexibleBuffer &buffer() const { return m_buffer; }
 
     // 重置缓冲区，将当前指针重置到缓冲区的起始位置。
     void resetBuffer() { m_buffer.clear(); }
@@ -78,7 +78,7 @@ private:
 
 
     // 内部缓冲区对象。
-    Buffer m_buffer;
+    FlexibleBuffer m_buffer;
 };
 
 
@@ -105,7 +105,7 @@ LogStream &LogStream::formatInteger(T num)
     //   - ec：错误码，std::errc{} 表示转换成功。
     auto result = std::to_chars(buffer, buffer + sizeof(buffer), num);
 
-    // Buffer 按显式长度保存数据，直接使用转换结果的字符数。
+    // FlexibleBuffer 按显式长度保存数据，直接使用转换结果的字符数。
     if (std::errc{} == result.ec) m_buffer.append(buffer, static_cast<size_t>(result.ptr - buffer));
 
 

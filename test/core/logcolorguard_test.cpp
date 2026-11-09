@@ -18,7 +18,7 @@ namespace
 
     std::string_view streamContents(const LogStream &stream)
     {
-        const Buffer &buffer = stream.buffer();
+        const FlexibleBuffer &buffer = stream.buffer();
         return {buffer.readableBegin(), buffer.readableBytes()};
     }
 

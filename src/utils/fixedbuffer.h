@@ -22,7 +22,7 @@ inline constexpr size_t kLargeBufferSize = 1000 * kSmallBufferSize;
 // 1. C 字符串缓冲区：必须预留一个字节存放 '\0'。例如 bufferSize 为 8 时，最多存放 7 个有效字符，并保证起始地址处的内容可以直接作为 C 字符串使用。
 // 2. 带显式长度的字节缓冲区：不要求末尾存在 '\0'，有效数据范围由 readableBegin() 和 readableBytes() 共同确定。例如 bufferSize 为 8 时，可以存放 8 个有效字节，也可以正确保存中间包含 '\0' 的数据。
 // FixedBuffer 采用第二种设计，不为 '\0' 预留空间；读取时使用显式长度或 toString()，不能直接当 C 字符串。
-// 与 Buffer 使用相同的读写接口；区别是容量固定，append() 超限抛出 length_error，且不改变原内容。
+// 与 FlexibleBuffer 使用相同的读写接口；区别是容量固定，append() 超限抛出 length_error，且不改变原内容。
 // clear() 只清空逻辑数据，bzero() 只清零物理存储，二者不等价。
 // 使用模板参数指定缓冲区容量，使缓冲区大小在编译期确定，并将字符数组直接嵌入 FixedBuffer 对象中，避免缓冲区内部额外的动态内存分配（类似 std::array<>）。
 template <size_t bufferSize>
@@ -113,7 +113,7 @@ void FixedBuffer<bufferSize>::updateWriteState(size_t len)
 }
 
 
-// SmallBuffer 是容量为 4,000 字节的固定缓冲区；LogStream 已改用可增长的 Buffer。
+// SmallBuffer 是容量为 4,000 字节的固定缓冲区；LogStream 已改用可增长的 FlexibleBuffer。
 // LargeBuffer 用于 AsyncLogging 的生产者缓冲区和待写缓冲块，容量为 4,000,000 字节，即 SmallBuffer 的 1,000 倍。
 // using 为对应的 FixedBuffer 特化提供语义名称的别名。它既不创建新的派生类型，也不负责生成模板代码。
 using SmallBuffer = FixedBuffer<kSmallBufferSize>;
