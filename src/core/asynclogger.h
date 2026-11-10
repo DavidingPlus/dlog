@@ -7,24 +7,29 @@
 
 #include <atomic>
 #include <memory>
-#include <stdexcept>
 #include <utility>
 
 
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// 长期日志器，由 AsyncLoggerBuilder 创建并启动；最后一个 shared_ptr 释放时自动回收 Worker。
+// 长期日志器，Build() 创建并启动 Worker；最后一个 shared_ptr 释放时自动回收。
 class DLOG_API_EXPORTED AsyncLogger : public std::enable_shared_from_this<AsyncLogger>
 {
 
     DLOG_CLASS_NONCOPYABLE(AsyncLogger)
 
-    friend class AsyncLoggerBuilder;
-
 public:
 
-    // Worker 先停止并 join，再释放其回调持有的输出对象；析构不重抛后台错误。
+    // Build 通过模板参数选择输出类型，LogFlushFactory 将实参原样转发给该类型的构造函数。
+    // 1. Build() 使用默认的 StdoutFlush，无需构造参数。
+    // 2. Build<FileFlush>(filename) 按完整文件名打开普通日志文件。
+    // 3. Build<RollFileFlush>(basePath, rollSize) 按基础路径和大小阈值初始化轮转日志文件。
+    // 输出构造成功后，三种调用都进入 BuildWithOutput，通过构造函数创建日志器 AsyncLogger 并启动 Worker。
+    template <typename LogFlushType = StdoutFlush, typename... Args>
+    static std::shared_ptr<AsyncLogger> Build(Args &&...args) { return BuildWithOutput(LogFlushFactory::CreateLogFlush<LogFlushType>(std::forward<Args>(args)...)); }
+
+
     ~AsyncLogger() = default;
 
     // 消息持有日志器，析构时提交。当前仅接受 TRACE 至 ERROR。
@@ -37,52 +42,19 @@ public:
 
 private:
 
+    static std::shared_ptr<AsyncLogger> BuildWithOutput(std::shared_ptr<LogFlush> output);
+
 
     explicit AsyncLogger(std::shared_ptr<LogFlush> output);
 
 
-    LogLevelColorMode m_colorMode;
+    std::shared_ptr<LogFlush> m_output;
 
     std::atomic_bool m_stopped{false};
 
+    // Worker 析构时会排空队列，必须先于输出目标销毁。
     AsyncWorker m_worker;
 };
-
-
-// 配置时就可能创建目录或打开文件；Build 返回前启动 Worker，之后 Builder 不参与写入或停止。
-class DLOG_API_EXPORTED AsyncLoggerBuilder
-{
-
-    DLOG_CLASS_NONCOPYABLE(AsyncLoggerBuilder)
-
-public:
-
-    template <typename LogFlushType, typename... Args>
-    void BuildLoggerFlush(Args &&...args);
-
-    // 默认使用 StdoutFlush。成功构建后，Builder 不再接受配置或构建。
-    std::shared_ptr<AsyncLogger> Build();
-
-
-private:
-
-    std::shared_ptr<LogFlush> m_output;
-
-    bool m_built = false;
-};
-
-
-template <typename LogFlushType, typename... Args>
-void AsyncLoggerBuilder::BuildLoggerFlush(Args &&...args)
-{
-    if (m_built) throw std::logic_error("AsyncLoggerBuilder::BuildLoggerFlush(): builder already used");
-
-    // TODO 当前仅支持单输出，步骤 6 扩展多目标时调整此限制。
-    if (m_output) throw std::logic_error("AsyncLoggerBuilder::BuildLoggerFlush(): only one output is supported");
-
-    // 右侧构造成功后才赋值，失败时仍可重新配置。
-    m_output = LogFlushFactory::CreateLogFlush<LogFlushType>(std::forward<Args>(args)...);
-}
 
 
 DLOG_NAMESPACE_END

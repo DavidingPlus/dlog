@@ -1,12 +1,15 @@
 #include "asynclogger.h"
 
+#include <stdexcept>
+
 
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
+// 先持有已构造的输出目标，再为 Worker 绑定批次写入回调，此时线程尚未启动。Worker 先于 m_output 析构并排空，因此回调只需保存指向输出目标的指针。
 AsyncLogger::AsyncLogger(std::shared_ptr<LogFlush> output)
-    : m_colorMode(dynamic_cast<StdoutFlush *>(output.get()) ? LogLevelColorMode::ON : LogLevelColorMode::OFF),
-      m_worker([output = std::move(output)](const LargeFixedBuffer &buffer)
+    : m_output(std::move(output)),
+      m_worker([output = m_output.get()](const LargeFixedBuffer &buffer)
                { output->writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); }) {}
 
 LogMessage AsyncLogger::message(const char *filename, int line, LogLevel level, int savedErrno)
@@ -23,7 +26,7 @@ LogMessage AsyncLogger::message(const char *filename, int line, LogLevel level, 
 
             logger->m_worker.append(data, len);
         },
-        [] {}, m_colorMode);
+        [] {}, m_output->colorMode());
 }
 
 void AsyncLogger::stop()
@@ -32,19 +35,11 @@ void AsyncLogger::stop()
     m_worker.stop();
 }
 
-std::shared_ptr<AsyncLogger> AsyncLoggerBuilder::Build()
+std::shared_ptr<AsyncLogger> AsyncLogger::BuildWithOutput(std::shared_ptr<LogFlush> output)
 {
-    if (m_built) throw std::logic_error("AsyncLoggerBuilder::Build(): builder already used");
-
-    auto output = m_output ? m_output : LogFlushFactory::CreateLogFlush<StdoutFlush>();
+    // 先建立 shared_ptr 所有权，供后续 message() 的 shared_from_this() 使用。Worker 启动成功后返回日志器。启动抛异常时，局部 shared_ptr 负责回收已构造的资源。
     auto logger = std::shared_ptr<AsyncLogger>(new AsyncLogger(std::move(output)));
     logger->m_worker.start();
-
-    // 启动成功后再交出配置，失败时仍可用原配置重试。
-    m_output.reset();
-    m_built = true;
-
-
     return logger;
 }
 
