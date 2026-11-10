@@ -3,7 +3,11 @@
 #include "logmanager.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -30,6 +34,13 @@ namespace
     {
     };
 
+    class DiagnosticFlush : public LogFlush
+    {
+    public:
+
+        void writeAndFlush(const char *, size_t) override { throw std::runtime_error("output diagnostic"); }
+    };
+
     class FailingFlush : public LogFlush
     {
     public:
@@ -47,6 +58,85 @@ namespace
     };
 
 } // namespace
+
+
+static void verifyFileAtExit(bool explicitStop)
+{
+    const char *existing = std::getenv("DLOG_MANAGER_EXIT_TEST_FILE");
+    const bool owner = existing == nullptr;
+    const auto path = owner
+                          ? std::filesystem::temp_directory_path() / ("dlog-manager-exit-" + std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + ".log")
+                          : std::filesystem::path(existing);
+    if (owner)
+    {
+#ifdef _WIN32
+        ASSERT_EQ(_putenv_s("DLOG_MANAGER_EXIT_TEST_FILE", path.string().c_str()), 0);
+#else
+        ASSERT_EQ(setenv("DLOG_MANAGER_EXIT_TEST_FILE", path.string().c_str(), 1), 0);
+#endif
+    }
+
+    EXPECT_EXIT(
+        {
+            auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
+            LogManager::GetInstance().registerLogger("exit-file-probe", logger);
+            logger->message("app.cpp", 1, LogLevel::INFO).stream() << "exit file probe";
+            if (explicitStop) logger->stop();
+            std::exit(EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+
+    std::ifstream file(path, std::ios::binary);
+    EXPECT_TRUE(file.is_open());
+    const std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    EXPECT_NE(contents.find("exit file probe"), std::string::npos);
+    file.close();
+    if (owner)
+    {
+        std::error_code error;
+        std::filesystem::remove(path, error);
+#ifdef _WIN32
+        _putenv_s("DLOG_MANAGER_EXIT_TEST_FILE", "");
+#else
+        unsetenv("DLOG_MANAGER_EXIT_TEST_FILE");
+#endif
+    }
+}
+
+
+TEST(LogManagerExitFileDeathTest, ExplicitStopFlushesBeforeExit)
+{
+    verifyFileAtExit(true);
+}
+
+TEST(LogManagerExitFileDeathTest, NormalExitFlushesRegisteredLogger)
+{
+    verifyFileAtExit(false);
+}
+
+TEST(LogManagerDeathTest, TerminationReceivesFirstOutputException)
+{
+    EXPECT_EXIT(
+        {
+            std::set_terminate([]
+                               {
+                try
+                {
+                    if (auto error = std::current_exception()) std::rethrow_exception(error);
+                }
+                catch (const std::runtime_error &error)
+                {
+                    if (std::string(error.what()) == "output diagnostic") std::_Exit(42);
+                }
+                catch (...) {}
+                std::_Exit(43); });
+            auto logger = AsyncLogger::BuildAsyncLogger<DiagnosticFlush>();
+            LogManager::GetInstance().registerLogger("diagnostic", logger);
+            logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
+            std::exit(EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(42), "");
+}
 
 
 static void verifyRegistrationAndShutdown()
@@ -90,18 +180,15 @@ static void verifyRegistrationAndShutdown()
     manager.getLogger("second")->message("app.cpp", 3, LogLevel::INFO).stream() << "second record";
 }
 
-
 static void verifyShutdownAfterOutputFailure()
 {
     static std::atomic_int failures{0};
     static std::string healthyText;
-    const auto verifyOutput = []
+    std::set_terminate([]
     {
-        EXPECT_EQ(failures.load(), 2);
-        EXPECT_NE(healthyText.find("healthy record\n"), std::string::npos);
-        std::_Exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
-    };
-    ASSERT_EQ(std::atexit(verifyOutput), 0);
+        const bool stopped = failures.load() == 2 && healthyText.find("healthy record\n") != std::string::npos;
+        std::_Exit(stopped ? 42 : 43);
+    });
 
     auto &manager = LogManager::GetInstance();
     auto first = AsyncLogger::BuildAsyncLogger<FailingFlush>(failures);
@@ -128,7 +215,6 @@ TEST(LogManagerDeathTest, RegistersLoggersAndDrainsTheirOwnOutputsAtExit)
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
-
 TEST(LogManagerDeathTest, ShutdownStillStopsEveryLoggerWhenOutputThrows)
 {
     EXPECT_EXIT(
@@ -136,5 +222,5 @@ TEST(LogManagerDeathTest, ShutdownStillStopsEveryLoggerWhenOutputThrows)
             verifyShutdownAfterOutputFailure();
             std::exit(EXIT_SUCCESS);
         },
-        ::testing::ExitedWithCode(EXIT_SUCCESS), "dlog: LogManager shutdown failed");
+        ::testing::ExitedWithCode(42), "");
 }
