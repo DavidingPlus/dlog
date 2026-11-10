@@ -215,6 +215,41 @@ TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
     EXPECT_TRUE(std::regex_match(output, pattern)) << output;
 }
 
+TEST(LoggerOutputTest, ExistingRecordKeepsItsOutputAndColorWhenDefaultsChange)
+{
+    std::string originalOutput;
+    std::string replacementOutput;
+    size_t originalCalls = 0;
+    size_t replacementCalls = 0;
+    Logger::SetOutput([&](const char *data, size_t len)
+                      {
+                          ++originalCalls;
+                          originalOutput.append(data, len); },
+                      LogLevelColorMode::OFF);
+
+    {
+        Logger original("snapshot.cpp", 12, LogLevel::INFO);
+        original.stream() << "original record";
+        Logger::SetOutput([&](const char *data, size_t len)
+                          {
+                              ++replacementCalls;
+                              replacementOutput.append(data, len); },
+                          LogLevelColorMode::ON);
+        DLOG_INFO() << "replacement record";
+        EXPECT_TRUE(originalOutput.empty());
+    }
+    restoreDefaultOutput();
+
+    EXPECT_EQ(originalCalls, 1u);
+    EXPECT_EQ(replacementCalls, 1u);
+    EXPECT_NE(originalOutput.find("[snapshot.cpp:12] original record\n"), std::string::npos);
+    EXPECT_EQ(originalOutput.find('\x1b'), std::string::npos);
+    EXPECT_EQ(originalOutput.find("replacement record"), std::string::npos);
+    EXPECT_NE(replacementOutput.find("replacement record\n"), std::string::npos);
+    EXPECT_NE(replacementOutput.find('\x1b'), std::string::npos);
+    EXPECT_EQ(replacementOutput.find("original record"), std::string::npos);
+}
+
 TEST(LoggerTest, FormatsEveryNonFatalLevel)
 {
     const std::array<std::pair<LogLevel, const char *>, 5> levels{{
@@ -413,7 +448,8 @@ TEST(LoggerOutputTest, DeliversLongBinaryRecordOnceAndKeepsNextRecordSeparate)
     {
         std::vector<std::string> records;
         Logger::SetOutput([&](const char *data, size_t len)
-                          { records.emplace_back(data, len); }, mode);
+                          { records.emplace_back(data, len); },
+                          mode);
 
         DLOG_INFO() << "payload=" << payload << ", done";
         DLOG_INFO() << "next";
@@ -433,14 +469,13 @@ TEST(LoggerOutputTest, AppendsNewlineWhenInitialBufferIsExactlyFull)
 {
     std::string payload;
     const std::string output = captureOutput([&]
-    {
+                                             {
         Logger logger(__FILE__, 456, LogLevel::INFO);
         const size_t prefixLength = logger.stream().buffer().readableBytes();
         ASSERT_LT(prefixLength, FlexibleBuffer::kInitialSize);
         payload.assign(FlexibleBuffer::kInitialSize - prefixLength, 'X');
         logger.stream() << payload;
-        EXPECT_EQ(logger.stream().buffer().writableBytes(), 0u);
-    });
+        EXPECT_EQ(logger.stream().buffer().writableBytes(), 0u); });
 
     ASSERT_EQ(output.size(), FlexibleBuffer::kInitialSize + 1);
     EXPECT_EQ(output.substr(output.size() - payload.size() - 1), payload + '\n');
@@ -513,6 +548,29 @@ TEST(LoggerDeathTest, FatalLogWritesColorBeforeAborting)
             DLOG_FATAL() << "fatal message";
         },
         "\x1b\\[1m\x1b\\[41m\\[FATAL\\] \x1b\\[0m.*fatal message");
+}
+
+TEST(LoggerDeathTest, FatalKeepsTheFlushCallbackBoundAtConstruction)
+{
+    EXPECT_DEATH(
+        {
+            Logger::SetOutput([](const char *data, size_t len)
+                              {
+                                  if (len > 0 && data[len - 1] == '\n') --len;
+                                  std::fwrite(data, sizeof(char), len, stderr); },
+                              LogLevelColorMode::OFF);
+            Logger::SetFlush([]
+                             {
+                                 std::fputs(" <original-flush>", stderr);
+                                 std::fflush(stderr); });
+            Logger fatal("snapshot.cpp", 34, LogLevel::FATAL);
+            fatal.stream() << "snapshot fatal";
+            Logger::SetFlush([]
+                             {
+                                 std::fputs(" <replacement-flush>", stderr);
+                                 std::fflush(stderr); });
+        },
+        "snapshot fatal <original-flush>");
 }
 
 TEST(LoggerDeathTest, SysFatalWritesSavedErrnoFlushesAndAborts)
