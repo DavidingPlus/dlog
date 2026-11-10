@@ -11,7 +11,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
 - 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
 - 异步写盘：`dlog::AsyncLogging` 将日志放入内存缓冲区，后台通过 `LogFile` 批量写入和刷新。遇到流写入错误会打印错误并刷新已接收的数据。停止运行中的后台线程时，`stop()` 会等待它处理完剩余数据。
-- 独立工作器：`dlog::AsyncWorker` 只处理字节缓冲与后台批次回调，可连接内存、终端或文件输出。现有 `AsyncLogging` 调用链暂时保留；Logger 的职责协调方案见 [`docs/plan.md`](docs/plan.md)，尚未实现新的 AsyncLogger。
+- 独立工作器：`dlog::AsyncWorker` 负责字节缓冲与后台批次回调，可连接内存、终端或文件输出。现有 `AsyncLogging` 调用链仍可用，统一 `Logger` 的后续方案见 [`docs/plan.md`](docs/plan.md#第二步统一-logger后续实施)。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
 ## 基本用法
