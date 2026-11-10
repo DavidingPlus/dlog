@@ -2,9 +2,11 @@
 
 ## 1. 目标与进度
 
-更新日期：2026-11-10；本轮改动前代码基线：`db911ec`。本文合并原对比文档与迁移计划，后续只维护这一份。
+更新日期：2026-11-10；本次设计落档时的代码基线：`a3dc91f`。本文合并原对比文档与迁移计划，后续只维护这一份。
 
-借鉴 Kama 的长期日志器用法。dlog 后续统一公开 `Logger`，由它管理工作器和输出目标。业务侧继续使用流式宏，单条记录由内部对象负责。
+借鉴 Kama 的长期日志器用法。dlog 后续统一公开长期 `Logger`，由它管理工作器和输出目标；通过 `LoggerBuilder` 创建。业务侧继续使用流式宏，单条记录由内部 `LogMessage` 管理，`LogStream` 继续只负责格式化和缓冲。
+
+**执行约定（2026-11-10）：先落文档，再逐步实施。** 步骤 1 已完成实现，按用户“复核无问题后分四到五批提交”的授权完成本轮复核，并分四批提交；未进入步骤 2。后续仍在每次开始前说明范围，完成后报告实际改动、验证结果及剩余限制，等待用户明确审核通过后再进入下一步。提交当前步骤不表示授权自动开始下一步；未获明确要求不提交 Git。
 
 - [x] 动态 FlexibleBuffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
@@ -14,15 +16,18 @@
 - [x] FileUtil 提供可执行文件路径及目录查询，相对路径以可执行文件目录为基准；LogFile 的轮转扫描与写入使用同一绝对路径。
 - [x] 新增 RollFileFlush，复用 FileFlush 的写入与刷新及 LogFile 的轮转；两种输出类均接收 filesystem::path。
 - [x] LogFlushFactory 创建输出对象，覆盖参数转发、共享生命周期和构造异常传播。
-- [x] AsyncLogging 改用 RollFileFlush，构造参数和路径成员改为 filesystem::path；同步更新示例与测试，补充异步 Unicode 路径验证。FileFlush 的双参数构造已改为 protected。
+- [x] AsyncLogging 构造参数和路径成员改为 filesystem::path，同步示例与测试并补充异步 Unicode 路径验证；当前旧后端直接使用 LogFile。FileFlush 的双参数构造已改为 protected。
 - [x] FlexibleBuffer / FixedBuffer 及其测试迁入 utils，统一存储、读写区域和清空接口；FileUtil 使用 FixedBuffer 提供固定存储。
 - [x] 可增长缓冲区命名为 FlexibleBuffer；固定容量常量及类型别名命名为 kSmallFixedBufferSize / kLargeFixedBufferSize、SmallFixedBuffer / LargeFixedBuffer，同步文件名、调用方及文档。
 - [x] 独立 AsyncWorker 完成正常路径的缓冲、后台消费、回调输出及停止排空；旧调用链暂保留。
 - [x] Worker 捕获后台异常，显式停止时重抛原异常。
 - [x] FileUtil 报告流写入失败，旧 AsyncLogging 保留短写诊断和刷新已接收数据的行为。
-- [ ] 统一公开 Logger，先实现显式单目标写入、关闭排空和失败反馈。
-- [ ] 验证 FATAL 排空，再迁移默认入口和旧调用链。
-- [ ] 简单命名管理和多个输出目标。
+- [x] 步骤 1：内部 LogMessage 已提取，保留旧入口；复核通过，按用户授权分批提交。
+- [ ] 步骤 2：长期 Logger / LoggerBuilder 接通单目标 Worker，实现关闭排空和失败反馈。
+- [ ] 步骤 3：验证显式 Logger 的 FATAL 排空及终止。
+- [ ] 步骤 4：迁移默认流式宏和旧调用链，完成旧接口清理。
+- [ ] 步骤 5：加入简单命名管理和统一关闭。
+- [ ] 步骤 6：增加多个输出目标，完成发布接口验证。
 
 2026-11-09 已完成独立 AsyncWorker 的正常排空和后台异常传递。现有 Logger、AsyncLogging 继续使用原调用链；长期日志器的职责和命名方案见第五节。
 
@@ -49,7 +54,7 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 | 方面 | 当前 dlog | Kama 参考实现 | 本轮选择 |
 | --- | --- | --- | --- |
 | 日志入口 | `DLOG_INFO() << value` | `Info(fmt, ...)` 及默认宏 | 保留流式宏与文件名、行号捕获 |
-| 日志器含义 | 临时 Logger 构造一条记录 | 长期 AsyncLogger 接收多条记录 | 公开 Logger 负责长期资源，内部 LogRecord 复用现有记录格式化 |
+| 日志器含义 | 临时 Logger 构造一条记录 | 长期 AsyncLogger 接收多条记录 | 公开 Logger 负责长期资源，内部 LogMessage 复用现有记录格式化 |
 | 异步接入 | 调用方创建 AsyncLogging 并设置全局回调 | AsyncLogger 内部创建工作器 | 库内部完成连接与生命周期管理 |
 | 默认输出 | 同步 stdout | 默认日志器异步输出终端 | 迁为默认异步终端，属于可见的行为变化 |
 | 输出目标 | 回调连接文件等后端 | LogFlush 接口及输出目标列表 | 先单目标，再支持列表 |
@@ -58,7 +63,7 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 | 唤醒 | 整块入队通知，未满数据周期处理，默认 3 秒 | 每次 Push 通知消费者 | 核心迁移先保留；终端低流量延迟需观察再调整 |
 | 文件与轮转 | LogFile 统一管理普通文件与按日期、大小轮转的文件；FileUtil 补写部分写入 | FileFlush / RollFileFlush，按批次检查大小 | FileFlush / RollFileFlush 区分用途，底层仍由 LogFile 管理两种模式 |
 | FATAL | 输出、刷新回调、abort；异步回调未自动接通 | 等待备份后提交异步输出，不主动终止进程 | 保留 dlog 的终止语义，退出前排空目标 |
-| 配置及平台 | 构造参数；Windows / Linux 适配 | JSON、Builder、全局指针；偏向 POSIX | 本轮不迁配置、Builder、网络备份或线程池 |
+| 配置及平台 | 构造参数；Windows / Linux 适配 | JSON、Builder、全局指针；偏向 POSIX | 使用小型 LoggerBuilder；不迁 JSON 配置、网络备份或线程池 |
 
 原先 4000 字节 SmallFixedBuffer 导致正文整段丢失的问题已经修复；后端轮转只能处理已收到的数据，无法恢复前端曾经丢弃的字节。不要继续把旧问题列为未完成项。
 
@@ -75,11 +80,29 @@ FileUtil 路径适配覆盖中文、空格与 emoji 文件名、空路径及内�
 
 Kama 的 SAFE 表示容量等待策略，不代表整个实现已经可靠。相似结构也不代表直接移植关系；dlog 原 LogStream 注释引用的是同作者的另一个 kamaLog 仓库。
 
+两份参考的单条日志处理方式不同：[云存储版 AsyncLogger][ref-logger] 在日志函数中格式化正文，再构造 [LogMessage][ref-message] 并显式提交给 Worker；LogMessage 不负责析构提交。[kamaLog Logger][ref-kamalog-logger] 则持有 LogStream，在临时 Logger 析构时补后缀并输出。dlog 的方案结合长期日志器的资源管理与现有流式记录的析构提交；虽然两边同名，dlog 的 LogMessage 仍负责流式拼接和析构提交，职责与云存储版 LogMessage 不完全相同。
+
 ## 3. 迁移后怎样使用
 
-以下是默认入口迁移后的用法草案。第一批实现先验证显式文件日志器，见第五节。
+以下均为待实现的用法草案，方法名在对应步骤内核对，不代表已有 API。创建入口采用 LoggerBuilder，不引入 Logger::Create 或 CreateFileLogger；输出对象仍由现有 LogFlushFactory 创建。第一批只实现显式单目标日志器，默认入口和统一关闭分后续步骤接入，见第五节。
 
-默认异步输出终端：
+显式异步文件日志器（步骤 2）：
+
+```cpp
+dlog::LoggerBuilder builder;
+builder.setOutput(
+    dlog::LogFlushFactory::CreateLogFlush<dlog::RollFileFlush>(
+        std::filesystem::path("logs") / "app",
+        64LL * 1024 * 1024));
+auto app = builder.build();
+
+DLOG_LOGGER_INFO(app) << "request=" << 42;
+
+// 所有业务线程及临时记录结束后，显式关闭并处理可能的异常：
+app->shutdown();
+```
+
+默认异步输出终端（默认宏在步骤 4 接入，全局 Shutdown 在步骤 5 接入）：
 
 ```cpp
 DLOG_INFO() << "request=" << 42;
@@ -91,18 +114,18 @@ dlog::Shutdown();
 切换为异步文件日志器：
 
 ```cpp
-auto app = dlog::CreateFileLogger("app", "logs/app", 64LL * 1024 * 1024);
+// app 由上面的 LoggerBuilder 创建。
 dlog::SetDefaultLogger(app);
 
 DLOG_INFO() << "request=" << 42;
 
 // 所有业务线程退出后：
-dlog::Shutdown();
+app->shutdown();
 ```
 
-`"app"` 是日志器名称，`"logs/app"` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式则使用完整文件名。创建函数准备目录、文件和工作器，失败在初始化处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。
+`logs/app` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`；这里尚未设置日志器名称。普通文件模式使用完整文件名。LogFlushFactory 创建输出对象时准备目录和文件，Builder 的 build() 创建 Logger 并启动 Worker；文件打开和线程创建失败在相应初始化调用处报告。调用方不再手动接 SetOutput、SetFlush 或调用后端 start。未注册的显式 Logger 由持有方关闭，不能假定全局 Shutdown 自动发现所有实例。
 
-LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。旧 AsyncLogging 直接使用 LogFile，在追加和刷新之间处理流写入错误。FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。长期 Logger 的创建接口仍待实施，已有 LogFlushFactory 只创建输出对象。
+LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。以本次代码基线为准，旧 AsyncLogging 直接使用 LogFile，在追加和刷新之间处理流写入错误；前面的 RollFileFlush 迁移记录描述此前状态。FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。长期 Logger 的创建接口仍待实施，已有 LogFlushFactory 只创建输出对象。
 
 LogFile 分别提供 `append()` 和 `flush()`。FileFlush 将两次调用组合成 `writeAndFlush()`。旧 AsyncLogging 保留定时等待，每个非空缓冲块作为一个输出批次，并显式刷新。直接使用 LogFile 的调用方需显式刷新，原三参数构造需改为两参数并重新编译。
 
@@ -112,8 +135,10 @@ LogFile 分别提供 `append()` 和 `flush()`。FileFlush 将两次调用组合�
 
 | 组件 | 职责与迁移方式 |
 | --- | --- |
-| 内部 LogRecord（待实现） | 承接现有临时 Logger 的职责，复用 LogStream / FlexibleBuffer，完成后提交一次 |
+| 内部 LogMessage（步骤 1 已实现并复核） | 承接现有临时 Logger 的职责，复用 LogStream / FlexibleBuffer，析构时补换行并提交一次 |
 | 长期 Logger（待实现） | 持有工作器与输出目标，提供业务日志入口和显式关闭 |
+| LoggerBuilder（待实现） | 收集构建配置，创建并启动长期 Logger；构建完成后不参与日志写入或关闭 |
+| LogStream | 只负责 operator<< 格式化和本条缓冲，不持有输出目标，不在析构时提交 |
 | AsyncWorker | 负责字节复制、缓冲队列、周期处理和正常排空；通过回调交付批次，显式停止时报告后台异常 |
 | 现有 AsyncLogging | 目前保留原文件后端和调用链，后续迁移到长期 Logger |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
@@ -124,8 +149,8 @@ LogFile 分别提供 `append()` 和 `flush()`。FileFlush 将两次调用组合�
 
 ```text
 DLOG_LOGGER_INFO(app) 或迁移后的 DLOG_INFO()
-  → 长期 Logger 创建内部 LogRecord
-  → LogRecord 通过 LogStream 格式化，析构时提交给 Logger
+  → 长期 Logger 创建内部 LogMessage
+  → LogMessage 通过 LogStream 格式化，析构时提交给 Logger
   → AsyncWorker
   → 批次输出回调
   → StdoutFlush、FileFlush 或 RollFileFlush
@@ -133,7 +158,9 @@ DLOG_LOGGER_INFO(app) 或迁移后的 DLOG_INFO()
 
 每个异步 Logger 持有一个 Worker。现有 FlexibleBuffer、LargeFixedBuffer、跨块追加和文件轮转继续复用。
 
-## 5. 分三步实施
+内部 LogMessage 接替的是当前临时 Logger 的位置，不再额外包一层新的临时对象。每个流式表达式独享 LogStream；长期 Logger 不保存供所有生产线程共同拼接的 LogStream。格式化在业务线程完成，记录正常结束时调用一次 append，后台只接收字节并按批次输出，不访问业务对象或重新格式化。
+
+## 5. 实施阶段与逐步审核
 
 ### 第一步：独立 AsyncWorker
 
@@ -194,46 +221,89 @@ OutputFunc 在后台释放队列锁后执行，接收只读的 `const LargeFixed
 
 ### 第二步：统一 Logger（后续实施）
 
-现有 `Logger` 是单条记录的临时对象，构造时保存时间、等级、源文件和行号，用 LogStream / FlexibleBuffer 拼接正文，析构时补换行并调用全局输出。FATAL 随后调用全局刷新并 abort。
+本节保留原阶段标题，便于已有链接继续定位；下面的“步骤 1～4”是本次确认的实施和审核单元。前面的独立 AsyncWorker 已完成，不计入这六个后续步骤。步骤 1 已实现并复核，步骤 2～6 均待实施；不能因本文列出接口或验收条件而视为完成。
 
-Kama 的 AsyncLogger 提供日志入口并持有 Worker 和输出目标，宏补充调用位置。dlog 借鉴这一分工，公开名称统一为 `Logger`，现有临时对象的职责移入内部 `LogRecord`。同一个 Logger 可以接收多条记录，每条流式表达式各自使用一个 LogStream。
+#### 已确认的设计
+
+现有 `Logger` 是单条记录的临时对象，构造时保存时间、等级、源文件和行号，用 LogStream / FlexibleBuffer 拼接正文，析构时补换行并调用全局输出。改造后公开名称统一为长期 `Logger`，现有临时对象的职责移入内部 `LogMessage`，通过 LoggerBuilder 构建长期对象。同一个 Logger 接收多条记录，每条流式表达式各自使用一个 LogStream。
 
 | 层次 | 职责 | 接口边界 |
 | --- | --- | --- |
-| 内部 LogRecord | 记录创建时绑定目标和格式配置，保存元数据、流式拼接、析构时补换行并提交一次 | 向流式表达式提供本条 LogStream |
+| 内部 LogMessage | 记录创建时绑定目标和格式配置，保存元数据、流式拼接、析构时补换行并提交一次 | 向流式表达式提供本条 LogStream |
 | 公开 Logger | 创建记录，持有一个 Worker 和一个 LogFlush，管理启动和关闭 | 提供日志入口和显式关闭，关闭时排空并报告失败 |
+| LoggerBuilder | 接收构建配置，创建并启动 Logger | build 返回 shared_ptr<Logger>；不参与运行期写入 |
+| LogStream | 沿用现有 operator<< 和 FlexibleBuffer | 只负责格式化和缓冲，不接管记录元数据或析构提交 |
 | AsyncWorker | 复制字节、排队、后台交付、正常排空和后台异常传递 | append/start/stop，仅用于工作器控制 |
 | LogFlush | 将收到的字节写到指定目标 | writeAndFlush；文件路径和轮转配置在对应输出对象中处理 |
 
-公开构造方式、关闭函数的签名和兼容细节留到实现时确定。第一批只接一个输出目标，路径和轮转配置由具体输出对象管理。
+**创建与配置。** 统一通过 LoggerBuilder 创建，Logger 不提供另一个静态 Create 入口；由 Builder 调用非公开构造。第一版只接一个输出目标，复用 LogFlushFactory，不同时提供另一套模板输出工厂。未指定输出时，build 为本次构建选择默认 StdoutFlush，不修改 Builder 自身配置；显式空目标应拒绝。Logger 接收独立的配置快照，后续修改 Builder 不影响已创建的实例。默认终端启用颜色，文件使用纯文本，颜色配置在创建后固定；具体 setter 名称、颜色与周期间隔参数在步骤 2 核对，不提前增加名称、Builder 继承体系或 SAFE / UNSAFE 模式。build 启动 Worker 后返回，业务侧不操作 start/stop；线程启动完成不等于后台已处理数据。
 
-**与现有代码协调时必须解决的问题。**
+**所有权。** LogMessage 持有目标 Logger 的 shared_ptr，直到提交结束；释放外部指针不会令尚存活的记录悬空，但也不代表已显式关闭。Logger 持有 Worker，输出回调按值捕获 shared_ptr<LogFlush>，直接调用 writeAndFlush，不捕获 Logger 的强引用或依赖裸 this。Worker 排空并 join 后才能释放输出。LogMessage 本身作为临时对象存在，不要求单独堆分配。
 
-- 当前颜色在记录构造时读取全局配置，输出回调在记录析构时读取；后续应在记录创建时绑定目标及相应格式配置，避免记录存活期间切换目标造成错投或颜色不一致。
-- 复用现有 LoggerImpl / LogStream 的时间、等级、源位置、errno 和换行处理，保证格式化一次、复制提交一次；保留流式宏、空字节及超长记录支持，不另造与其平行的序列化流程。
-- 明确记录持有目标的方式。记录尚未析构时，目标资源必须有效；关闭顺序是结束生产者和临时记录、排空并 join Worker、释放输出。回调不得形成拥有自身的 shared_ptr 循环，也不能只捕获可能先析构的裸 this。
-- 正常业务使用由长期日志器内部启动和回收 Worker。关闭是否提供独立入口、能否再次使用、错误如何查询均属于日志器语义，不以公开转发 start/stop 代替设计。
-- FATAL 必须提交并排空目标后再 abort。当前 SetFlush 默认只刷新 stdout，不能直接当成异步排空；后台失败应有明确报告，异常不得从临时记录析构直接逃出。
-- 当前 SetOutput/SetFlush 是进程全局回调，无法独立表达多个日志器。默认目标、显式目标及旧回调的保留范围要一起确定，禁止依赖业务线程反复改全局回调来选择日志器。
+**关闭与错误。** 显式 shutdown 负责关闭接收入口、正常排空、join，并反馈失败；成功后的重复关闭不重复回收，失败后的重复关闭仍能反馈已保存异常。关闭后不再接收新记录或缓存等待重启，Logger 第一版不提供重启。普通关闭前由调用方结束生产线程和临时记录，不承诺任意线程并发控制；FATAL 的并发协调在步骤 3 专门处理。LogMessage 析构中的补换行、提交异常不得逃出：保存首个前台失败并作最小 stderr 诊断，显式关闭还要反馈该错误；后台异常沿用 Worker 的保存和重抛机制。Logger 析构兜底回收、不向外抛异常，错误诊断不得递归调用日志宏。operator<< 自身的异常仍可由调用方捕获，不承诺格式化或输出失败后日志完整。
 
-后续按以下顺序实施。示例名称仅用于说明预期用法。
+**提交与格式。** 时间、等级、源位置、errno、换行及显式字节长度沿用现有实现；正常记录格式化一次、调用一次 append，不另建独立的消息序列化路径。记录创建时绑定目标及颜色。宏仍捕获调用位置，目标表达式和 savedErrno 参数只求值一次，空目标在入口检查。跨块记录的顺序由 Worker 保证，不承诺分配失败时整条提交具有回滚能力，也不自动重试可能已部分接收或写出的记录。
 
-1. 先接显式文件 Logger，例如 `DLOG_LOGGER_INFO(app) << "started"`。验证写一条短日志后立即关闭，文件内容完整。再让输出失败一次，验证显式关闭能拿到错误。
-2. 接默认宏前验证 FATAL。提交致命记录后排空目标再 abort，用子进程检查文件中包含致命记录和此前已接收的记录。后台输出失败时先报告再终止。
-3. 保留 `DLOG_INFO() << ...` 的调用形式，再迁移默认目标。核对直接构造 `Logger(__FILE__, ...)`、`Logger::SetOutput()` 和 `Logger::SetFlush()` 的调用方、示例及测试，确定它们的迁移方式。全局关闭应安全地重复执行，已关闭的日志器拒绝继续提交。
+#### 步骤 1：提取内部 LogMessage，保留当前入口
 
-涉及：`src/core/logger.*`、确认后的长期日志器与记录接口、默认入口、README、异步示例及子进程集成测试。验收还应覆盖目标切换期间记录绑定、格式与颜色一致、临时记录存活时的资源生命周期，以及多个日志器互不串写。
+- **做什么：** 将当前 Logger / LoggerImpl 的单条记录职责移入内部 LogMessage，继续使用原 LogStream 和 FlexibleBuffer。临时兼容入口复用同一实现，保留现有默认宏、直接构造及 SetOutput/SetFlush，使本步可独立构建和审阅；不复制两套格式化代码，不接入新的 Worker 链路。
+- **协调事项：** 过渡链路在记录创建时绑定输出、刷新回调及颜色快照，避免构造和析构分读全局目标；该过渡连接在步骤 4 清理，不作为新的公共回调扩展接口。检查 LogColorGuard 对 LogLevel/Logger 头文件的依赖，避免循环包含。
+- **涉及：** logger.*、内部记录声明和实现、logger_test.cpp，以及必要的类型依赖；内部记录的具体文件布局按现有结构确定，不新增并行格式化框架。
+- **验收：** 原有宏和直接构造仍可用；表达式结束时恰好提交一次；时间/等级/位置/errno/颜色/换行保持；空字节、5000 字节及跨多个块的长记录不截断；已有 FATAL 终止行为不回退。加入回调切换与记录绑定的验证，重新构建并运行受影响的核心测试。
+- **审核点：** 只迁移单条记录职责，LogStream 仍可独立使用。报告结果后停止，等用户审核通过再开始步骤 2。
+
+**本步实施结果（2026-11-10，复核通过）。** 新增 src/core/logmessage.h/.cpp，内部类型为 dlog::LogMessage，内部用途在说明和注释中表达；现有 logger.h/.cpp 文件和 Logger 类型保留，构造时绑定回调快照，stream 与析构提交复用同一份记录实现。FileNameView、LogLevel 和 LogLevelColorMode 随记录声明迁入 logmessage.h，原 logger.h 通过包含继续提供这些类型；LogColorGuard 的实现直接依赖记录声明，避免反向依赖兼容 Logger。现有宏、直接构造、SetOutput/SetFlush 和旧 AsyncLogging 调用链继续可用；对象布局已变化，使用方需重新编译。未增加长期 Logger、Builder 或新的 Worker 调用链。
+
+新增 7 项测试，覆盖内部记录的长二进制消息和单次提交、空回调拒绝、原目标及颜色绑定、FATAL 刷新回调绑定，以及输出/刷新回调主动抛错。记录析构捕获失败并直接向 stderr 诊断，FATAL 即使输出失败仍尝试刷新后 abort；当前没有长期 Logger 的关闭接口，不提供关闭时查询或重抛错误，留到步骤 2。回调快照只复制 std::function，引用捕获资源仍由调用方保证有效。
+
+Windows / MSVC / Debug / DLL：库构建成功，核心 140 项全部通过，包含既有跨多个异步缓冲块的长记录落盘用例。本轮复核运行 xmake test -y：共 238 项，237 项通过、1 项因 MSVC 不支持负 time_t 而跳过，无失败；数量按各组 GTest 的实际结果统计，未采用将跳过项误计为通过的脚本汇总行。LoggerTest 和 AsyncLoggingTest 两个原有示例均构建并运行成功。本轮未验证 Linux、静态链接、持续压力和真实存储故障。
+
+复核按“多个生产线程、配置在开始产生日志前完成、禁止并发修改全局回调”的现有约定检查调用方、格式化、回调快照、析构异常、FATAL 和导出头文件依赖，未发现阻碍步骤 1 提交的问题。按用户要求分四批：独立 LogMessage 与共用类型及测试、Logger 委托与回归测试、README 使用说明、迁移计划与复核记录。第一批暂存内容另导出到独立目录，显式指定项目路径后完成配置、构建和核心测试，138 项全部通过；确认拆分不依赖第二批改动才能构建。继续停在步骤 1，待用户指示后才开始步骤 2。
+
+#### 步骤 2：长期 Logger / LoggerBuilder 与单目标闭环
+
+- **做什么：** 将公开 Logger 改为长期对象，加入小型 LoggerBuilder、单个输出目标、内部启动的 Worker 和显式 shutdown。接入非 FATAL 的显式流式入口，补齐 savedErrno 用法。此时迁移直接构造旧临时 Logger 的源码调用方和测试；默认宏及静态回调暂通过步骤 1 的兼容链路工作，不要求它们提前切到新后端。
+- **协调事项：** 落实记录持有 Logger、回调持有 LogFlush 的所有权；构建失败清理；关闭拒绝、重复关闭、后台失败和前台析构提交失败反馈。对旧直接构造语法的变化作迁移说明，使用方需重新编译。文件路径和轮转仍留在具体输出对象中，不改 FileUtil / LogFile 的已验证语义。
+- **涉及：** logger.*、内部记录、Builder、显式宏、Logger/Worker 集成测试及显式文件示例；README 仅补充本步已可用的接口。
+- **验收：** 短记录写完立即关闭即可完整读取；普通文件、轮转文件及终端单目标均能连接；长记录和空字节完整；并发记录不交错；多个 Logger 不串写；释放外部指针时未完成记录仍有效；输出主动抛错可由 shutdown 捕获且原异常不丢失；重复关闭不重复输出；已关闭实例拒绝使用；修改 Builder 不改变旧实例。构建并运行相关核心及集成测试，检查 DLL 所需导出。
+- **审核点：** 先审单目标正常使用、生命周期和错误闭环；本步不提前公开尚未验收的异步 FATAL 宏。结果提交用户审核后停止。
+
+#### 步骤 3：显式 Logger 的 FATAL 排空
+
+- **做什么：** 接入显式 FATAL / SYS_FATAL：提交致命记录，关闭该 Logger 的接收入口，排空此前已接收数据及致命记录，join 后 abort。协调仍在运行的生产者和多个关闭请求，避免继续追加、重复 join 或 join 自身；等待线程退出时不持有提交所需的锁。不依赖普通退出前已结束生产者的前提来实现 FATAL。
+- **协调事项：** 当前 SetFlush 默认只刷新 stdout，不能复用为异步排空；writeAndFlush 的零长度调用也不承担排空。后台或提交失败时先作 stderr 诊断，再终止，不让异常逃出析构，也不宣称失败后仍可完整写盘。只保证目标 Logger 的已接收数据，不承诺排空其他 Logger。
+- **涉及：** Logger 关闭协调、记录 FATAL 路径、显式宏和子进程集成测试。
+- **验收：** 子进程终止后文件包含此前普通记录及致命记录；savedErrno 保留；输出失败仍有诊断并终止；有并发生产者或关闭请求时无死锁、无重复回收。不能只用“进程退出了”的断言替代文件检查。
+- **审核点：** 用户确认 FATAL 语义与子进程证据后，再进入默认入口迁移。
+
+#### 步骤 4：默认入口迁移和旧链路清理
+
+- **做什么：** 保留 DLOG_INFO() 等调用形式，改为从默认 Logger 创建 LogMessage；接入已验收的 FATAL 路径和默认目标切换。默认目标为异步终端，本阶段可通过默认 Logger 的 shutdown 显式关闭，全局 Shutdown 在步骤 5 收口。
+- **协调事项：** 退役 SetOutput/SetFlush 和旧临时 Logger 构造入口，自定义输出通过 LogFlush 接入。迁移现有异步示例、README 及测试后，移除旧 AsyncLogging 的重复队列/线程实现和临时兼容连接；不保留两个长期并行的后端。旧接口删除属于源代码和 ABI 变化，提供对应的新用法，并要求重新编译。
+- **默认目标与延迟：** 生产线程启动前完成配置，不承诺并发热切换。记录创建时绑定目标；切换本身不提前关闭旧目标，旧目标由持有方在记录结束后关闭。默认终端迁移前必须明确未满块的延迟：若本步采用“有数据即可处理”，同时修改 append 通知和后台谓词，并验证顺序、停止与失败；若保留周期策略，则在公开用法中明确延迟，不能宣称日志立即显示。默认终端首次使用的初始化失败也须有明确反馈。
+- **涉及：** 默认入口、logger.*、旧 asynclogging.* 及相关调用方、snippet、README、计划文档和测试；核对清理后的构建及导出。
+- **验收：** 默认六级与系统错误宏可用；有序切换目标时未结束记录仍交给原目标且颜色正确；默认终端正常退出排空；新异步示例可运行；旧入口在源码和公开文档中的遗留已清理；若调整 Worker 唤醒则覆盖未满块及时处理。运行受影响的核心、工具和集成测试。
+- **审核点：** 用户审核默认行为变化、旧接口迁移和清理结果后，再增加管理功能。
 
 ### 第三步：简单命名管理与多个输出目标
 
-- 小型管理器保存默认和命名 Logger，将第二步已有集合收口。
-- 增加按名称查询。显式流式宏只求值一次目标表达式，仍在调用处捕获文件位置。
-- 重复名称拒绝，查不到返回空指针；显式入口检查空目标。配置和默认切换在业务线程启动前完成。
-- 输出目标扩为列表，同一工作器依次输出；一个目标失败仍尝试其他目标并报告。慢目标会拖慢该日志器。
-- 混合终端与文件先统一纯文本，单终端保留颜色；独立格式和每目标等级以后按需增加。
-- 更新 README、snippet，检查动态库导出和安装后的公共头文件使用。
+#### 步骤 5：简单命名管理与统一关闭
 
-验收：不同日志器内容独立；一条记录恰好交给各目标；文件没有 ANSI；默认宏保持好用；关闭后没有悬空回调。
+- **做什么：** 小型管理器保存默认和命名 Logger；在 Builder 中增加实际需要的名称配置，并提供明确注册和查询入口。重复名称拒绝，查不到返回空指针，显式日志入口仍检查空目标。配置和默认切换在业务线程启动前完成。
+- **统一关闭：** Shutdown 关闭默认及已注册的日志器，对同一实例去重；一个实例失败仍尝试关闭其他实例，完成回收后反馈失败。未注册的显式 Logger 由调用方关闭。重复 Shutdown 安全，关闭后不自动重建默认 Logger，也不支持全局重新初始化。
+- **涉及：** 管理器、Builder 的名称配置、默认入口、README 和命名/关闭集成测试。
+- **验收：** 名称唯一、查询及空目标行为明确；不同日志器内容独立；默认与命名指向同一实例时不重复处理；有失败仍回收其他实例；重复关闭和退出时无悬空回调。
+- **审核点：** 审核命名与全局生命周期，尚不增加多输出列表。
+
+#### 步骤 6：多个输出目标与发布验证
+
+- **做什么：** 输出目标扩为列表，Builder 对应增加追加目标的入口，沿用同一个 Worker，后台按顺序交付每个目标；同批一个目标失败仍尝试其他目标，再反馈错误。Worker 保存异常后停止消费并放弃剩余批次的行为不变，不增加自动重试。慢目标会拖慢该 Logger。
+- **格式与边界：** 混合终端与文件统一纯文本；只有终端输出时保留颜色。每目标独立格式、等级过滤、共享线程池、JSON 和网络备份仍不加入。
+- **涉及：** Builder、Logger 批次回调、输出集成测试、README、snippet，以及 DLL 导出和安装后的公共头文件验证。
+- **验收：** 正常情况下同一字节批次恰好交给每个配置目标一次，文件无 ANSI；同批一个目标失败仍尝试其余目标，关闭能反馈错误；完整构建和适用的全量测试通过；安装后的外部示例能仅通过公开头文件及库使用新接口。不能用结构检查替代行为验证，未运行的平台和压力场景继续列明。
+- **审核点：** 报告最后一批实现和验证，等待用户审核；通过后才将对应待办标记为完成。
+
+**每步交付统一要求：** 说明做了什么、为何这样改、实际运行哪些验证、哪些没有验证以及接口迁移风险；同步本文状态但区分“实现完成待审核”和“用户审核通过”。若发现必须超出当前步骤的接口或行为变化，先整理可审阅的具体调整，不自行跳到后续步骤。
 
 ## 6. 本轮边界与后续事项
 
@@ -242,7 +312,7 @@ Kama 的 AsyncLogger 提供日志入口并持有 Worker 和输出目标，宏补
 - 待写队列仍无总量上限。核心用法完成后再单独定义积压上限和满载策略，用可控慢输出测试超大消息、并发、停止和失败，不照搬可能永久等待的 SAFE 模式。
 - 现有 LogFile 允许空文件接收超限批次；跨块记录可能跨文件，不承诺文件大小硬上限或按行轮转。
 - 性能优化等测量后再做；比较前对齐消息量、线程数和刷新语义，同时核对实际字节、记录数、峰值内存与停止耗时。
-- 同步框架、共享线程池、复杂 Builder、JSON 配置、最低等级过滤和远程备份不列入本轮。
+- 只引入创建 Logger 所需的小型 Builder；同步框架、共享线程池、Builder 继承体系、JSON 配置、最低等级过滤和远程备份不列入本轮。
 
 ## 7. 阅读顺序与下一步
 
@@ -253,7 +323,7 @@ Kama 的 AsyncLogger 提供日志入口并持有 Worker 和输出目标，宏补
 | 3 | [AsyncLogger.hpp][ref-logger] | [Logger](../src/core/logger.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**独立 AsyncWorker 已完成正常排空和后台异常传递。后续从第五节的显式单目标 Logger 开始，先验收关闭排空和错误反馈。** 仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
+**独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 现有 Logger 文件与入口保留，尚未实施长期 Logger / Builder。下一步为第五节步骤 2，等待用户指示后再开始；之后仍逐步审核。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 
@@ -261,6 +331,8 @@ Kama 的 AsyncLogger 提供日志入口并持有 Worker 和输出目标，宏补
 [ref-worker]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/AsyncWorker.hpp
 [ref-buffer]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/AsyncBuffer.hpp
 [ref-logger]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/AsyncLogger.hpp
+[ref-message]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/Message.hpp
+[ref-kamalog-logger]: https://github.com/youngyangyang04/kamaLog/blob/main/logger/Logger.cc
 [ref-manager]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/Manager.hpp
 [ref-entry]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/MyLog.hpp
 [ref-example]: https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/examples/test.cpp
