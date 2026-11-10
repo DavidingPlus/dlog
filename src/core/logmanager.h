@@ -3,7 +3,7 @@
 
 #include "asynclogger.h"
 
-#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 
@@ -38,7 +38,7 @@ private:
     void shutdown();
 
 
-    mutable std::mutex m_mutex;
+    mutable std::shared_mutex m_mutex;
 
     // 固定的默认终端日志器，独立于命名表。
     AsyncLogger::Ptr m_defaultLogger;

@@ -34,14 +34,14 @@ void LogManager::registerLogger(std::string name, AsyncLogger::Ptr logger)
 {
     if (name.empty() || !logger) throw std::invalid_argument("LogManager::registerLogger(): name and logger must not be empty");
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     if (!m_loggers.try_emplace(std::move(name), std::move(logger)).second) throw std::logic_error("LogManager::registerLogger(): logger name already registered");
 }
 
 AsyncLogger::Ptr LogManager::getLogger(const std::string &name) const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
 
     auto found = m_loggers.find(name);
     return m_loggers.end() != found ? found->second : nullptr;
