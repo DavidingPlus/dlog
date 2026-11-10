@@ -77,7 +77,7 @@ public:
     // savedErrno 是调用方在系统错误发生时保存的 errno 快照；0 表示不附带系统错误信息。
     LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, FlushFunc flush, LogLevelColorMode colorMode);
 
-    ~LogMessage();
+    ~LogMessage() noexcept;
 
     // 返回当前日志消息的内部流。后续的 operator<< 只会修改本条日志自己的可增长缓冲区，真正输出发生在 LogMessage 析构时。
     LogStream &stream() { return m_impl.m_stream; }
