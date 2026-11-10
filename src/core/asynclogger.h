@@ -13,7 +13,7 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// 长期日志器，BuildAsyncLogger() 创建并启动 Worker；最后一个 shared_ptr 释放时自动回收。
+// 长期日志器，通过 BuildAsyncLogger() 创建并启动 Worker。最后一个 shared_ptr 释放时自动回收。
 class DLOG_API_EXPORTED AsyncLogger : public std::enable_shared_from_this<AsyncLogger>
 {
 
@@ -48,9 +48,10 @@ private:
     explicit AsyncLogger(std::shared_ptr<LogFlush> output);
 
 
-    std::shared_ptr<LogFlush> m_output;
+    // 日志器是否正在运行。
+    std::atomic_bool m_running{false};
 
-    std::atomic_bool m_stopped{false};
+    std::shared_ptr<LogFlush> m_output;
 
     // Worker 析构时会排空队列，必须先于输出目标销毁。
     AsyncWorker m_worker;
