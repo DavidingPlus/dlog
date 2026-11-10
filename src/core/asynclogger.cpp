@@ -36,10 +36,10 @@ void AsyncLogger::stop()
     m_worker.stop();
 }
 
-std::shared_ptr<AsyncLogger> AsyncLogger::BuildAsyncLoggerImpl(std::shared_ptr<LogFlush> output)
+AsyncLogger::Ptr AsyncLogger::BuildAsyncLoggerImpl(std::shared_ptr<LogFlush> output)
 {
     // 先建立 shared_ptr 所有权，供后续 message() 的 shared_from_this() 使用。Worker 启动成功后返回日志器。启动抛异常时，局部 shared_ptr 负责回收已构造的资源。
-    auto logger = std::shared_ptr<AsyncLogger>(new AsyncLogger(std::move(output)));
+    auto logger = Ptr(new AsyncLogger(std::move(output)));
     logger->m_worker.start();
     return logger;
 }

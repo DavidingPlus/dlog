@@ -8,7 +8,7 @@
 
 **执行约定（2026-11-10）：先落文档，再逐步实施。** 步骤 1 已完成实现，按用户“复核无问题后分四到五批提交”的授权完成本轮复核，并分四批提交；当前按下述小步推进步骤 2。后续仍在每次开始前说明范围，完成后报告实际改动、验证结果及剩余限制，等待用户明确审核通过后再进入下一步。提交当前步骤不表示授权自动开始下一步；未获明确要求不提交 Git。
 
-**第二步细化（2026-11-10）：** 按用户要求拆为 2.1～2.6，每次只实施一个小步，完成并经用户审核通过后再继续。2.1 和 2.2 已完成，用户已指示进入 2.3。当前 2.3 实现完成，待审核；2.4～2.6 尚未开始。
+**第二步细化（2026-11-10）：** 2.1～2.3 已完成。2.4 撤回显式宏，保留 AsyncLogger::Ptr，复核对象接口。下一小步 2.5 先接入全局单例 LogManager。停止和异常反馈、单目标集成验收顺延为 2.6、2.7。宏入口统一留到步骤 4。
 
 - [x] 动态 FlexibleBuffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
@@ -25,11 +25,10 @@
 - [x] Worker 捕获后台异常，显式停止时重抛原异常。
 - [x] FileUtil 报告流写入失败，旧 AsyncLogging 保留短写诊断和刷新已接收数据的行为。
 - [x] 步骤 1：内部 LogMessage 已提取，保留旧入口；复核通过，按用户授权分批提交。
-- [ ] 步骤 2：长期 AsyncLogger 接通单目标 Worker，默认自动回收，可选 stop 反馈错误；2.3 的消息提交和静态构建入口已实现，待审核，2.4～2.6 待实施。
+- [ ] 步骤 2：长期 AsyncLogger 接通单目标 Worker，并由全局 LogManager 管理。2.4 的对象接口调整待审核，2.5～2.7 待实施。
 - [ ] 步骤 3：验证显式 AsyncLogger 的 FATAL 排空及终止。
-- [ ] 步骤 4：迁移默认流式宏和旧调用链，完成旧接口清理。
-- [ ] 步骤 5：加入简单命名管理和统一关闭。
-- [ ] 步骤 6：增加多个输出目标，完成发布接口验证。
+- [ ] 步骤 4：将宏集中到独立公共头文件，迁移默认流式宏和旧调用链。
+- [ ] 步骤 5：增加多个输出目标，完成发布接口验证。
 
 2026-11-09 已完成独立 AsyncWorker 的正常排空和后台异常传递。现有 Logger、AsyncLogging 继续使用原调用链；长期日志器的职责和命名方案见第五节。
 
@@ -86,7 +85,7 @@ Kama 的 SAFE 表示容量等待策略，不代表整个实现已经可靠。相
 
 ## 3. 迁移后怎样使用
 
-以下是完整用法草案：静态 BuildAsyncLogger、message 和正常 stop 已实现，显式宏、默认异步入口及统一关闭仍待后续接通。`AsyncLogger::BuildAsyncLogger<T>(...)` 使用现有 LogFlushFactory 创建输出，`AsyncLogger::BuildAsyncLogger()` 使用默认终端输出。默认入口和统一关闭分后续步骤接入，见第五节。
+静态 BuildAsyncLogger、message 和正常 stop 已实现。`AsyncLogger::BuildAsyncLogger<T>(...)` 使用现有 LogFlushFactory 创建输出，`AsyncLogger::BuildAsyncLogger()` 使用默认终端输出。当前可通过对象接口写入。2.5 先实现统一管理和关闭，步骤 4 再通过独立公共头文件暴露显式宏和异步默认宏。
 
 显式异步文件日志器（步骤 2）：
 
@@ -95,26 +94,26 @@ auto app = dlog::AsyncLogger::BuildAsyncLogger<dlog::RollFileFlush>(
     std::filesystem::path("logs") / "app",
     64LL * 1024 * 1024);
 
-DLOG_LOGGER_INFO(app) << "request=" << 42;
+app->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "request=" << 42;
 
 // 结束所有生产线程及临时消息后，最后一个持有者释放 app 时自动排空回收。
 // 如果需要提前等待写完、捕获输出异常，可在此处显式调用 app->stop()。
 ```
 
-默认异步输出终端（默认宏在步骤 4 接入，全局 Shutdown 在步骤 5 接入；此处展示主动确定退出时点的用法）：
+默认异步输出终端（统一关闭在 2.5 接入，默认宏在步骤 4 接入）：
 
 ```cpp
 DLOG_INFO() << "request=" << 42;
 
 // 所有生产线程及临时消息结束后，可主动统一排空并获取错误：
-dlog::Shutdown();
+dlog::LogManager::GetInstance().Shutdown();
 ```
 
-切换为异步文件日志器：
+通过 LogManager 将默认目标设为异步文件日志器（步骤 4 的调用草案）：
 
 ```cpp
 // app 由上面的 AsyncLogger::BuildAsyncLogger() 创建。
-dlog::SetDefaultLogger(app);
+dlog::LogManager::GetInstance().SetDefaultLogger(app);
 
 DLOG_INFO() << "request=" << 42;
 
@@ -135,23 +134,24 @@ LogFile 分别提供 `append()` 和 `flush()`。FileFlush 将两次调用组合�
 | 组件 | 职责与迁移方式 |
 | --- | --- |
 | 内部 LogMessage（步骤 1 已实现并复核） | 承接现有临时 Logger 的职责，复用 LogStream / FlexibleBuffer，析构时补换行并提交一次 |
-| 长期 AsyncLogger（2.3 实现完成，待审核） | 持有工作器与输出目标，通过 message 创建单条记录，析构时自动排空回收；stop 用于主动等待 |
+| 长期 AsyncLogger | 持有工作器与输出目标，通过 message 创建单条记录，析构时自动排空回收；stop 用于主动等待 |
 | LogStream | 只负责 operator<< 格式化和本条缓冲，不持有输出目标，不在析构时提交 |
 | AsyncWorker | 负责字节复制、缓冲队列、周期处理和正常排空；通过回调交付批次，显式停止时报告后台异常 |
 | 现有 AsyncLogging | 目前保留原文件后端和调用链，后续迁移到长期 AsyncLogger |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
 | StdoutFlush / FileFlush / RollFileFlush | 分别输出到终端、普通文件、轮转文件；文件类共用写入与刷新，轮转行为由 LogFile 决定 |
-| 简单管理器 | 保存默认和命名 AsyncLogger，统一关闭 |
+| 全局单例 LogManager（2.5） | 保存默认和命名 AsyncLogger，提供注册、查找、默认目标设置和统一关闭 |
+| 独立宏头文件（步骤 4） | 捕获调用位置，显式宏使用传入的目标，默认宏从 LogManager 取默认目标 |
 
-以下是目标数据流。2.3 已从 AsyncLogger::message 接通到输出目标，宏入口分后续步骤接入。
+以下是步骤 4 的目标数据流。当前通过 AsyncLogger::message() 进入同一条写入链路。
 
 ```text
-DLOG_LOGGER_INFO(app) 或迁移后的 DLOG_INFO()
-  → 长期 AsyncLogger 创建内部 LogMessage
-  → LogMessage 通过 LogStream 格式化，析构时提交给 AsyncLogger
-  → AsyncWorker
-  → 批次输出回调
-  → StdoutFlush、FileFlush 或 RollFileFlush
+DLOG_LOGGER_INFO(app) → 使用 app                  ┐
+DLOG_INFO()           → LogManager 取默认日志器   ┘
+                      ↓
+AsyncLogger::message() → LogMessage 通过 LogStream 格式化
+                      → 析构时提交给 AsyncWorker
+                      → 批次输出回调 → StdoutFlush、FileFlush 或 RollFileFlush
 ```
 
 每个异步 AsyncLogger 持有一个 Worker。现有 FlexibleBuffer、LargeFixedBuffer、跨块追加和文件轮转继续复用。
@@ -219,7 +219,7 @@ OutputFunc 在后台释放队列锁后执行，接收只读的 `const LargeFixed
 
 ### 第二步：统一 Logger（后续实施）
 
-本节保留原阶段标题，便于已有链接继续定位；下面的“步骤 1～4”是本次确认的实施和审核单元。前面的独立 AsyncWorker 已完成，不计入这六个后续步骤。步骤 1 已实现并复核，步骤 2 中的 2.1、2.2 已实现，其他小步及步骤 3～6 待实施；不能因本文列出接口或验收条件而视为完成。
+本节保留原阶段标题，便于已有链接继续定位。独立 AsyncWorker 和步骤 1 已完成。步骤 2 的 2.1～2.3 已完成，2.4 待审核。2.5～2.7 和步骤 3～5 待实施。
 
 #### 已确认的设计
 
@@ -229,12 +229,14 @@ OutputFunc 在后台释放队列锁后执行，接收只读的 `const LargeFixed
 | --- | --- | --- |
 | 内部 LogMessage | 记录创建时绑定目标和格式配置，保存元数据、流式拼接、析构时补换行并提交一次 | 向流式表达式提供本条 LogStream |
 | 公开 AsyncLogger | 创建记录，持有一个 Worker 和一个 LogFlush，管理启动和回收 | message 提供单条消息；析构自动回收，stop 可主动等待并反馈失败 |
-| AsyncLogger::BuildAsyncLogger | 创建输出和日志器，启动 Worker | 返回 shared_ptr<AsyncLogger> |
+| AsyncLogger::BuildAsyncLogger | 创建输出和日志器，启动 Worker | 返回 AsyncLogger::Ptr |
+| LogManager | 进程内单例，持有默认和命名日志器 | 注册、查找、设置默认目标、统一关闭 |
+| 独立宏头文件 | 捕获调用位置并选择显式或默认日志器 | 通过 message() 创建记录。日志器类的头文件只提供对象接口 |
 | LogStream | 沿用现有 operator<< 和 FlexibleBuffer | 只负责格式化和缓冲，不接管记录元数据或析构提交 |
 | AsyncWorker | 复制字节、排队、后台交付、正常排空和后台异常传递 | append/start/stop，仅用于工作器控制 |
 | LogFlush | 将收到的字节写到指定目标 | writeAndFlush；文件路径和轮转配置在对应输出对象中处理 |
 
-**创建与配置。** `AsyncLogger::BuildAsyncLogger<T>(args...)` 将参数转发给现有 LogFlushFactory，创建一个输出目标。未指定输出类型时使用 StdoutFlush。BuildAsyncLogger 先建立 AsyncLogger 的 shared_ptr 所有权，再启动 Worker。每次调用都创建新的输出和日志器。默认终端启用颜色，文件使用纯文本。多目标留到步骤 6。
+**创建与配置。** `AsyncLogger::BuildAsyncLogger<T>(args...)` 将参数转发给现有 LogFlushFactory，创建一个输出目标。未指定输出类型时使用 StdoutFlush。BuildAsyncLogger 先建立 AsyncLogger 的 shared_ptr 所有权，再启动 Worker。每次调用都创建新的输出和日志器。默认终端启用颜色，文件使用纯文本。多目标留到步骤 5。
 
 **所有权。** LogMessage 持有目标 AsyncLogger 的 shared_ptr，直到提交结束；释放外部指针不会令尚存活的消息悬空，也不等于立即析构 AsyncLogger。AsyncLogger 持有输出和 Worker，回调通过指向该输出的指针调用 writeAndFlush。Worker 声明在输出之后，析构时先排空并 join，随后才释放输出。LogMessage 本身作为临时对象存在，不要求单独堆分配。
 
@@ -264,15 +266,15 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 140 项全部通过，�
 
 目标是将第一步的 LogMessage、现有 Worker 和输出目标连接起来，先完成显式单目标使用。拆分是为了逐项审阅，不要求每个小步都提前实现后续能力；每个小步都应可编译，只测试本步已实现行为，不加入额外的公共接口来绕过尚未接通的链路。
 
-**接口清单。** 静态 BuildAsyncLogger、message 和正常 stop 已实现，显式宏留待 2.4。
+**接口清单。** 静态 BuildAsyncLogger、message 和正常 stop 已实现。显式宏为步骤 4 的接口草案。
 
 | 接口 | 用途及来源 | 接入小步 |
 | --- | --- | --- |
-| AsyncLogger::BuildAsyncLogger<T>(args...) → shared_ptr<AsyncLogger> | 创建单个输出和长期日志器，并启动 Worker。BuildAsyncLogger() 默认使用终端 | 2.3 将 2.1、2.2 的两个构建入口合并 |
-| AsyncLogger::stop() | dlog 的扩展；主动停止、排空并反馈异常，正常使用可省略，不提供重启 | 2.2 先实现正常停止，2.5 补齐错误反馈 |
+| AsyncLogger::BuildAsyncLogger<T>(args...) → AsyncLogger::Ptr | 创建单个输出和长期日志器，并启动 Worker。BuildAsyncLogger() 默认使用终端 | 2.3 将 2.1、2.2 的两个构建入口合并 |
+| AsyncLogger::stop() | dlog 的扩展；主动停止、排空并反馈异常，正常使用可省略，不提供重启 | 2.2 先实现正常停止，2.6 补齐错误反馈 |
 | AsyncLogger::message(filename, line, level, savedErrno = 0) → LogMessage | 为流式调用适配的消息入口，供宏使用；本步仅支持非 FATAL 等级 | 2.3 |
-| DLOG_LOGGER_TRACE/DEBUG/INFO/WARN/ERROR(app) | 显式指定目标，捕获调用位置 | 2.4 |
-| DLOG_LOGGER_SYS_ERROR(app, savedErrno) | 传递调用方保存的 errno | 2.4 |
+| DLOG_LOGGER_TRACE/DEBUG/INFO/WARN/ERROR(app) | 显式指定目标，捕获调用位置 | 步骤 4 |
+| DLOG_LOGGER_SYS_ERROR(app, savedErrno) | 传递调用方保存的 errno | 步骤 4 |
 
 不增加 Logger::Create、setOutput、shutdown 或业务侧 start，也不增加 BuildLoggerName、BuildLopperType、颜色及周期配置、Builder 继承体系。message 是本项目拟定名称，签名如需调整，应在 2.3 的具体改动中说明理由并同步文档。内部提交和兼容连接不作为新增的稳定业务接口。
 
@@ -280,10 +282,11 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 140 项全部通过，�
 | --- | --- | --- |
 | 2.1 | Builder 的单输出配置 | 已完成，用户已指示继续 |
 | 2.2 | 长期 AsyncLogger 的创建和自动回收 | 已完成，用户已指示继续 |
-| 2.3 | LogMessage 到 Worker 的正常提交 | 实现完成，待用户审核 |
-| 2.4 | 显式流式宏和系统错误入口 | 待实施 |
-| 2.5 | 输出失败及前台提交失败的反馈 | 待实施 |
-| 2.6 | 完整集成验收和使用说明 | 待实施 |
+| 2.3 | LogMessage 到 Worker 的正常提交 | 已完成，用户已指示继续 |
+| 2.4 | 保留 Ptr，复核直接消息入口和 errno 传递 | 已调整，待用户审核 |
+| 2.5 | 全局单例 LogManager、命名管理和统一关闭 | 待实施 |
+| 2.6 | 输出失败及前台提交失败的反馈 | 待实施 |
+| 2.7 | 单目标集成验收和使用说明 | 待实施 |
 
 ##### 2.1：Builder 单输出配置
 
@@ -305,7 +308,7 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 140 项全部通过，�
 
 **2.2 实施结果（2026-11-10，待审核）。** 新增 src/core/asynclogger.h/.cpp；AsyncLoggerBuilder 的完整声明与模板方法放在同一头文件，Build 的非模板实现放在对应 cpp，不再保留独立 loggerbuilder.h 或旧类名别名。长期对象改用 AsyncLogger，因此保留现有 Logger 文件、直接构造、静态回调与默认宏，无需本小步迁移旧调用方。
 
-Build 返回 shared_ptr<AsyncLogger>，先完成对象与所有权建立，再启动一个 Worker；启动失败由局部 shared_ptr 析构回收。未配置输出时只为本次构建创建 StdoutFlush，不改变 Builder 配置。Worker 的回调按值持有 shared_ptr<LogFlush>，不捕获 AsyncLogger；最后一个日志器持有者释放时，由 Worker 析构停止并 join 后释放回调引用。Builder 若仍持有显式输出，输出对象会继续存活。可选 stop 直接复用 Worker 的排空、重复停止和后台异常重抛；不增加 start、shutdown、getter 或裸字节提交入口。消息提交和前台错误保存仍分别留在 2.3、2.5。
+Build 返回 shared_ptr<AsyncLogger>，先完成对象与所有权建立，再启动一个 Worker；启动失败由局部 shared_ptr 析构回收。未配置输出时只为本次构建创建 StdoutFlush，不改变 Builder 配置。Worker 的回调按值持有 shared_ptr<LogFlush>，不捕获 AsyncLogger；最后一个日志器持有者释放时，由 Worker 析构停止并 join 后释放回调引用。Builder 若仍持有显式输出，输出对象会继续存活。可选 stop 直接复用 Worker 的排空、重复停止和后台异常重抛；不增加 start、shutdown、getter 或裸字节提交入口。消息提交在 2.3 接通，前台错误保存按调整后的计划在 2.6 实施。
 
 原 4 项配置测试迁至 test/core/asynclogger_test.cpp，并让普通及轮转文件测试实际 Build、stop。新增 3 项测试覆盖当时的默认构建后再配置、日志器自动回收，以及多次 Build 共享输出。2.3 复盘后将 Builder 收窄为只成功构建一次，并更新相应测试。
 
@@ -314,66 +317,66 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 147 项测试全部通�
 ##### 2.3：接通消息提交与目标生命周期
 
 - **做什么：** 实现 AsyncLogger::message，创建独享 LogStream 的 LogMessage，并在创建时绑定目标 AsyncLogger 及颜色；让消息正常析构时向 Worker 追加一次，后台通过目标的 writeAndFlush 写出。LogMessage 持有目标直至提交结束，输出回调不反向持有 AsyncLogger。
-- **范围：** 先通过 message(...).stream() 验证正常日志，不接显式宏，不增加新的序列化路径、文件策略或 Worker 缓冲机制。颜色由输出目标在构造时确定，终端默认启用等级颜色，文件使用纯文本。保存失败并由 stop 反馈的完整链路在 2.5 验收。
+- **范围：** 先通过 message(...).stream() 验证正常日志，不接显式宏，不增加新的序列化路径、文件策略或 Worker 缓冲机制。颜色由输出目标在构造时确定，终端默认启用等级颜色，文件使用纯文本。保存失败并由 stop 反馈的完整链路在 2.6 验收。
 - **验证：** 短消息写完立即 stop 后可完整读取；最后一个持有者释放时自动排空；长正文、空字节和跨块内容保留；同一 AsyncLogger 的并发消息不交错；不同 AsyncLogger 不串写；外部 shared_ptr 释放后，尚未结束的消息仍能安全提交；停止后拒绝创建或提交新消息。
 - **交付与审核：** 审核消息到 Worker 的调用链及目标生命周期，通过后再做 2.4。
 
-**2.3 实施结果（2026-11-10，待审核）。** `AsyncLogger::message(filename, line, level, savedErrno)` 接受 TRACE 至 ERROR，复用 LogMessage 的格式化和析构提交。消息的回调持有日志器，直到本条记录提交结束。颜色模式由 LogFlush 保存，StdoutFlush 默认启用，文件和自定义输出默认使用纯文本。自定义输出可在构造时指定颜色模式。AsyncLogger 创建消息时读取输出的模式。复盘后移除 Builder，原两段式构建改为 `AsyncLogger::BuildAsyncLogger<T>(args...)`。
+**2.3 实施结果（2026-11-10，已完成）。** `AsyncLogger::message(filename, line, level, savedErrno)` 接受 TRACE 至 ERROR，复用 LogMessage 的格式化和析构提交。消息的回调持有日志器，直到本条记录提交结束。颜色模式由 LogFlush 保存，StdoutFlush 默认启用，文件和自定义输出默认使用纯文本。自定义输出可在构造时指定颜色模式。AsyncLogger 创建消息时读取输出的模式。复盘后移除 Builder，原两段式构建改为 `AsyncLogger::BuildAsyncLogger<T>(args...)`。
 
-`AsyncLogger` 在调用 `AsyncWorker::stop()` 排空前标记停止。调用方必须先结束生产者及临时消息，再串行调用 stop。已创建但在停止后才析构的消息会被拒绝提交，并沿用 LogMessage 的 stderr 诊断。AsyncWorker 保持原有接口和实现，允许在启动前及两轮运行之间追加。消息通过 `shared_from_this()` 持有日志器。前台失败由 stop 反馈的机制留到 2.5。原 Builder 调用方需迁移到静态 BuildAsyncLogger 并重新编译。
+`AsyncLogger` 在调用 `AsyncWorker::stop()` 排空前标记停止。调用方必须先结束生产者及临时消息，再串行调用 stop。已创建但在停止后才析构的消息会被拒绝提交，并沿用 LogMessage 的 stderr 诊断。AsyncWorker 保持原有接口和实现，允许在启动前及两轮运行之间追加。消息通过 `shared_from_this()` 持有日志器。前台失败由 stop 反馈的机制留到 2.6。原 Builder 调用方需迁移到静态 BuildAsyncLogger 并重新编译。
 
 静态构建入口迁移后，移除了仅针对 Builder 的测试，将参数转发合并到输出生命周期测试。静态入口覆盖终端、普通文件和轮转文件，包含 Unicode 路径、输出构造失败时不创建 Worker、随后重新构建，以及消息完整性、停止和生命周期。颜色模式移到 LogFlush 后，新增自定义输出启用颜色的用例。Windows / MSVC / Debug / DLL 核心测试 149 项全部通过。未验证 Linux、线程启动失败、安装后的外部消费和持续压力。
 
-##### 2.4：显式流式宏与 errno 入口
+##### 2.4：整理日志器对象接口
 
-- **做什么：** 增加接口清单中的五个非 FATAL 等级宏和一个 SYS_ERROR 宏，复用同一个 message 入口，捕获调用处文件名及行号。
-- **范围：** 目标表达式和 savedErrno 参数各求值一次，空目标在入口明确拒绝；不为每个等级重复实现格式化。默认 DLOG_INFO() 等宏仍保留旧兼容链路，不增加异步 FATAL / SYS_FATAL 宏。
-- **验证：** 每个宏的等级、调用位置、正文及 savedErrno 正确；有副作用的参数只执行一次；空目标被拒绝；完整表达式结束时只提交一次。
-- **交付与审核：** 审核实际调用写法和宏行为，通过后再做 2.5。
+- **做什么：** 保留 `AsyncLogger::Ptr`（`std::shared_ptr<AsyncLogger>`），构建入口统一用该别名。调用方通过 `message(...).stream()` 写日志，已有 `savedErrno` 参数继续传递系统错误快照。
+- **范围：** 撤回最初加入 `asynclogger.h` 的显式宏及其专用辅助函数。现有 `logger.h` 的默认宏继续走旧兼容链路。显式宏、异步默认宏及对应宏测试统一安排到步骤 4。
+- **验证：** 核对构建入口、消息提交、输出目标和停止行为。通过对象入口验证传入的 errno 能写入日志。
+- **交付与审核：** 审核对象接口和宏边界，通过后再做 2.5。
 
-##### 2.5：停止和异常反馈
+**2.4 复核结果（2026-11-10，待确认）。** Windows / MSVC / Debug / DLL 全量测试 247 项通过、1 项跳过、0 项失败，其中核心测试 150 项通过。直接调用 `message()` 的用例验证文件中保留调用位置、错误描述和 errno。已确认异步显式宏及专用辅助函数从源码中移除，旧默认宏仍可用。未验证 Linux 或安装后的外部消费。
+
+##### 2.5：全局单例 LogManager
+
+- **做什么：** LogManager 在进程内统一持有默认和命名日志器。应用可通过 `AsyncLogger::BuildAsyncLogger()` 创建不同日志器，再按名称注册。提供查询、设置和获取默认目标的对象接口，初始默认输出为终端。拒绝空注册和重复名称，查不到名称时返回空指针。
+- **统一关闭：** 生产线程和临时消息结束后，由 LogManager 对默认和已注册的实例去重，调用现有的 `stop()`。一个实例失败时继续关闭其余实例，结束后反馈错误。重复关闭安全，关闭后拒绝注册及重新初始化。未注册实例由持有方收尾。
+- **范围：** 直接用 LogManager 的对象接口验证注册、查找、默认目标和关闭。现有默认宏仍走兼容入口。前台提交失败的完整反馈留到 2.6，新的公共宏入口留到步骤 4。
+- **验收：** 验证单例、默认终端、命名注册与查找、拒绝空目标及重名、不同日志器写入独立、共享同一实例时去重、输出失败时仍关闭其余实例，以及重复关闭。
+- **交付与审核：** 审核 Manager 的对象接口和全局生命周期，通过后再做 2.6。
+
+##### 2.6：停止和异常反馈
 
 - **做什么：** 补齐前台补换行或提交失败的保存与诊断，并由 stop 反馈；后台输出失败沿用 Worker 保存原异常、停止消费和停止时重抛的机制。多个失败保留首个已记录的错误，不自动重试可能已经写出前缀的数据。
 - **范围：** LogMessage 和 AsyncLogger 析构均不向外抛异常，普通使用仍可依赖自动回收；需要主动获取错误时才调用 stop。失败后仍要回收线程；重复 stop 不重复回收或输出，已保存错误仍可反馈；停止后拒绝使用。诊断直接写 stderr，不递归调用日志宏，也不新增错误回调注册接口。
 - **验证：** 用可控的抛错输出目标覆盖后台失败，检查 stop 收到原异常；覆盖能可靠触发的前台提交失败和析构诊断；验证失败后的自动回收、重复 stop 及停止后拒绝。未覆盖的分配失败或真实存储故障必须单独列出，不把回调主动抛错当作真实磁盘故障验证。
-- **交付与审核：** 审核错误是否可观察、回收是否完成，通过后再做 2.6。
+- **交付与审核：** 审核单实例停止及 LogManager 统一关闭的错误反馈，通过后再做 2.7。
 
-##### 2.6：单目标集成验收和文档
+##### 2.7：单目标集成验收和文档
 
-- **做什么：** 结合前五个小步，完成显式文件示例和 README。展示静态 BuildAsyncLogger 和显式宏的正常用法，说明最后一个持有者释放时自动回收；另列可选 stop 的主动等待及 try/catch 用法，不把它写成每次必做动作。
-- **验证：** 普通文件、轮转文件和终端分别作为单目标运行；核对消息完整性、颜色、并发、目标独立、生命周期、停止和错误反馈；重新构建库及受影响示例，运行适用的核心与工具测试，检查新增公共类所需的 DLL 导出和头文件依赖。发布全流程仍留在步骤 6，不因此提前扩展多输出等功能。
+- **做什么：** 完成显式文件示例和 README。展示静态 BuildAsyncLogger、对象接口写入、LogManager 的注册和统一关闭。未注册实例可自动回收，也可选用 stop 主动等待和获取错误。
+- **验证：** 普通文件、轮转文件和终端分别作为单目标运行；核对消息完整性、颜色、并发、目标独立、生命周期、停止和错误反馈；重新构建库及受影响示例，运行适用的核心与工具测试，检查新增公共类所需的 DLL 导出和头文件依赖。发布全流程留到步骤 5。
 - **交付与审核：** 报告当前真实接口、旧直接构造调用的迁移办法及重新编译要求，区分本轮实测和仍未验证的平台、压力或故障场景。完成后等待用户审核整个第二步，不自动开始步骤 3，也不自动提交 Git。
 
-**每小步共同约定：** 当前 2.3 待用户审核，2.4～2.6 均未实施。每次先说明要改哪些文件和行为，完成后报告实际验证及限制；用户明确审核通过后才进入下一小步。小步编号用于实施和审核，不强制每小步对应一次 Git 提交，提交仍由用户另行授权。
+**每小步共同约定：** 当前 2.4 待用户审核，2.5～2.7 均未实施。每次先说明要改哪些文件和行为，完成后报告实际验证及限制；用户明确审核通过后才进入下一小步。小步编号用于实施和审核，不强制每小步对应一次 Git 提交，提交仍由用户另行授权。
 
 #### 步骤 3：显式 AsyncLogger 的 FATAL 排空
 
-- **做什么：** 接入显式 FATAL / SYS_FATAL：提交致命记录，关闭该 AsyncLogger 的接收入口，排空此前已接收数据及致命记录，join 后 abort。协调仍在运行的生产者和多个关闭请求，避免继续追加、重复 join 或 join 自身；等待线程退出时不持有提交所需的锁。不依赖普通退出前已结束生产者的前提来实现 FATAL。
+- **做什么：** 先通过日志器的对象接口接通并验证 FATAL 记录。提交致命记录，关闭该 AsyncLogger 的接收入口，排空此前已接收数据及致命记录，join 后 abort。协调仍在运行的生产者和多个关闭请求，避免继续追加、重复 join 或 join 自身。等待线程退出时不持有提交所需的锁。FATAL 和 SYS_FATAL 宏留到步骤 4 的独立宏头文件。
 - **协调事项：** 当前 SetFlush 默认只刷新 stdout，不能复用为异步排空；writeAndFlush 的零长度调用也不承担排空。后台或提交失败时先作 stderr 诊断，再终止，不让异常逃出析构，也不宣称失败后仍可完整写盘。只保证目标 AsyncLogger 的已接收数据，不承诺排空其他 AsyncLogger。
-- **涉及：** AsyncLogger 关闭协调、记录 FATAL 路径、显式宏和子进程集成测试。
+- **涉及：** AsyncLogger 关闭协调、记录 FATAL 路径和子进程集成测试。
 - **验收：** 子进程终止后文件包含此前普通记录及致命记录；savedErrno 保留；输出失败仍有诊断并终止；有并发生产者或关闭请求时无死锁、无重复回收。不能只用“进程退出了”的断言替代文件检查。
 - **审核点：** 用户确认 FATAL 语义与子进程证据后，再进入默认入口迁移。
 
-#### 步骤 4：默认入口迁移和旧链路清理
+#### 步骤 4：独立宏头文件、默认入口迁移和旧链路清理
 
-- **做什么：** 保留 DLOG_INFO() 等调用形式，改为从默认 AsyncLogger 创建 LogMessage；接入已验收的 FATAL 路径和默认目标切换。默认目标为异步终端，AsyncLogger 仍自动管理生命周期；需要主动等待或获取异常时使用 stop，全局 Shutdown 在步骤 5 收口。
+- **做什么：** 新建独立公共宏头文件（暂定 `log.h`），集中暴露显式宏、默认宏以及已验收的 FATAL / SYS_FATAL 入口。显式宏使用调用方传入的日志器，默认宏通过 LogManager 取目标，再调用 AsyncLogger::message()。保留 DLOG_INFO() 等调用形式，移出 `logger.h` 中的宏定义，迁移业务示例和测试的包含路径。
 - **协调事项：** 退役 SetOutput/SetFlush 和旧临时 Logger 构造入口，自定义输出通过 LogFlush 接入。迁移现有异步示例、README 及测试后，移除旧 AsyncLogging 的重复队列/线程实现和临时兼容连接；不保留两个长期并行的后端。旧接口删除属于源代码和 ABI 变化，提供对应的新用法，并要求重新编译。
 - **默认目标与延迟：** 生产线程启动前完成配置，不承诺并发热切换。记录创建时绑定目标；切换本身不提前关闭旧目标，旧目标由持有方在记录结束后关闭。默认终端迁移前必须明确未满块的延迟：若本步采用“有数据即可处理”，同时修改 append 通知和后台谓词，并验证顺序、停止与失败；若保留周期策略，则在公开用法中明确延迟，不能宣称日志立即显示。默认终端首次使用的初始化失败也须有明确反馈。
-- **涉及：** 默认入口、logger.*、旧 asynclogging.* 及相关调用方、snippet、README、计划文档和测试；核对清理后的构建及导出。
-- **验收：** 默认六级与系统错误宏可用；有序切换目标时未结束记录仍交给原目标且颜色正确；默认终端正常退出排空；新异步示例可运行；旧入口在源码和公开文档中的遗留已清理；若调整 Worker 唤醒则覆盖未满块及时处理。运行受影响的核心、工具和集成测试。
-- **审核点：** 用户审核默认行为变化、旧接口迁移和清理结果后，再增加管理功能。
+- **涉及：** 公共宏头文件、LogManager 的默认入口、logger.*、旧 asynclogging.* 及相关调用方、snippet、README 和测试。核对构建及头文件导出。
+- **验收：** 单独包含宏头文件即可使用显式和默认宏；单独包含日志器头文件可使用对象接口。验证宏捕获调用处文件名和行号，目标表达式及 savedErrno 各求值一次，空目标明确报错，完整流式表达式只提交一次。有序切换目标时未结束记录仍交给原目标且颜色正确。默认终端正常退出排空，新异步示例可运行，旧入口已清理。若调整 Worker 唤醒，覆盖未满块及时处理。
+- **审核点：** 用户审核默认行为变化、头文件迁移和旧链路清理后，再增加多输出目标。
 
-### 第三步：简单命名管理与多个输出目标
-
-#### 步骤 5：简单命名管理与统一关闭
-
-- **做什么：** 全局 LogManager 保存默认和命名 AsyncLogger，注册时指定名称，并提供查询入口。重复名称拒绝，查不到返回空指针，显式日志入口仍检查空目标。配置和默认切换在业务线程启动前完成。
-- **统一关闭：** Shutdown 关闭默认及已注册的日志器，对同一实例去重；一个实例失败仍尝试关闭其他实例，完成回收后反馈失败。未注册的显式 AsyncLogger 由调用方关闭。重复 Shutdown 安全，关闭后不自动重建默认 AsyncLogger，也不支持全局重新初始化。
-- **涉及：** LogManager、默认入口、README 和命名/关闭集成测试。
-- **验收：** 名称唯一、查询及空目标行为明确；不同日志器内容独立；默认与命名指向同一实例时不重复处理；有失败仍回收其他实例；重复关闭和退出时无悬空回调。
-- **审核点：** 审核命名与全局生命周期，尚不增加多输出列表。
-
-#### 步骤 6：多个输出目标与发布验证
+#### 步骤 5：多个输出目标与发布验证
 
 - **做什么：** 将静态构建入口扩展到多个输出目标，沿用同一个 Worker。后台按顺序交付每个目标，同批一个目标失败仍尝试其他目标，再反馈错误。Worker 保存异常后停止消费并放弃剩余批次的行为不变，不增加自动重试。慢目标会拖慢该 AsyncLogger。
 - **格式与边界：** 混合终端与文件统一纯文本；只有终端输出时保留颜色。每目标独立格式、等级过滤、共享线程池、JSON 和网络备份仍不加入。
@@ -385,7 +388,7 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 147 项测试全部通�
 
 ## 6. 本轮边界与后续事项
 
-- 自动回收或主动停止前先结束日志生产者及临时消息；AsyncLogger 最后一个持有者释放时自动排空，stop 用于主动等待及错误反馈。步骤 5 的管理器统一关闭用于确定应用退出时点，不要求每个普通 AsyncLogger 都手工关闭。第一版不承诺运行中并发切换配置或全局关闭后重新初始化。
+- 自动回收或主动停止前先结束日志生产者及临时消息；AsyncLogger 最后一个持有者释放时自动排空，stop 用于主动等待及错误反馈。2.5 的 LogManager 统一关闭用于确定应用退出时点。第一版不承诺运行中并发切换配置或全局关闭后重新初始化。
 - 完成接收、完成 fflush、完成系统存储同步是不同阶段。本轮只保证文件层刷新，不承诺断电持久性，也不直接迁 Kama 的 fsync 配置。
 - 待写队列仍无总量上限。核心用法完成后再单独定义积压上限和满载策略，用可控慢输出测试超大消息、并发、停止和失败，不照搬可能永久等待的 SAFE 模式。
 - 现有 LogFile 允许空文件接收超限批次；跨块记录可能跨文件，不承诺文件大小硬上限或按行轮转。
@@ -401,7 +404,7 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 147 项测试全部通�
 | 3 | [AsyncLogger.hpp][ref-logger] | [AsyncLogger](../src/core/asynclogger.h)、[LogMessage](../src/core/logmessage.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 当前 2.3 的消息提交已实现，待用户审核。下一项为 2.4 的显式流式宏和 errno 入口，用户指示继续后再开始。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
+**独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 当前 2.4 保留 Ptr 和对象接口，待用户审核。下一项为 2.5 的全局单例 LogManager，新的宏入口留到步骤 4。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 

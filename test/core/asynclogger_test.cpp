@@ -2,6 +2,7 @@
 
 #include "asynclogger.h"
 
+#include <cerrno>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -262,4 +264,17 @@ TEST(AsyncLoggerMessageTest, CustomOutputCanEnableLevelColor)
 
     EXPECT_NE(text.find("\x1b["), std::string::npos);
     EXPECT_NE(text.find("[app.cpp:42] custom record\n"), std::string::npos);
+}
+
+
+TEST_F(AsyncLoggerFileTest, MessagePreservesSavedErrno)
+{
+    const auto path = m_directory / "errno.log";
+    AsyncLogger::Ptr logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
+    logger->message("app.cpp", 42, LogLevel::ERROR, EACCES).stream() << "open failed";
+    logger->stop();
+
+    const auto errorText = std::error_code(EACCES, std::generic_category()).message();
+    const auto expected = "[ERROR] [app.cpp:42] " + errorText + " (errno=" + std::to_string(EACCES) + ") open failed\n";
+    EXPECT_NE(readFile(path).find(expected), std::string::npos);
 }
