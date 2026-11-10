@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,13 @@ namespace
         }
 
         std::filesystem::path m_directory;
+
+        std::string readFile(const std::filesystem::path &path)
+        {
+            std::ifstream input(path, std::ios::binary);
+            EXPECT_TRUE(input);
+            return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        }
     };
 
     class TrackedFlush : public LogFlush
@@ -135,24 +143,16 @@ TEST_F(AsyncLoggerBuilderTest, ConstructionErrorsPreserveExistingFileAndAllowRet
     EXPECT_EQ(contents, "keep");
 }
 
-TEST(AsyncLoggerLifetimeTest, DefaultBuildDoesNotSetBuilderOutput)
+TEST_F(AsyncLoggerBuilderTest, DefaultBuildRejectsReuseBeforeCreatingAnOutput)
 {
-    int constructions = 0;
-    int destructions = 0;
-    std::shared_ptr<AsyncLogger> defaultLogger;
-    {
-        AsyncLoggerBuilder builder;
-        defaultLogger = builder.Build();
-        ASSERT_NE(defaultLogger, nullptr);
+    const auto path = m_directory / "rejected" / "second.log";
+    AsyncLoggerBuilder builder;
+    auto defaultLogger = builder.Build();
+    ASSERT_NE(defaultLogger, nullptr);
 
-        // 默认输出只属于先前那次 Build，Builder 后续配置不会替换已建日志器的目标。
-        builder.BuildLoggerFlush<TrackedFlush>(constructions, destructions, std::make_unique<int>(42));
-        auto configuredLogger = builder.Build();
-        ASSERT_NE(configuredLogger, nullptr);
-        EXPECT_EQ(constructions, 1);
-        EXPECT_NO_THROW(configuredLogger->stop());
-    }
-    EXPECT_EQ(destructions, 1);
+    EXPECT_THROW(builder.Build(), std::logic_error);
+    EXPECT_THROW(builder.BuildLoggerFlush<FileFlush>(path), std::logic_error);
+    EXPECT_FALSE(std::filesystem::exists(path.parent_path()));
     EXPECT_NO_THROW(defaultLogger->stop());
     EXPECT_NO_THROW(defaultLogger->stop());
 }
@@ -181,27 +181,134 @@ TEST(AsyncLoggerLifetimeTest, LastOwnerAutomaticallyReclaimsWorkerAndOutput)
     EXPECT_EQ(destructions, 1);
 }
 
-TEST(AsyncLoggerLifetimeTest, ReusingBuilderCreatesSeparateLoggersSharingConfiguredOutput)
+TEST(AsyncLoggerLifetimeTest, ConfiguredBuildTransfersOutputAndRejectsReuse)
 {
     int constructions = 0;
     int destructions = 0;
-    std::shared_ptr<AsyncLogger> first;
-    std::shared_ptr<AsyncLogger> second;
     const int workersBefore = Thread::NumCreated();
-    {
-        AsyncLoggerBuilder builder;
-        builder.BuildLoggerFlush<TrackedFlush>(constructions, destructions, std::make_unique<int>(42));
-        first = builder.Build();
-        second = builder.Build();
-        EXPECT_NE(first, second);
-        EXPECT_EQ(Thread::NumCreated(), workersBefore + 2);
-        EXPECT_EQ(constructions, 1);
-    }
-    EXPECT_NO_THROW(first->stop());
-    EXPECT_NO_THROW(first->stop());
-    first.reset();
+    AsyncLoggerBuilder builder;
+    builder.BuildLoggerFlush<TrackedFlush>(constructions, destructions, std::make_unique<int>(42));
+    auto logger = builder.Build();
+    ASSERT_NE(logger, nullptr);
+
+    EXPECT_THROW(builder.Build(), std::logic_error);
+    EXPECT_EQ(Thread::NumCreated(), workersBefore + 1);
+    EXPECT_EQ(constructions, 1);
     EXPECT_EQ(destructions, 0);
-    EXPECT_NO_THROW(second->stop());
-    second.reset();
+    logger.reset();
     EXPECT_EQ(destructions, 1);
+}
+
+
+TEST_F(AsyncLoggerBuilderTest, ExplicitStopDrainsOnlyItsOwnTarget)
+{
+    const auto firstPath = m_directory / "first.log";
+    const auto secondPath = m_directory / "second.log";
+    AsyncLoggerBuilder firstBuilder;
+    AsyncLoggerBuilder secondBuilder;
+    firstBuilder.BuildLoggerFlush<FileFlush>(firstPath);
+    secondBuilder.BuildLoggerFlush<FileFlush>(secondPath);
+    auto first = firstBuilder.Build();
+    auto second = secondBuilder.Build();
+
+    first->message("src/app.cpp", 42, LogLevel::INFO).stream() << "first record";
+    second->message("src/app.cpp", 43, LogLevel::WARN).stream() << "second record";
+    first->stop();
+    second->stop();
+
+    const auto firstText = readFile(firstPath);
+    const auto secondText = readFile(secondPath);
+    EXPECT_NE(firstText.find("[app.cpp:42] first record\n"), std::string::npos);
+    EXPECT_NE(secondText.find("[app.cpp:43] second record\n"), std::string::npos);
+    EXPECT_EQ(firstText.find("second record"), std::string::npos);
+    EXPECT_EQ(secondText.find("first record"), std::string::npos);
+    EXPECT_EQ(firstText.find('\x1b'), std::string::npos);
+    EXPECT_EQ(secondText.find('\x1b'), std::string::npos);
+}
+
+
+TEST_F(AsyncLoggerBuilderTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
+{
+    const auto path = m_directory / "auto.log";
+    AsyncLoggerBuilder builder;
+    builder.BuildLoggerFlush<FileFlush>(path);
+    auto logger = builder.Build();
+    std::weak_ptr<AsyncLogger> observer = logger;
+    {
+        auto message = logger->message("app.cpp", 42, LogLevel::INFO);
+        logger.reset();
+        EXPECT_FALSE(observer.expired());
+        message.stream() << "last record";
+    }
+    EXPECT_TRUE(observer.expired());
+    EXPECT_NE(readFile(path).find("[app.cpp:42] last record\n"), std::string::npos);
+}
+
+
+TEST_F(AsyncLoggerBuilderTest, ConcurrentRecordsStayWholeAcrossBufferBoundaries)
+{
+    const auto path = m_directory / "concurrent.log";
+    AsyncLoggerBuilder builder;
+    builder.BuildLoggerFlush<FileFlush>(path);
+    auto logger = builder.Build();
+    std::string longRecord(2 * kLargeFixedBufferSize + 1, 'a');
+    longRecord[kLargeFixedBufferSize] = '\0';
+    const std::string otherRecord(kLargeFixedBufferSize + 1, 'b');
+
+    std::thread first([&] { logger->message("app.cpp", 41, LogLevel::INFO).stream() << longRecord; });
+    std::thread second([&] { logger->message("app.cpp", 42, LogLevel::INFO).stream() << otherRecord; });
+    first.join();
+    second.join();
+    logger->stop();
+
+    std::ifstream input(path, std::ios::binary);
+    ASSERT_TRUE(input);
+    std::string line;
+    int firstRecords = 0;
+    for (int i = 0; i < 2; ++i)
+    {
+        ASSERT_TRUE(std::getline(input, line));
+        const auto firstSource = line.find("[app.cpp:41] ");
+        const bool isFirst = firstSource != std::string::npos;
+        const auto source = isFirst ? firstSource : line.find("[app.cpp:42] ");
+        ASSERT_NE(source, std::string::npos);
+        if (isFirst) ++firstRecords;
+        const auto &expected = isFirst ? longRecord : otherRecord;
+        EXPECT_EQ(line.compare(source + sizeof("[app.cpp:41] ") - 1, std::string::npos, expected), 0);
+    }
+    EXPECT_EQ(firstRecords, 1);
+    EXPECT_FALSE(std::getline(input, line));
+}
+
+
+TEST_F(AsyncLoggerBuilderTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
+{
+    const auto path = m_directory / "stopped.log";
+    AsyncLoggerBuilder builder;
+    builder.BuildLoggerFlush<FileFlush>(path);
+    auto logger = builder.Build();
+
+    EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::FATAL), std::invalid_argument);
+    EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::LEVEL_COUNT), std::invalid_argument);
+    testing::internal::CaptureStderr();
+    {
+        auto message = logger->message("app.cpp", 42, LogLevel::INFO);
+        message.stream() << "too late";
+        EXPECT_NO_THROW(logger->stop());
+    }
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("log message submission failed"), std::string::npos);
+    EXPECT_THROW(logger->message("app.cpp", 43, LogLevel::INFO), std::logic_error);
+    EXPECT_TRUE(readFile(path).empty());
+}
+
+
+TEST(AsyncLoggerMessageTest, DefaultStdoutColorsTheLevel)
+{
+    auto logger = AsyncLoggerBuilder().Build();
+    testing::internal::CaptureStdout();
+    logger->message("app.cpp", 42, LogLevel::INFO).stream() << "console record";
+    EXPECT_NO_THROW(logger->stop());
+    const auto text = testing::internal::GetCapturedStdout();
+    EXPECT_NE(text.find("\x1b["), std::string::npos);
+    EXPECT_NE(text.find("[app.cpp:42] console record"), std::string::npos);
 }

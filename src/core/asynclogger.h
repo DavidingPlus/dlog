@@ -3,7 +3,9 @@
 
 #include "asyncworker.h"
 #include "logflush.h"
+#include "logmessage.h"
 
+#include <atomic>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -13,8 +15,7 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 // 长期日志器，由 AsyncLoggerBuilder 创建并启动；最后一个 shared_ptr 释放时自动回收 Worker。
-// 当前仅接入资源生命周期，消息入口在 2.3 接通；原 Logger 仍作为临时日志兼容入口。
-class DLOG_API_EXPORTED AsyncLogger
+class DLOG_API_EXPORTED AsyncLogger : public std::enable_shared_from_this<AsyncLogger>
 {
 
     DLOG_CLASS_NONCOPYABLE(AsyncLogger)
@@ -26,9 +27,12 @@ public:
     // Worker 先停止并 join，再释放其回调持有的输出对象；析构不重抛后台错误。
     ~AsyncLogger() = default;
 
+    // 消息持有日志器，析构时提交。当前仅接受 TRACE 至 ERROR。
+    LogMessage message(const char *filename, int line, LogLevel level, int savedErrno = 0);
+
     // 可选的主动等待：正常停止会排空，后台失败在回收线程后重抛；可重复调用，不提供重启。
-    // 调用方应先结束生产者与临时消息，再串行控制停止；不得从输出回调中停止或销毁本对象。
-    void stop() { m_worker.stop(); }
+    // 调用方必须先结束生产者与临时消息，再串行调用 stop；不得从输出回调中停止或销毁本对象。
+    void stop();
 
 
 private:
@@ -36,6 +40,10 @@ private:
 
     explicit AsyncLogger(std::shared_ptr<LogFlush> output);
 
+
+    LogLevelColorMode m_colorMode;
+
+    std::atomic_bool m_stopped{false};
 
     AsyncWorker m_worker;
 };
@@ -45,24 +53,30 @@ private:
 class DLOG_API_EXPORTED AsyncLoggerBuilder
 {
 
+    DLOG_CLASS_NONCOPYABLE(AsyncLoggerBuilder)
+
 public:
 
     template <typename LogFlushType, typename... Args>
     void BuildLoggerFlush(Args &&...args);
 
-    // 未配置时仅为本次构建创建 StdoutFlush；多次 Build 各有一个 Worker，但显式配置的输出对象共享。
+    // 默认使用 StdoutFlush。成功构建后，Builder 不再接受配置或构建。
     std::shared_ptr<AsyncLogger> Build();
 
 
 private:
 
     std::shared_ptr<LogFlush> m_output;
+
+    bool m_built = false;
 };
 
 
 template <typename LogFlushType, typename... Args>
 void AsyncLoggerBuilder::BuildLoggerFlush(Args &&...args)
 {
+    if (m_built) throw std::logic_error("AsyncLoggerBuilder::BuildLoggerFlush(): builder already used");
+
     // TODO 当前仅支持单输出，步骤 6 扩展多目标时调整此限制。
     if (m_output) throw std::logic_error("AsyncLoggerBuilder::BuildLoggerFlush(): only one output is supported");
 
