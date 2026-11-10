@@ -4,6 +4,7 @@
 #include "globalmacros.h"
 
 #include "logfile.h"
+#include "loglevel.h"
 
 #include <memory>
 #include <filesystem>
@@ -21,8 +22,20 @@ public:
 
     virtual ~LogFlush() = default;
 
+    LogLevelColorMode colorMode() const { return m_colorMode; }
+
     // 写入并刷新；len 为 0 时不操作。
     virtual void writeAndFlush(const char *data, size_t len) = 0;
+
+
+protected:
+
+    explicit LogFlush(LogLevelColorMode colorMode = LogLevelColorMode::OFF) : m_colorMode(colorMode) {}
+
+
+private:
+
+    LogLevelColorMode m_colorMode;
 };
 
 
@@ -30,6 +43,8 @@ class DLOG_API_EXPORTED StdoutFlush : public LogFlush
 {
 
 public:
+
+    StdoutFlush() : LogFlush(LogLevelColorMode::ON) {}
 
     virtual void writeAndFlush(const char *data, size_t len) override;
 };
