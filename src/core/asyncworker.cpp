@@ -59,6 +59,7 @@ void AsyncWorker::append(const char *data, size_t length)
     }
 
     // 有完整缓冲区可供后台写入时，解锁后唤醒消费者线程。
+    // TODO 后续评估有数据即可处理，需同时调整此处通知和后台等待谓词，避免未满块等待周期；方案见 docs/plan.md。
     if (queuedBuffer) m_cond.notify_one();
 }
 
@@ -164,7 +165,7 @@ void AsyncWorker::threadFunc()
             // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
             for (auto &buffer : buffersToWrite)
             {
-                if (buffer && buffer->readableBytes() > 0) m_output(buffer->readableBegin(), buffer->readableBytes());
+                if (buffer && buffer->readableBytes() > 0) m_output(*buffer);
             }
 
             // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。

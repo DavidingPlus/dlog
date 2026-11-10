@@ -147,7 +147,7 @@ DLOG_LOGGER_INFO(app) 或迁移后的 DLOG_INFO()
 class AsyncWorker
 {
 public:
-    using OutputFunc = std::function<void(const char *, size_t)>;
+    using OutputFunc = std::function<void(const LargeFixedBuffer &)>;
 
     explicit AsyncWorker(OutputFunc output,
                          unsigned int flushInterval = 3);
@@ -167,7 +167,7 @@ public:
 | stop | 未启动时不输出已缓存数据；调用前应结束生产者。正常停止时排空并 join；后台失败时先 join，再重抛原异常 |
 | 析构 | 停止并回收线程，后台异常由显式 stop 报告 |
 
-OutputFunc 在后台释放队列锁后执行，数据仅在本次回调期间有效；异步转交其他线程必须自行复制。每个非空块为一个批次；输出目标和回调捕获对象必须活到 Worker stop/join 完成之后。不得从回调中启停或销毁 Worker，避免线程 join 自身。控制操作串行执行，多个生产者可并发 append。
+OutputFunc 在后台释放队列锁后执行，接收只读的 `const LargeFixedBuffer &`，通过 `readableBegin()` 和 `readableBytes()` 读取本批字节。缓冲区的清空和复用由 Worker 管理，引用及数据仅在本次回调期间有效；异步转交其他线程必须自行复制。每个非空块为一个批次；输出目标和回调捕获对象必须活到 Worker stop/join 完成之后。不得从回调中启停或销毁 Worker，避免线程 join 自身。控制操作串行执行，多个生产者可并发 append。
 
 **当前状态与待设计事项。**
 
@@ -177,6 +177,16 @@ OutputFunc 在后台释放队列锁后执行，数据仅在本次回调期间有
 - 前台轮换缓冲时先准备替换块，后台缺少备用块时也先分配再移交，避免分配失败后丢失生产者缓冲指针。
 - FileUtil 遇到流写入错误时保留已接收的字节数，并抛出带错误码的异常。FileFlush 将异常传给 Worker。旧 AsyncLogging 在追加处捕获这类错误，打印后继续刷新已接收的前缀。
 - 不移植 Kama 的容量等待：超出固定容量的消息可能一直等待，停止条件也需单独处理；不采用其单次扩容策略。停止及排空采用 dlog 当前规则。
+
+**Worker 后续对齐（暂不实施，2026-11-10）。**
+
+本次继续对照 Kama 的 Worker、Buffer 和 AsyncLogger 源码，仅记录后续方案，当前仍采用完整块入队通知、未满块周期处理。
+
+1. 优先评估“有数据即可处理”的消费策略。Kama 每次追加后通知消费者；当前低流量下，一条未填满缓冲块的日志可能接近默认 3 秒后才输出。后续若调整，应同时让 append 在有效追加后解锁通知，并让后台等待谓词检查生产者缓冲区非空；只增加 notify_one 无法让当前谓词通过。后台仍一次取走当时积累的数据，不保证每次追加对应一次回调。届时一并明确周期间隔是否保留及其用途，比较终端延迟、小批次回调和文件刷新次数，并验证未满块及时处理、跨块顺序、停止排空及异常回收。
+2. 核心用法完成后再设计积压上限和满载策略。LargeFixedBuffer 只限制单块容量，待处理队列仍可持续增长；先确定满载时阻塞、丢弃或报告失败，再实现机制和测试。借鉴 Kama 的容量等待思路，但不直接移植其 SAFE / UNSAFE：等待需要覆盖停止和失败，超大消息也必须能结束处理。
+3. 线程生命周期随 Logger 接入处理。保留 Worker 的显式 start/stop，由后续长期 Logger 内部管理启动和关闭，业务侧不重复操作 Worker；暂不改为构造自动启动。
+
+继续保留固定块队列和线程局部的 buffersToWrite、replaceBuffer，无需改成 Kama 的两个成员缓冲区。回调已使用 const LargeFixedBuffer &，缓冲区清空和复用由 Worker 管理；正常排空、重复停止安全及后台异常传递也继续保留。上述对比来自静态阅读，未运行 Kama，消费策略变更的吞吐影响尚未测量。
 
 **验证范围。** Worker 测试覆盖输入复制、跨块和并发追加、周期处理、重复启停、正常排空、终端和文件回调，以及回调主动抛错后的异常传递。线程创建失败的回滚、Linux、持续压力和真实存储故障尚未验证。
 

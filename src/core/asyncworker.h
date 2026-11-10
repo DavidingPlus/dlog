@@ -24,9 +24,8 @@ class DLOG_API_EXPORTED AsyncWorker
 
 public:
 
-    // 后台按批次交付字节；数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免后台线程 join 自身。
-    using OutputFunc = std::function<void(const char *, size_t)>;
-
+    // 后台按批次交付只读缓冲块。缓冲区由 AsyncWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免后台线程 join 自身。
+    using OutputFunc = std::function<void(const LargeFixedBuffer &)>;
 
     // 保存输出回调并准备缓冲，不启动线程；flushInterval 为周期处理间隔，单位为秒。
     explicit AsyncWorker(OutputFunc output, unsigned int flushInterval = 3);

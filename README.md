@@ -117,8 +117,8 @@ Worker 不格式化日志、不保存文件配置，输出方式由回调决定�
 #include <string>
 
 std::string received;
-dlog::AsyncWorker worker([&received](const char *data, size_t length) {
-    received.append(data, length);
+dlog::AsyncWorker worker([&received](const dlog::LargeFixedBuffer &buffer) {
+    received.append(buffer.readableBegin(), buffer.readableBytes());
 });
 worker.append("hello\n", 6);
 worker.start();
@@ -126,7 +126,7 @@ worker.stop();
 // stop/join 完成后读取 received，内容为 "hello\n"。
 ```
 
-回调在后台、队列锁外执行，数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop/join 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。默认按整块唤醒、未满块周期处理，间隔为秒，传入 0 时至少等待 1 秒。
+回调在后台、队列锁外执行，接收 `const LargeFixedBuffer &`，通过 `readableBegin()` 和 `readableBytes()` 读取本批字节。缓冲区的清空和复用由 Worker 管理，引用及数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop/join 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。默认按整块唤醒、未满块周期处理，间隔为秒，传入 0 时至少等待 1 秒。
 
 后台抛出异常时，Worker 停止消费并放弃剩余待写数据。显式 `stop()` 等线程退出后重抛原异常，析构只负责回收。失败后的非空 `append()` 和 `start()` 也会重抛该异常。未启动时 `stop()` 不输出缓存数据。
 
