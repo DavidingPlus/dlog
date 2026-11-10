@@ -120,6 +120,78 @@ TEST(AsyncWorkerTest, StopRethrowsOriginalBackgroundError)
     EXPECT_THROW(worker.stop(), std::runtime_error);
 }
 
+TEST(AsyncWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
+{
+    struct OutputError
+    {
+        int code;
+    };
+    std::promise<void> entered;
+    auto enteredResult = entered.get_future();
+    std::promise<void> release;
+    auto releaseResult = release.get_future();
+    size_t calls = 0;
+    AsyncWorker worker([&](const char *, size_t)
+                       {
+                           ++calls;
+                           entered.set_value();
+                           releaseResult.wait();
+                           throw OutputError{71}; },
+                       60);
+    const std::string fullBlock(kLargeFixedBufferSize, 'E');
+    worker.append(fullBlock.data(), fullBlock.size());
+    worker.start();
+    const auto enteredStatus = enteredResult.wait_for(5s);
+    if (enteredStatus != std::future_status::ready)
+    {
+        release.set_value();
+        FAIL() << "Expected output before stop";
+    }
+
+    // 在回调抛错前留下完整待写块和生产者尾部，验证失败后不会继续输出它们。
+    worker.append(fullBlock.data(), fullBlock.size());
+    worker.append("tail", 4);
+    release.set_value();
+
+    bool failedBeforeStop = false;
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        try
+        {
+            worker.append("x", 1);
+        }
+        catch (const OutputError &error)
+        {
+            EXPECT_EQ(error.code, 71);
+            failedBeforeStop = true;
+            break;
+        }
+        std::this_thread::sleep_for(1ms);
+    }
+
+    EXPECT_TRUE(failedBeforeStop);
+    EXPECT_THROW(worker.stop(), OutputError);
+    EXPECT_THROW(worker.stop(), OutputError);
+    EXPECT_THROW(worker.start(), OutputError);
+    EXPECT_EQ(calls, 1u);
+}
+
+TEST(AsyncWorkerTest, DestructorJoinsAfterBackgroundErrorWithoutExplicitStop)
+{
+    size_t calls = 0;
+    {
+        AsyncWorker worker([&](const char *, size_t)
+                           {
+                               ++calls;
+                               throw std::runtime_error("output failed during destruction"); },
+                           60);
+        worker.append("tail", 4);
+        worker.start();
+    }
+    EXPECT_EQ(calls, 1u);
+}
+
 TEST(AsyncWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
 {
     std::promise<std::string> delivered;
