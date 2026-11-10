@@ -8,7 +8,7 @@
 
 **执行约定（2026-11-10）：先落文档，再逐步实施。** 步骤 1 已完成实现，按用户“复核无问题后分四到五批提交”的授权完成本轮复核，并分四批提交；当前按下述小步推进步骤 2。后续仍在每次开始前说明范围，完成后报告实际改动、验证结果及剩余限制，等待用户明确审核通过后再进入下一步。提交当前步骤不表示授权自动开始下一步；未获明确要求不提交 Git。
 
-**第二步细化（2026-11-10）：** 2.1～2.4 已完成，2.5 全局单例 LogManager 已实现，待审核。停止和异常反馈、单目标集成验收分别为 2.6、2.7。宏入口统一留到步骤 4。
+**第二步细化（2026-11-10）：** 2.1～2.4 已完成；2.5 的模块内单例 LogManager、析构统一收尾及 Windows DLL 退出修复已提交（`aa1882e`），待整体审核。2.6 的停止和异常反馈仍需补齐前台失败保存及 stop 反馈，2.7 的单目标集成验收尚未实施。宏入口统一留到步骤 4。
 
 - [x] 动态 FlexibleBuffer 接入 LogStream 和 Logger，超长记录完整交付。
 - [x] 验证 5000 字节正文、空字节、颜色、边界换行及超过两个异步缓冲块的记录完整落盘。
@@ -25,7 +25,7 @@
 - [x] Worker 捕获后台异常，显式停止时重抛原异常。
 - [x] FileUtil 报告流写入失败，旧 AsyncLogging 保留短写诊断和刷新已接收数据的行为。
 - [x] 步骤 1：内部 LogMessage 已提取，保留旧入口；复核通过，按用户授权分批提交。
-- [ ] 步骤 2：长期 AsyncLogger 接通单目标 Worker，并由全局 LogManager 管理。2.5 实现完成待审核，2.6～2.7 待实施。
+- [ ] 步骤 2：长期 AsyncLogger 接通单目标 Worker，并由模块内 LogManager 管理。2.5 的实现及退出修复已提交，待整体审核；2.6～2.7 尚未完成，整个步骤 2 仍未验收。
 - [ ] 步骤 3：验证显式 AsyncLogger 的 FATAL 排空及终止。
 - [ ] 步骤 4：将宏集中到独立公共头文件，迁移默认流式宏和旧调用链。
 - [ ] 步骤 5：增加多个输出目标，完成发布接口验证。
@@ -85,7 +85,7 @@ Kama 的 SAFE 表示容量等待策略，不代表整个实现已经可靠。相
 
 ## 3. 迁移后怎样使用
 
-静态 BuildAsyncLogger、message、正常 stop 和 LogManager 已实现。`AsyncLogger::BuildAsyncLogger<T>(...)` 使用现有 LogFlushFactory 创建输出，`AsyncLogger::BuildAsyncLogger()` 使用默认终端输出。当前通过对象接口写入，可以用 LogManager 注册命名日志器；默认日志器固定为终端。Manager 正常退出自动排空在 Windows DLL 配置下尚未通过验证。步骤 4 再通过独立公共头文件暴露显式宏和异步默认宏。
+静态 BuildAsyncLogger、message、正常 stop 和 LogManager 已实现。`AsyncLogger::BuildAsyncLogger<T>(...)` 使用现有 LogFlushFactory 创建输出，`AsyncLogger::BuildAsyncLogger()` 使用默认终端输出。当前通过对象接口写入，可以用 LogManager 注册命名日志器；默认日志器固定为终端。主程序中使用模块内 Manager 的正常退出自动排空已通过 Windows / MSVC / Debug / DLL 验证；EXE 与其他 DLL 各自持有实例，其他 DLL 内实例的退出排空不由该结果保证。步骤 4 再通过独立公共头文件暴露显式宏和异步默认宏。
 
 显式异步文件日志器（步骤 2）：
 
@@ -100,12 +100,12 @@ app->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "request=" <<
 // 如果需要提前等待写完、捕获输出异常，可在此处显式调用 app->stop()。
 ```
 
-默认异步输出终端（统一关闭在 2.5 接入，默认宏在步骤 4 接入）：
+默认异步输出终端（以下为步骤 4 的目标用法，当前默认宏仍走旧兼容入口；Manager 的析构收尾已在 2.5 接通）：
 
 ```cpp
 DLOG_INFO() << "request=" << 42;
 
-// LogManager 的正常退出自动排空在 Windows DLL 配置下尚待解决。
+// 步骤 4 迁移后使用本模块默认日志器；主程序中 Manager 的正常退出排空已验证。
 // 退出前需先结束所有生产线程及临时消息。
 ```
 
@@ -120,7 +120,7 @@ manager.registerLogger("app", app);
 manager.getLogger("app")->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "request=" << 42;
 ```
 
-`logs/app` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式使用完整文件名。BuildAsyncLogger 通过 LogFlushFactory 准备输出、目录和文件，再创建 AsyncLogger 并启动 Worker。输出构造或线程启动失败均从 BuildAsyncLogger 报告。正常使用不要求手动调用 stop，也不再手工接 SetOutput/SetFlush 或启停 Worker。自动回收发生在最后一个 AsyncLogger 持有者释放时；局部 shared_ptr 离开作用域时若管理器或消息仍持有它，不会提前析构。未注册的显式 AsyncLogger 由持有方管理，不能假定全局 Shutdown 自动发现所有实例。
+`logs/app` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式使用完整文件名。BuildAsyncLogger 通过 LogFlushFactory 准备输出、目录和文件，再创建 AsyncLogger 并启动 Worker。输出构造或线程启动失败均从 BuildAsyncLogger 报告。正常使用不要求手动调用 stop，也不再手工接 SetOutput/SetFlush 或启停 Worker。自动回收发生在最后一个 AsyncLogger 持有者释放时；局部 shared_ptr 离开作用域时若管理器或消息仍持有它，不会提前析构。未注册的显式 AsyncLogger 由持有方管理，不能假定 LogManager 会自动发现未注册的实例；当前不提供单独的 shutdown() 接口。
 
 LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush，不重复实现轮转。以本次代码基线为准，旧 AsyncLogging 直接使用 LogFile，在追加和刷新之间处理流写入错误；前面的 RollFileFlush 迁移记录描述此前状态。FileFlush 的双参数构造为 protected；直接调用旧入口的使用方需改用 RollFileFlush。AsyncLogging 路径接口及对象布局已改变，使用方需重新编译。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录；目录创建失败或路径被非目录占用时抛出 filesystem_error。AsyncLogger 的创建和消息提交分别在 2.2 和 2.3 接通。LogFlushFactory 只创建输出对象。
 
@@ -139,7 +139,7 @@ LogFile 分别提供 `append()` 和 `flush()`。FileFlush 将两次调用组合�
 | 现有 AsyncLogging | 目前保留原文件后端和调用链，后续迁移到长期 AsyncLogger |
 | LogFlush | 单一接口 `writeAndFlush(data, len)`：按显式长度写入并刷新；长度为 0 时直接返回 |
 | StdoutFlush / FileFlush / RollFileFlush | 分别输出到终端、普通文件、轮转文件；文件类共用写入与刷新，轮转行为由 LogFile 决定 |
-| 全局单例 LogManager（2.5） | 保存固定的默认终端日志器和命名 AsyncLogger，提供注册、查找和统一关闭 |
+| 模块内单例 LogManager（2.5） | 保存本模块固定的默认终端日志器和命名 AsyncLogger，提供注册、查找和析构统一关闭；EXE 与其他 DLL 不共享实例 |
 | 独立宏头文件（步骤 4） | 捕获调用位置，显式宏使用传入的目标，默认宏从 LogManager 取默认目标 |
 
 以下是步骤 4 的目标数据流。当前通过 AsyncLogger::message() 进入同一条写入链路。
@@ -283,7 +283,7 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 140 项全部通过，�
 | 2.2 | 长期 AsyncLogger 的创建和自动回收 | 已完成，用户已指示继续 |
 | 2.3 | LogMessage 到 Worker 的正常提交 | 已完成，用户已指示继续 |
 | 2.4 | 保留 Ptr，复核直接消息入口和 errno 传递 | 已完成，用户已指示继续 |
-| 2.5 | 全局单例 LogManager、命名管理和统一关闭 | 实现完成，待用户审核 |
+| 2.5 | 模块内单例 LogManager、命名管理和析构统一关闭 | 实现及 Windows DLL 退出修复已提交（aa1882e），待整体审核 |
 | 2.6 | 输出失败及前台提交失败的反馈 | 待实施 |
 | 2.7 | 单目标集成验收和使用说明 | 待实施 |
 
@@ -335,23 +335,27 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 147 项测试全部通�
 
 **2.4 复核结果（2026-11-10，用户已指示继续）。** Windows / MSVC / Debug / DLL 全量测试 247 项通过、1 项跳过、0 项失败，其中核心测试 150 项通过。直接调用 `message()` 的用例验证文件中保留调用位置、错误描述和 errno。已确认异步显式宏及专用辅助函数从源码中移除，旧默认宏仍可用。未验证 Linux 或安装后的外部消费。
 
-##### 2.5：全局单例 LogManager
+##### 2.5：模块内单例 LogManager
 
-- **做什么：** LogManager 在进程内统一持有固定的默认终端日志器和命名日志器。应用可通过 `AsyncLogger::BuildAsyncLogger()` 创建不同日志器，再按名称注册。提供命名目标注册、查找和默认终端目标查询接口。拒绝空注册和重复名称，查不到名称时返回空指针。
-- **统一关闭：** 生产线程、临时消息及注册操作结束后，由 LogManager 停止默认和已注册的日志器，关闭期间不得修改命名表。同一实例注册多个名称时会重复调用 `stop()`。一个实例失败时继续关闭其余实例，结束后反馈错误。未注册实例由持有方收尾。
+- **做什么：** LogManager 在调用模块内统一持有固定的默认终端日志器和命名日志器；EXE 与其他 DLL 各自持有实例，不保证跨 DLL 的进程级单例。应用可通过 `AsyncLogger::BuildAsyncLogger()` 创建不同日志器，再按名称注册。提供命名目标注册、查找和默认终端目标查询接口。拒绝空注册和重复名称，查不到名称时返回空指针。
+- **统一关闭：** 生产线程、临时消息及注册操作结束后，由 LogManager 的析构函数停止默认和已注册的日志器，不另设 shutdown()，关闭期间不得修改命名表。同一实例注册多个名称时会重复调用 `stop()`。一个实例失败时保存 firstError 并继续关闭其余实例，全部停止后重抛首个异常；异常逃出默认 noexcept 析构函数将触发 std::terminate。未注册实例由持有方收尾。
 - **范围：** 直接用 LogManager 的对象接口验证注册、查找、默认目标和关闭。现有默认宏仍走兼容入口。前台提交失败的完整反馈留到 2.6，新的公共宏入口留到步骤 4。
 - **验收：** 验证单例、默认终端、命名注册与查找、拒绝空目标及重名、不同日志器写入独立、共享同一实例时重复停止、输出失败时仍关闭其余实例，以及重复关闭。
-- **交付与审核：** 审核 Manager 的对象接口和全局生命周期，通过后再做 2.6。
+- **交付与审核：** 审核 Manager 的对象接口、模块内生命周期及跨 DLL 边界，通过后再做 2.6。
 
-**2.5 实施结果（2026-11-10，待审核）。** `LogManager::GetInstance()` 首次调用时创建单例和固定的默认终端日志器。默认目标可通过 `getDefaultLogger()` 查询，不提供替换接口。命名表由 `registerLogger(name, logger)` 写入，由 `getLogger(name)` 查询；默认目标不隐式注册为 `"default"`，同一个实例仍可另行注册到命名表。注册和查询复用 `AsyncLogger::Ptr`。注册空名称或空实例抛出 `std::invalid_argument`，重名抛出 `std::logic_error`。
+**2.5 实施结果（2026-11-10，实现及退出修复已提交，待整体审核）。** `LogManager::GetInstance()` 首次调用时创建单例和固定的默认终端日志器。默认目标可通过 `getDefaultLogger()` 查询，不提供替换接口。命名表由 `registerLogger(name, logger)` 写入，由 `getLogger(name)` 查询；默认目标不隐式注册为 `"default"`，同一个实例仍可另行注册到命名表。注册和查询复用 `AsyncLogger::Ptr`。注册空名称或空实例抛出 `std::invalid_argument`，重名抛出 `std::logic_error`。
 
-私有 `shutdown()` 在锁外逐个停止默认日志器和命名表中的日志器；同一实例有多个名称时会重复调用 `stop()`。若一个输出失败，会继续停止其余实例，再由退出回调写入通用 stderr 诊断。调用方须在退出前结束生产者、临时消息及注册操作，并在收尾期间保持命名表不变。`GetInstance()` 已移至 cpp，退出回调也在 DLL 中注册。Windows DLL 的子进程用例未观察到预期的退出排空和失败诊断，自动收尾尚待解决。
+`LogManager::~LogManager()` 在锁外逐个停止默认日志器和命名表中的日志器，已删除单独的 shutdown() 及显式 atexit 注册逻辑。同一实例有多个名称时会重复调用 `stop()`。firstError 用于保存首个停止异常，让其余日志器仍有机会完成排空；全部停止后重抛，异常逃出析构函数会触发 std::terminate，不再仅打印通用错误后吞掉异常。调用方须在退出前结束生产者、临时消息及注册操作，并在收尾期间保持命名表不变。
 
-Windows / MSVC / Debug / DLL 全量测试：247 项通过、1 项因 MSVC 不支持负 `time_t` 而跳过、2 项失败；失败项为正常退出排空和输出失败后的统一收尾。未验证 Linux、安装后的外部消费、插件独立卸载及异常进程终止。
+退出修复提交 `aa1882e` 前已运行 Windows / MSVC / Debug / DLL 全量测试：共 253 项，252 项通过、1 项因 MSVC 不支持负 `time_t` 而跳过、0 项失败；其中核心 155 项通过、testrun 1 项通过、工具测试 96 项通过及 1 项跳过。按各组 GTest 的实际结果统计，XMake 的汇总行误将跳过项计入通过，不能据此写成“253 项通过”。5 项 LogManager 相关测试全部通过，覆盖显式停止对照、正常退出写出文件尾部、命名目标独立、首个异常传至 terminate，以及停止失败后仍关闭其余日志器。未验证 Linux、静态链接、安装后的外部消费、持续压力或真实存储故障；不保证插件独立卸载及异常进程终止时的排空。
 
-现有退出用例在验证回调中调用 `_Exit()`，可能先于 DLL 的退出回调而终止进程，因此不能单独据此判断真实退出结果。另用独立子进程将记录提交到普通文件并正常调用 `std::exit()`：子进程退出码为 0，但日志文件为 0 字节，表明当前 Windows DLL 路径下仍存在实际的尾部日志丢失。
+旧实现的问题有两层：原测试在 EXE 的 atexit 验证回调中调用 `_Exit()`，可能跳过 DLL 的收尾；另用独立子进程正常 `std::exit()`，由父进程检查文件，仍观察到 0 字节日志，确认还存在真实的尾部丢失。Windows 的 ExitProcess 会先终止其他线程，再通知 DLL_PROCESS_DETACH；DLL 内静态对象的析构及其 CRT 退出回调执行过晚，无法依赖已终止的 Worker 排空。现已将 GetInstance() 和局部静态对象移至头文件，取消 LogManager 的类级导出，仅为注册、查询及析构等必要方法保留导出。主程序因此在 EXE 内创建实例并登记自动析构，在 ExitProcess 之前停止和等待 Worker；析构实现仍位于 DLL 的 cpp 中。修复后的文件测试由父进程在子进程正常退出后读取内容，错误测试则通过 terminate 处理器核验原异常及其他日志器的收尾结果。
+
+该方案的边界是模块内单例。跨模块探针已确认 EXE 与另一个 DLL 返回不同的 Manager 地址；这不等于跨 DLL 的进程级唯一实例，也不保证其他 DLL 内 Manager 的退出排空或插件独立卸载。
 
 ##### 2.6：停止和异常反馈
+
+**当前状态：待实施完整链路。** Worker 的后台异常保存和 stop 重抛、Manager 的 firstError 收尾反馈已经实现。尚缺的是 LogMessage 在析构补换行或提交失败时保存前台错误，并由 AsyncLogger::stop() 反馈；当前这类失败仅作 stderr 诊断。2.6 不表示重做已有的后台错误机制，也不改变 Manager 停止全部目标后重抛并终止的既定语义。
 
 - **做什么：** 补齐前台补换行或提交失败的保存与诊断，并由 stop 反馈；后台输出失败沿用 Worker 保存原异常、停止消费和停止时重抛的机制。多个失败保留首个已记录的错误，不自动重试可能已经写出前缀的数据。
 - **范围：** LogMessage 和 AsyncLogger 析构均不向外抛异常，普通使用仍可依赖自动回收；需要主动获取错误时才调用 stop。失败后仍要回收线程；重复 stop 不重复回收或输出，已保存错误仍可反馈；停止后拒绝使用。诊断直接写 stderr，不递归调用日志宏，也不新增错误回调注册接口。
@@ -364,7 +368,7 @@ Windows / MSVC / Debug / DLL 全量测试：247 项通过、1 项因 MSVC 不支
 - **验证：** 普通文件、轮转文件和终端分别作为单目标运行；核对消息完整性、颜色、并发、目标独立、生命周期、停止和错误反馈；重新构建库及受影响示例，运行适用的核心与工具测试，检查新增公共类所需的 DLL 导出和头文件依赖。发布全流程留到步骤 5。
 - **交付与审核：** 报告当前真实接口、旧直接构造调用的迁移办法及重新编译要求，区分本轮实测和仍未验证的平台、压力或故障场景。完成后等待用户审核整个第二步，不自动开始步骤 3，也不自动提交 Git。
 
-**每小步共同约定：** 当前 2.5 待用户审核，2.6～2.7 均未实施。每次先说明要改哪些文件和行为，完成后报告实际验证及限制；用户明确审核通过后才进入下一小步。小步编号用于实施和审核，不强制每小步对应一次 Git 提交，提交仍由用户另行授权。
+**每小步共同约定：** 当前 2.5 的实现及退出修复已提交，待整体审核；2.6 的前台失败保存与 stop 反馈、2.7 的集成验收尚未实施。每次先说明要改哪些文件和行为，完成后报告实际验证及限制；用户明确审核通过后才进入下一小步。小步编号用于实施和审核，不强制每小步对应一次 Git 提交，提交仍由用户另行授权。
 
 #### 步骤 3：显式 AsyncLogger 的 FATAL 排空
 
@@ -395,7 +399,7 @@ Windows / MSVC / Debug / DLL 全量测试：247 项通过、1 项因 MSVC 不支
 
 ## 6. 本轮边界与后续事项
 
-- 自动回收或主动停止前先结束日志生产者及临时消息；AsyncLogger 最后一个持有者释放时自动排空，stop 用于主动等待及错误反馈。2.5 的 LogManager 正常退出统一关闭仍需解决 Windows DLL 下的失败。第一版不承诺运行中并发切换配置或全局关闭后重新初始化。
+- 自动回收或主动停止前先结束日志生产者及临时消息；AsyncLogger 最后一个持有者释放时自动排空，stop 用于主动等待及错误反馈。2.5 已验证 EXE 中模块内 LogManager 在 Windows DLL 构建下的正常退出排空；EXE 与其他 DLL 不共享 Manager，不保证其他 DLL 内实例的退出排空或插件独立卸载。第一版不承诺运行中并发切换配置或模块内 Manager 销毁后重新初始化。
 - 完成接收、完成 fflush、完成系统存储同步是不同阶段。本轮只保证文件层刷新，不承诺断电持久性，也不直接迁 Kama 的 fsync 配置。
 - 待写队列仍无总量上限。核心用法完成后再单独定义积压上限和满载策略，用可控慢输出测试超大消息、并发、停止和失败，不照搬可能永久等待的 SAFE 模式。
 - 现有 LogFile 允许空文件接收超限批次；跨块记录可能跨文件，不承诺文件大小硬上限或按行轮转。
@@ -411,7 +415,7 @@ Windows / MSVC / Debug / DLL 全量测试：247 项通过、1 项因 MSVC 不支
 | 3 | [AsyncLogger.hpp][ref-logger] | [AsyncLogger](../src/core/asynclogger.h)、[LogMessage](../src/core/logmessage.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
 | 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
-**独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 当前 2.5 的全局单例 LogManager 已实现，待用户审核。下一项为 2.6 的停止和异常反馈，新的宏入口留到步骤 4。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
+**独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 当前 2.5 的模块内单例 LogManager 及 Windows DLL 退出修复已提交（`aa1882e`），待整体审核。下一项为 2.6：补齐前台失败保存及 stop 反馈，再完成 2.7 的单目标集成验收和文档；新的宏入口仍留到步骤 4。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
 
 参考链接是动态分支；上述对比继承此前源码阅读结论。未运行 Kama、远程备份服务、压力或存储故障对测，不能把静态分析当成运行验证。
 
