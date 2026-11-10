@@ -7,6 +7,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 - 日志等级：提供 TRACE、DEBUG、INFO、WARN、ERROR 和 FATAL 六个等级。等级会显示在每条记录中；FATAL 记录输出后调用刷新回调并终止进程。
 - 日志格式：每条记录包含本地时间（精确到微秒）、源文件名、代码行号和消息正文，格式为 `[时间] [等级] [文件名:行号] 消息`。源文件名从编译器提供的文件路径中提取。
 - 消息拼接：日志宏采用流式写法，例如 `DLOG_INFO() << "request=" << requestId`。支持字符串、字符、布尔值、常见整数和浮点数；单条记录的 `FlexibleBuffer` 按需增长，超过原先 4000 字节的正文也会完整保留。一条日志在完整表达式结束时统一输出。
+- 记录实现：现有 `Logger` 入口保留，单条日志的格式化和析构提交委托给内部 `dlog::LogMessage`，`LogStream` 继续只负责拼接。长期 Logger / LoggerBuilder 尚未接入；本次 Logger 对象布局已变化，使用方需重新编译。
 - 输出方式：默认写入 `stdout`，也可通过 `dlog::Logger::SetOutput()` 设置自定义回调。回调收到日志数据指针和有效字节长度；可选择输出 ANSI 等级颜色，写文件时可关闭颜色码。
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
 - 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
@@ -64,7 +65,7 @@ DLOG_SYS_ERROR(savedErrno) << "open file failed";
 
 ## 自定义输出
 
-输出回调接收数据指针和字节长度。应在开始写日志前设置回调；日志文件通常不需要终端颜色：
+输出回调接收数据指针和字节长度。应在开始写日志前设置回调，不支持并发修改配置；每条记录创建时绑定输出、刷新回调及颜色，之后切换默认回调不影响已有记录。复制回调不会延长其引用捕获对象的生命周期，目标资源仍需活到记录提交结束。日志文件通常不需要终端颜色：
 
 ```cpp
 #include <cstdio>
@@ -76,6 +77,8 @@ dlog::Logger::SetOutput(
     },
     dlog::LogLevelColorMode::OFF);
 ```
+
+记录析构中的补换行、输出或 FATAL 刷新发生异常时，当前过渡入口只向 stderr 报告，不让异常逃出析构；FATAL 仍尝试刷新并终止。正常日志不额外调用刷新回调。显式关闭时的错误反馈和异步 FATAL 排空留待长期 Logger 接入。
 
 ## 异步文件输出
 
