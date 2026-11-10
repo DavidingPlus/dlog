@@ -70,8 +70,8 @@ TEST_F(AsyncLoggerFileTest, CreatesBothFileModesWithNativePaths)
 {
     const auto filename = m_directory / "normal" / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680.log");
     const auto basePath = m_directory / "rolling" / std::filesystem::u8path(u8"\u8f6e\u8f6c \U0001f680");
-    auto normalLogger = AsyncLogger::Build<FileFlush>(filename);
-    auto rollingLogger = AsyncLogger::Build<RollFileFlush>(basePath, 1024);
+    auto normalLogger = AsyncLogger::BuildAsyncLogger<FileFlush>(filename);
+    auto rollingLogger = AsyncLogger::BuildAsyncLogger<RollFileFlush>(basePath, 1024);
     ASSERT_NE(normalLogger, nullptr);
     ASSERT_NE(rollingLogger, nullptr);
     EXPECT_NO_THROW(normalLogger->stop());
@@ -99,12 +99,12 @@ TEST_F(AsyncLoggerFileTest, ConstructionErrorsPreserveExistingFileAndAllowRetry)
     const auto recovered = m_directory / "recovered.log";
     const int workersBefore = Thread::NumCreated();
 
-    EXPECT_THROW(AsyncLogger::Build<FileFlush>(std::filesystem::path{}), std::invalid_argument);
-    EXPECT_THROW(AsyncLogger::Build<RollFileFlush>(std::filesystem::path{}, 1024), std::invalid_argument);
-    EXPECT_THROW(AsyncLogger::Build<FileFlush>(invalidPath), std::filesystem::filesystem_error);
-    EXPECT_THROW(AsyncLogger::Build<RollFileFlush>(invalidPath, 1024), std::filesystem::filesystem_error);
+    EXPECT_THROW(AsyncLogger::BuildAsyncLogger<FileFlush>(std::filesystem::path{}), std::invalid_argument);
+    EXPECT_THROW(AsyncLogger::BuildAsyncLogger<RollFileFlush>(std::filesystem::path{}, 1024), std::invalid_argument);
+    EXPECT_THROW(AsyncLogger::BuildAsyncLogger<FileFlush>(invalidPath), std::filesystem::filesystem_error);
+    EXPECT_THROW(AsyncLogger::BuildAsyncLogger<RollFileFlush>(invalidPath, 1024), std::filesystem::filesystem_error);
     EXPECT_EQ(Thread::NumCreated(), workersBefore);
-    EXPECT_NO_THROW(AsyncLogger::Build<FileFlush>(recovered));
+    EXPECT_NO_THROW(AsyncLogger::BuildAsyncLogger<FileFlush>(recovered));
     EXPECT_TRUE(std::filesystem::is_regular_file(recovered));
 
     std::ifstream input(blocked, std::ios::binary);
@@ -118,7 +118,7 @@ TEST(AsyncLoggerLifetimeTest, LastOwnerAutomaticallyReclaimsWorkerAndOutput)
     int constructions = 0;
     int destructions = 0;
     auto value = std::make_unique<int>(42);
-    auto logger = AsyncLogger::Build<TrackedFlush>(constructions, destructions, std::move(value));
+    auto logger = AsyncLogger::BuildAsyncLogger<TrackedFlush>(constructions, destructions, std::move(value));
     EXPECT_EQ(value, nullptr);
     EXPECT_EQ(constructions, 1);
     EXPECT_EQ(destructions, 0);
@@ -138,8 +138,8 @@ TEST_F(AsyncLoggerFileTest, ExplicitStopDrainsOnlyItsOwnTarget)
 {
     const auto firstPath = m_directory / "first.log";
     const auto secondPath = m_directory / "second.log";
-    auto first = AsyncLogger::Build<FileFlush>(firstPath);
-    auto second = AsyncLogger::Build<FileFlush>(secondPath);
+    auto first = AsyncLogger::BuildAsyncLogger<FileFlush>(firstPath);
+    auto second = AsyncLogger::BuildAsyncLogger<FileFlush>(secondPath);
 
     first->message("src/app.cpp", 42, LogLevel::INFO).stream() << "first record";
     second->message("src/app.cpp", 43, LogLevel::WARN).stream() << "second record";
@@ -160,7 +160,7 @@ TEST_F(AsyncLoggerFileTest, ExplicitStopDrainsOnlyItsOwnTarget)
 TEST_F(AsyncLoggerFileTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
 {
     const auto path = m_directory / "auto.log";
-    auto logger = AsyncLogger::Build<FileFlush>(path);
+    auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
     std::weak_ptr<AsyncLogger> observer = logger;
     {
         auto message = logger->message("app.cpp", 42, LogLevel::INFO);
@@ -176,13 +176,15 @@ TEST_F(AsyncLoggerFileTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
 TEST_F(AsyncLoggerFileTest, ConcurrentRecordsStayWholeAcrossBufferBoundaries)
 {
     const auto path = m_directory / "concurrent.log";
-    auto logger = AsyncLogger::Build<FileFlush>(path);
+    auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
     std::string longRecord(2 * kLargeFixedBufferSize + 1, 'a');
     longRecord[kLargeFixedBufferSize] = '\0';
     const std::string otherRecord(kLargeFixedBufferSize + 1, 'b');
 
-    std::thread first([&] { logger->message("app.cpp", 41, LogLevel::INFO).stream() << longRecord; });
-    std::thread second([&] { logger->message("app.cpp", 42, LogLevel::INFO).stream() << otherRecord; });
+    std::thread first([&]
+                      { logger->message("app.cpp", 41, LogLevel::INFO).stream() << longRecord; });
+    std::thread second([&]
+                       { logger->message("app.cpp", 42, LogLevel::INFO).stream() << otherRecord; });
     first.join();
     second.join();
     logger->stop();
@@ -210,7 +212,7 @@ TEST_F(AsyncLoggerFileTest, ConcurrentRecordsStayWholeAcrossBufferBoundaries)
 TEST_F(AsyncLoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
 {
     const auto path = m_directory / "stopped.log";
-    auto logger = AsyncLogger::Build<FileFlush>(path);
+    auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
 
     EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::FATAL), std::invalid_argument);
     EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::LEVEL_COUNT), std::invalid_argument);
@@ -228,7 +230,7 @@ TEST_F(AsyncLoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
 
 TEST(AsyncLoggerMessageTest, DefaultStdoutColorsTheLevel)
 {
-    auto logger = AsyncLogger::Build();
+    auto logger = AsyncLogger::BuildAsyncLogger();
     testing::internal::CaptureStdout();
     logger->message("app.cpp", 42, LogLevel::INFO).stream() << "console record";
     EXPECT_NO_THROW(logger->stop());
@@ -244,15 +246,17 @@ TEST(AsyncLoggerMessageTest, CustomOutputCanEnableLevelColor)
     class ColoredFlush : public LogFlush
     {
     public:
+
         explicit ColoredFlush(std::string &text) : LogFlush(LogLevelColorMode::ON), m_text(text) {}
         void writeAndFlush(const char *data, size_t len) override { m_text.append(data, len); }
 
     private:
+
         std::string &m_text;
     };
 
     std::string text;
-    auto logger = AsyncLogger::Build<ColoredFlush>(text);
+    auto logger = AsyncLogger::BuildAsyncLogger<ColoredFlush>(text);
     logger->message("app.cpp", 42, LogLevel::INFO).stream() << "custom record";
     logger->stop();
 
