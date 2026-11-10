@@ -17,18 +17,23 @@ namespace
     class RecordingFlush : public LogFlush
     {
     public:
+
         explicit RecordingFlush(std::string &text) : m_text(text) {}
         void writeAndFlush(const char *data, size_t len) override { m_text.append(data, len); }
 
     private:
+
         std::string &m_text;
     };
 
-    struct OutputError {};
+    struct OutputError
+    {
+    };
 
     class FailingFlush : public LogFlush
     {
     public:
+
         explicit FailingFlush(std::atomic_int &calls) : m_calls(calls) {}
         void writeAndFlush(const char *, size_t) override
         {
@@ -37,6 +42,7 @@ namespace
         }
 
     private:
+
         std::atomic_int &m_calls;
     };
 
@@ -62,27 +68,26 @@ static void verifyRegistrationAndShutdown()
 
     auto &manager = LogManager::GetInstance();
     EXPECT_EQ(&manager, &LogManager::GetInstance());
-    EXPECT_EQ(manager.GetLogger("missing"), nullptr);
+    EXPECT_EQ(manager.getLogger("missing"), nullptr);
 
-    auto console = manager.DefaultLogger();
+    auto console = manager.getDefaultLogger();
+    EXPECT_NE(console, nullptr);
     auto first = AsyncLogger::BuildAsyncLogger<RecordingFlush>(firstText);
     auto second = AsyncLogger::BuildAsyncLogger<RecordingFlush>(secondText);
-    EXPECT_THROW(manager.RegisterLogger("", first), std::invalid_argument);
-    EXPECT_THROW(manager.RegisterLogger("missing", nullptr), std::invalid_argument);
-    EXPECT_THROW(manager.SetDefaultLogger(nullptr), std::invalid_argument);
-    manager.RegisterLogger("console", console);
-    manager.RegisterLogger("first", first);
-    manager.RegisterLogger("first-alias", first);
-    manager.RegisterLogger("second", second);
-    EXPECT_THROW(manager.RegisterLogger("first", second), std::logic_error);
-    EXPECT_EQ(manager.GetLogger("first"), first);
+    EXPECT_THROW(manager.registerLogger("", first), std::invalid_argument);
+    EXPECT_THROW(manager.registerLogger("missing", nullptr), std::invalid_argument);
+    manager.registerLogger("console", console);
+    manager.registerLogger("first", first);
+    manager.registerLogger("first-alias", first);
+    manager.registerLogger("second", second);
+    EXPECT_THROW(manager.registerLogger("first", second), std::logic_error);
+    EXPECT_EQ(manager.getLogger("first"), first);
+    EXPECT_EQ(manager.getDefaultLogger(), console);
 
     ::testing::internal::CaptureStdout();
     console->message("app.cpp", 1, LogLevel::INFO).stream() << "console record";
-    manager.SetDefaultLogger(first);
-    EXPECT_EQ(manager.DefaultLogger(), first);
-    manager.DefaultLogger()->message("app.cpp", 2, LogLevel::INFO).stream() << "first record";
-    manager.GetLogger("second")->message("app.cpp", 3, LogLevel::INFO).stream() << "second record";
+    manager.getLogger("first")->message("app.cpp", 2, LogLevel::INFO).stream() << "first record";
+    manager.getLogger("second")->message("app.cpp", 3, LogLevel::INFO).stream() << "second record";
 }
 
 
@@ -102,9 +107,9 @@ static void verifyShutdownAfterOutputFailure()
     auto first = AsyncLogger::BuildAsyncLogger<FailingFlush>(failures);
     auto second = AsyncLogger::BuildAsyncLogger<FailingFlush>(failures);
     auto healthy = AsyncLogger::BuildAsyncLogger<RecordingFlush>(healthyText);
-    manager.SetDefaultLogger(healthy);
-    manager.RegisterLogger("first", first);
-    manager.RegisterLogger("second", second);
+    manager.registerLogger("first", first);
+    manager.registerLogger("second", second);
+    manager.registerLogger("healthy", healthy);
     first->message("app.cpp", 1, LogLevel::INFO).stream() << "first failure";
     second->message("app.cpp", 2, LogLevel::INFO).stream() << "second failure";
 

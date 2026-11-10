@@ -18,21 +18,15 @@ class DLOG_API_EXPORTED LogManager
 
 public:
 
-    // 首次从主程序调用时注册进程退出回调；插件独立卸载留待需要时处理。
-    static LogManager &GetInstance()
-    {
-        return GetInstanceImpl([](void (*handler)())
-                               { return std::atexit(handler); });
-    }
+    static LogManager &GetInstance();
 
-    // 空名称或空目标抛出 invalid_argument，重复名称抛出 logic_error。
-    void RegisterLogger(std::string name, AsyncLogger::Ptr logger);
 
-    AsyncLogger::Ptr GetLogger(const std::string &name) const;
+    // 空名称或空目标抛出 invalid_argument，重复名称抛出 logic_error。不推荐用多个名称注册同一实例或注册默认实例，关闭时会重复调用 stop()，后果不可预期。
+    void registerLogger(std::string name, AsyncLogger::Ptr logger);
 
-    void SetDefaultLogger(AsyncLogger::Ptr logger);
+    AsyncLogger::Ptr getLogger(const std::string &name) const;
 
-    AsyncLogger::Ptr DefaultLogger() const;
+    AsyncLogger::Ptr getDefaultLogger() const { return m_defaultLogger; }
 
 
 private:
@@ -41,15 +35,15 @@ private:
 
     ~LogManager() = default;
 
-    static LogManager &GetInstanceImpl(int (*registerAtExit)(void (*)()));
-
-    void Shutdown();
+    void shutdown();
 
 
     mutable std::mutex m_mutex;
 
+    // 固定的默认终端日志器，独立于命名表。
     AsyncLogger::Ptr m_defaultLogger;
 
+    // 注册进命名表的其他日志器。
     std::unordered_map<std::string, AsyncLogger::Ptr> m_loggers;
 };
 
