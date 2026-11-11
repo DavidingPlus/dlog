@@ -8,7 +8,9 @@
 
 **执行约定（2026-11-10）：先落文档，再逐步实施。** 步骤 1 已完成实现，按用户“复核无问题后分四到五批提交”的授权完成本轮复核，并分四批提交；当前按下述小步推进。后续仍在每次开始前说明范围，完成后报告实际改动、验证结果及剩余限制，等待用户明确审核通过后再进入下一步。提交当前步骤不表示授权自动开始下一步；未获明确要求不提交 Git。
 
-**语义变更（2026-11-11）：** 用户决定 FATAL 仅表示最高严重级别，不自动刷新或终止进程。原步骤 3 的排空和 abort 方案作废；旧记录中的 FATAL 终止描述属于当时实现，不代表当前行为。旧 `SetFlush` 暂留兼容，但不再被日志提交调用，步骤 4 清理旧接口。
+**语义变更（2026-11-11）：** 用户决定 FATAL 仅表示最高严重级别，不自动刷新或终止进程。原步骤 3 的排空和 abort 方案作废；旧记录中的 FATAL 终止描述属于当时实现，不代表当前行为。步骤 4 已移除旧 `SetFlush` 接口。
+
+**当前状态（2026-11-11）：** 步骤 4 已实现待审核；默认宏通过 LogManager 写入异步终端，显式宏写入指定日志器。旧 Logger 和 AsyncLogging 已移除；历史实施记录中对旧入口的描述仅反映当时状态。
 
 **第二步细化（2026-11-10）：** 2.1～2.4 已完成；2.5 的模块内单例 LogManager、析构统一收尾及 Windows DLL 退出修复已提交（`aa1882e`），待整体审核。2.6 已复核：前台提交失败由 LogMessage 诊断，后台失败由 stop 反馈；2.7 的单目标集成验收已完成，待用户审核。宏入口统一留到步骤 4。
 
@@ -29,7 +31,7 @@
 - [x] 步骤 1：内部 LogMessage 已提取，保留旧入口；复核通过，按用户授权分批提交。
 - [ ] 步骤 2：长期 AsyncLogger 接通单目标 Worker，并由模块内 LogManager 管理。2.5 的实现及退出修复已提交，待整体审核；2.6 已复核，2.7 已完成待审核，整个步骤 2 仍未验收。
 - [ ] 步骤 3：接入并验证不终止进程的 FATAL 日志，待审核。
-- [ ] 步骤 4：将宏集中到独立公共头文件，迁移默认流式宏和旧调用链。
+- [ ] 步骤 4：将宏集中到独立公共头文件，迁移默认流式宏和旧调用链；已实现，待审核。
 - [ ] 步骤 5：增加多个输出目标，完成发布接口验证。
 
 2026-11-09 已完成独立 AsyncWorker 的正常排空和后台异常传递。现有 Logger、AsyncLogging 继续使用原调用链；长期日志器的职责和命名方案见第五节。
@@ -382,7 +384,7 @@ Windows / MSVC / Debug / DLL：库和新示例构建成功，示例运行后检�
 - **兼容性：** 旧 FATAL 不再触发 SetFlush 或 abort，依赖这两种行为的调用方需自行处理。SetFlush 暂留兼容，旧入口将在步骤 4 清理。
 - **验收：** 检查 FATAL 和 SYS_FATAL 后的代码可运行、记录格式和 errno 正确；异步 FATAL 及后续记录在正常停止后输出。完成后待用户审核。
 
-**实施结果（2026-11-11，待审核）：** 旧宏和显式 AsyncLogger 均已采用新语义；新增测试覆盖继续执行、errno、异步正常停止后的输出以及不调用旧刷新回调。Windows / MSVC / Debug / DLL 全量 275 项中 274 项通过、1 项跳过、0 项失败。未验证 Linux、静态链接或真实输出故障。旧接口的 SetFlush 暂时保留，已不再由日志提交调用。
+**实施结果（2026-11-11，待审核）：** 旧宏和显式 AsyncLogger 均已采用新语义；新增测试覆盖继续执行、errno、异步正常停止后的输出以及不调用旧刷新回调。Windows / MSVC / Debug / DLL 全量 275 项中 274 项通过、1 项跳过、0 项失败。未验证 Linux、静态链接或真实输出故障。当时保留的旧 SetFlush 已在步骤 4 删除。
 
 #### 步骤 4：独立宏头文件、默认入口迁移和旧链路清理
 
@@ -392,6 +394,10 @@ Windows / MSVC / Debug / DLL：库和新示例构建成功，示例运行后检�
 - **涉及：** 公共宏头文件、LogManager 的默认入口、logger.*、旧 asynclogging.* 及相关调用方、snippet、README 和测试。核对构建及头文件导出。
 - **验收：** 单独包含宏头文件即可使用显式和默认宏；单独包含日志器头文件可使用对象接口。验证宏捕获调用处文件名和行号，目标表达式及 savedErrno 各求值一次，空目标明确报错，完整流式表达式只提交一次。默认宏始终使用终端目标，显式宏使用调用方传入的日志器。默认终端正常退出排空，新异步示例可运行，旧入口已清理。若调整 Worker 唤醒，覆盖未满块及时处理。
 - **审核点：** 用户审核默认行为变化、头文件迁移和旧链路清理后，再增加多输出目标。
+
+**实施结果（2026-11-11，待审核）：** 公共头 `log.h` 提供默认和显式宏；默认目标为 Manager 的终端，首次初始化失败向调用方抛出异常，空显式目标抛出 invalid_argument。保留 Worker 对未满块的 3 秒周期处理策略，慢输出或调度可能增加延迟。移除旧 Logger、AsyncLogging 和未使用的 LogMessage 刷新回调；迁移示例、测试及 README。旧接口删除属于源代码和 ABI 变化，需要迁移并重新编译。
+
+Windows / MSVC / Debug / DLL 全量测试 248 项：247 项通过、1 项跳过、0 项失败。验证宏等级、位置和参数单次求值、空目标、不同输出、正常退出排空及 Unicode 轮转重开；三个示例构建运行成功。删除的旧后端专属测试不再计入，新后端继续由 Worker、LogMessage 和 AsyncLogger 测试覆盖。头文件导出清单按 src 下所有头文件生成，仓库内示例验证了新头文件；安装后的外部消费仍留待步骤 5。未运行 Linux（包括 /dev/full 测试）、静态链接或真实磁盘故障测试。
 
 #### 步骤 5：多个输出目标与发布验证
 
@@ -419,7 +425,7 @@ Windows / MSVC / Debug / DLL：库和新示例构建成功，示例运行后检�
 | 1 | [LogFlush.hpp][ref-flush] | [LogFile](../src/core/logfile.h)、[FileUtil](../src/utils/fileutil.h) | 输出接口、所有权、刷新和失败反馈 |
 | 2 | [AsyncWorker.hpp][ref-worker]、[AsyncBuffer.hpp][ref-buffer] | [AsyncWorker](../src/core/asyncworker.cpp)、[现有 AsyncLogging](../src/core/asynclogging.cpp)、[FixedBuffer](../src/utils/fixedbuffer.h) | 复制、交换、锁、唤醒与停止排空 |
 | 3 | [AsyncLogger.hpp][ref-logger] | [AsyncLogger](../src/core/asynclogger.h)、[LogMessage](../src/core/logmessage.h)、[LogStream](../src/core/logstream.h) | 长期对象如何接收临时记录 |
-| 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggingTest/main.cpp) | 默认入口、命名管理和生命周期 |
+| 4 | [Manager.hpp][ref-manager]、[MyLog.hpp][ref-entry]、[实际示例][ref-example] | [现有异步示例](../snippet/AsyncLoggerTest/main.cpp) | 默认入口、命名管理和生命周期 |
 
 **独立 AsyncWorker 已完成；步骤 1 的内部 LogMessage 已实现、复核并按用户授权分批提交。** 当前 2.5 的模块内单例 LogManager 及 Windows DLL 退出修复已提交（`aa1882e`），待整体审核。2.7 的单目标集成验收和文档已完成，待用户审核；新的宏入口仍留到步骤 4。仅在用户明确要求时提交 Git，按功能组织相关实现、调用方、测试和文档，提交说明不用类型前缀。
 
