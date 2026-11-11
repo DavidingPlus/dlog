@@ -16,6 +16,8 @@
 
 using namespace dlog;
 
+extern LogManager &GetInstanceFromAnotherSourceFile();
+
 
 namespace
 {
@@ -167,6 +169,7 @@ static void verifyRegistrationAndShutdown()
 
     auto &manager = LogManager::GetInstance();
     EXPECT_EQ(&manager, &LogManager::GetInstance());
+    EXPECT_EQ(&manager, &GetInstanceFromAnotherSourceFile());
     EXPECT_EQ(manager.getLogger("missing"), nullptr);
 
     auto console = manager.getDefaultLogger();
