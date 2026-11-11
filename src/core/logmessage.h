@@ -57,7 +57,9 @@ public:
     // savedErrno 是调用方在系统错误发生时保存的 errno 快照；0 表示不附带系统错误信息。
     LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, FlushFunc flush, LogLevelColorMode colorMode);
 
-    ~LogMessage() noexcept;
+    // 未显式声明 noexcept 时，析构函数的异常说明由基类和成员的析构函数决定，默认隐式为 noexcept(true)。补换行、提交日志或刷新时可能抛异常，但不会改变析构函数默认不抛异常的规定。如果异常从这个析构函数中抛出去，程序会直接终止，所以在这里捕获异常并输出错误信息。同时也维持程序的相对稳定性，一条 LogMessage 出错就导致抛异常导致进程结束，这样的代价未免太大了，记录错误是更合理的选择。
+    // 普通成员函数则相反：不写 noexcept 时，默认允许异常传播，即 noexcept(false)。
+    ~LogMessage();
 
     // 返回当前日志消息的内部流。后续的 operator<< 只会修改本条日志自己的可增长缓冲区，真正输出发生在 LogMessage 析构时。
     LogStream &stream() { return m_impl.m_stream; }

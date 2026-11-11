@@ -3,6 +3,7 @@
 #include "logcolorguard.h"
 
 #include <array>
+#include <iostream>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -54,7 +55,7 @@ LogMessage::LogMessage(const char *filename, int line, LogLevel level, int saved
     if (!m_output || !m_flush) throw std::invalid_argument("LogMessage: output and flush must not be empty");
 }
 
-LogMessage::~LogMessage() noexcept
+LogMessage::~LogMessage()
 {
     try
     {
@@ -64,11 +65,10 @@ LogMessage::~LogMessage() noexcept
     }
     catch (...)
     {
-        std::fputs("dlog: log message submission failed\n", stderr);
-        std::fflush(stderr);
+        std::cerr << "dlog: log message submission failed\n";
     }
 
-    // 即使提交失败，FATAL 仍尝试刷新原目标，输出错误信息并终止程序。
+    // 即使在上面提交失败，FATAL 仍尝试刷新原目标并终止程序。
     if (LogLevel::FATAL == m_impl.m_level)
     {
         try
@@ -77,8 +77,7 @@ LogMessage::~LogMessage() noexcept
         }
         catch (...)
         {
-            std::fputs("dlog: fatal log flush failed\n", stderr);
-            std::fflush(stderr);
+            std::cerr << "dlog: fatal log flush failed\n";
         }
 
         std::abort();
