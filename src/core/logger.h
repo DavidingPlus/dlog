@@ -22,7 +22,7 @@ DLOG_NAMESPACE_BEGIN(dlog)
 // 当前兼容入口仍表示一条临时日志，后续改掉；记录格式化与析构提交委托给内部 LogMessage。
 // DLOG_INFO() << value 在完整表达式结束时提交；命名 Logger 在离开作用域时提交。
 // LogStream 只负责拼接，输出按显式字节长度处理，保留空字节和超长正文。
-// FATAL 在提交后调用记录创建时绑定的刷新回调，再 abort；异步排空留待后续步骤接入。
+// FATAL 只表示日志等级，不刷新输出或终止进程。
 class DLOG_API_EXPORTED Logger
 {
 
@@ -45,6 +45,7 @@ public:
     // 默认启用等级颜色，写文件时传入 LogLevelColorMode::OFF。
     static void SetOutput(OutputFunc, LogLevelColorMode colorMode = LogLevelColorMode::ON);
 
+    // 兼容旧接口；日志提交不再自动调用此回调。
     static void SetFlush(FlushFunc);
 
 

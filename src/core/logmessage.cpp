@@ -67,21 +67,6 @@ LogMessage::~LogMessage()
     {
         std::cerr << "dlog: log message submission failed\n";
     }
-
-    // 即使在上面提交失败，FATAL 仍尝试刷新原目标并终止程序。
-    if (LogLevel::FATAL == m_impl.m_level)
-    {
-        try
-        {
-            m_flush();
-        }
-        catch (...)
-        {
-            std::cerr << "dlog: fatal log flush failed\n";
-        }
-
-        std::abort();
-    }
 }
 
 LogMessage::LogMessageImpl::LogMessageImpl(LogLevel level, int savedErrno, const char *filename, int line, LogLevelColorMode colorMode)

@@ -34,7 +34,7 @@ public:
 
     ~AsyncLogger() = default;
 
-    // 消息持有日志器，析构时提交。当前仅接受 TRACE 至 ERROR。
+    // 消息持有日志器，析构时提交。接受 TRACE 至 FATAL。
     LogMessage message(const char *filename, int line, LogLevel level, int savedErrno = 0);
 
     // 可选的主动等待：正常停止会排空，后台失败在回收线程后重抛；可重复调用，不提供重启。

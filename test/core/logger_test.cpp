@@ -537,57 +537,20 @@ TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
     restoreDefaultFlush();
 }
 
-TEST(LoggerDeathTest, FatalLogWritesColorBeforeAborting)
+TEST(LoggerOutputTest, FatalAndSysFatalReturnNormally)
 {
-    EXPECT_DEATH(
-        {
-            Logger::SetOutput([](const char *data, size_t len)
-                              { std::fwrite(data, sizeof(char), len, stderr); });
-            Logger::SetFlush([]
-                             { std::fflush(stderr); });
-            DLOG_FATAL() << "fatal message";
-        },
-        "\x1b\\[1m\x1b\\[41m\\[FATAL\\] \x1b\\[0m.*fatal message");
-}
-
-TEST(LoggerDeathTest, FatalKeepsTheFlushCallbackBoundAtConstruction)
-{
-    EXPECT_DEATH(
-        {
-            Logger::SetOutput([](const char *data, size_t len)
-                              {
-                                  if (len > 0 && data[len - 1] == '\n') --len;
-                                  std::fwrite(data, sizeof(char), len, stderr); },
-                              LogLevelColorMode::OFF);
-            Logger::SetFlush([]
-                             {
-                                 std::fputs(" <original-flush>", stderr);
-                                 std::fflush(stderr); });
-            Logger fatal("snapshot.cpp", 34, LogLevel::FATAL);
-            fatal.stream() << "snapshot fatal";
-            Logger::SetFlush([]
-                             {
-                                 std::fputs(" <replacement-flush>", stderr);
-                                 std::fflush(stderr); });
-        },
-        "snapshot fatal <original-flush>");
-}
-
-TEST(LoggerDeathTest, SysFatalWritesSavedErrnoFlushesAndAborts)
-{
-    EXPECT_DEATH(
-        {
-            Logger::SetOutput([](const char *data, size_t len)
-                              {
-                // 去掉末尾换行，使死亡断言的匹配内容保持在同一行。
-                if (len > 0 && data[len - 1] == '\n') --len;
-                std::fwrite(data, sizeof(char), len, stderr); },
-                              LogLevelColorMode::OFF);
-            Logger::SetFlush([]
-                             {
-                std::fputs(" <flush-called>", stderr);
-                std::fflush(stderr); });
-            DLOG_SYS_FATAL(1234567) << "fatal system error";
-        },
-        R"(\[FATAL\].*\(errno=1234567\) fatal system error <flush-called>)");
+    bool flushed = false;
+    Logger::SetFlush([&] { flushed = true; });
+    const std::string output = captureOutput([]
+    {
+        DLOG_FATAL() << "fatal message";
+        DLOG_SYS_FATAL(1234567) << "fatal system error";
+        DLOG_INFO() << "after fatal";
+    }, LogLevelColorMode::OFF);
+    restoreDefaultFlush();
+    EXPECT_NE(output.find("[FATAL]"), std::string::npos);
+    EXPECT_NE(output.find("fatal message"), std::string::npos);
+    EXPECT_NE(output.find("(errno=1234567) fatal system error"), std::string::npos);
+    EXPECT_NE(output.find("after fatal"), std::string::npos);
+    EXPECT_FALSE(flushed);
 }

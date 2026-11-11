@@ -82,41 +82,6 @@ TEST(LogMessageDeathTest, OutputFailureIsReportedWithoutTerminatingTheCaller)
         ::testing::ExitedWithCode(0), "dlog: log message submission failed");
 }
 
-TEST(LogMessageDeathTest, FatalStillFlushesAndAbortsAfterOutputFailure)
-{
-    EXPECT_DEATH(
-        {
-            LogMessage record(
-                "record.cpp", 1, LogLevel::FATAL, 0,
-                [](const char *, size_t)
-                { throw std::runtime_error("output failed"); },
-                []
-                {
-                    std::fputs("original target flushed", stderr);
-                    std::fflush(stderr);
-                },
-                LogLevelColorMode::OFF);
-            record.stream() << "fatal";
-        },
-        "original target flushed");
-}
-
-TEST(LogMessageDeathTest, FatalReportsFlushFailureBeforeAborting)
-{
-    EXPECT_DEATH(
-        {
-            LogMessage record(
-                "record.cpp", 1, LogLevel::FATAL, 0,
-                [](const char *, size_t) {},
-                []
-                { throw std::runtime_error("flush failed"); },
-                LogLevelColorMode::OFF);
-            record.stream() << "fatal";
-        },
-        "dlog: fatal log flush failed");
-}
-
-
 class LogMessageFormatTest : public ::testing::TestWithParam<std::tuple<std::tuple<LogLevel, const char *>, LogLevelColorMode>>
 {
 };
@@ -280,49 +245,18 @@ TEST(LogMessageDeathTest, NonStandardOutputExceptionDuringUnwindingPreservesOrig
         ::testing::ExitedWithCode(0), "dlog: log message submission failed");
 }
 
-TEST(LogMessageDeathTest, FatalSubmitsExactlyOnceThenFlushesBeforeAborting)
+TEST(LogMessageTest, FatalSubmitsOnceWithoutFlushingOrTerminating)
 {
-    EXPECT_DEATH(
-        {
-            size_t outputs = 0;
-            size_t flushes = 0;
-            bool correct = false;
-            LogMessage record(
-                "fatal.cpp", 9, LogLevel::FATAL, 0,
-                [&](const char *data, size_t len)
-                {
-                    ++outputs;
-                    const std::string text(data, len);
-                    const std::string suffix = "[FATAL] [fatal.cpp:9] fatal body\n";
-                    correct = text.size() >= suffix.size() &&
-                              text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
-                },
-                [&]
-                {
-                    ++flushes;
-                    if (outputs == 1 && flushes == 1 && correct)
-                    {
-                        std::fputs("fatal output then flush verified", stderr);
-                        std::fflush(stderr);
-                    }
-                },
-                LogLevelColorMode::OFF);
-            record.stream() << "fatal body";
-        },
-        "fatal output then flush verified");
-}
-
-TEST(LogMessageDeathTest, FatalReportsBothOutputAndFlushFailuresBeforeAborting)
-{
-    EXPECT_DEATH(
-        {
-            LogMessage record(
-                "fatal.cpp", 10, LogLevel::FATAL, 0,
-                [](const char *, size_t)
-                { throw 42; },
-                []
-                { throw 43; },
-                LogLevelColorMode::OFF);
-        },
-        "dlog: log message submission failed\\s+dlog: fatal log flush failed");
+    std::string text;
+    int outputs = 0;
+    int flushes = 0;
+    {
+        LogMessage record("fatal.cpp", 9, LogLevel::FATAL, 0,
+                          [&](const char *data, size_t len) { ++outputs; text.assign(data, len); },
+                          [&] { ++flushes; }, LogLevelColorMode::OFF);
+        record.stream() << "fatal body";
+    }
+    EXPECT_EQ(outputs, 1);
+    EXPECT_EQ(flushes, 0);
+    EXPECT_NE(text.find("[FATAL] [fatal.cpp:9] fatal body\n"), std::string::npos);
 }

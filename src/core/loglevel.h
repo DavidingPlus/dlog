@@ -15,7 +15,7 @@ enum class LogLevel
     INFO,        // 普通运行信息。
     WARN,        // 警告，但程序通常还能继续运行。
     ERROR,       // 错误，需要处理。
-    FATAL,       // 致命错误，通常会终止程序。
+    FATAL,       // 最高严重级别，当前实现不终止程序。
     LEVEL_COUNT, // 等级数量，不是真正的日志等级。
 };
 

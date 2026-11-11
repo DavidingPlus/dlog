@@ -4,7 +4,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 
 ## 功能
 
-- 日志等级：提供 TRACE、DEBUG、INFO、WARN、ERROR 和 FATAL 六个等级。等级会显示在每条记录中；FATAL 记录输出后调用刷新回调并终止进程。
+- 日志等级：提供 TRACE、DEBUG、INFO、WARN、ERROR 和 FATAL 六个等级。FATAL 表示最高严重级别，不会自动刷新或终止进程。
 - 日志格式：每条记录包含本地时间（精确到微秒）、源文件名、代码行号和消息正文，格式为 `[时间] [等级] [文件名:行号] 消息`。源文件名从编译器提供的文件路径中提取。
 - 消息拼接：日志宏采用流式写法，例如 `DLOG_INFO() << "request=" << requestId`。支持字符串、字符、布尔值、常见整数和浮点数；单条记录的 `FlexibleBuffer` 按需增长，超过原先 4000 字节的正文也会完整保留。一条日志在完整表达式结束时统一输出。
 - 记录实现：现有临时 `Logger` 和日志宏保留；长期 `AsyncLogger` 支持单目标异步输出，通过对象接口写入，单条记录由 `LogMessage` 管理。统一宏入口尚未接入；接口或对象布局变化后使用方需重新编译。
@@ -49,7 +49,7 @@ int main()
 [2026/09/24 15:30:12.123456] [INFO ] [main.cpp:6] server started, port=8080
 ```
 
-日志宏在完整表达式结束时输出。FATAL 日志会调用刷新回调，然后终止进程。
+日志宏在完整表达式结束时输出。FATAL 日志不会终止进程。
 
 系统错误日志应在系统调用失败后立即保存 `errno`，再传给日志宏：
 
@@ -65,7 +65,7 @@ DLOG_SYS_ERROR(savedErrno) << "open file failed";
 
 ## 自定义输出
 
-输出回调接收数据指针和字节长度。应在开始写日志前设置回调，不支持并发修改配置；每条记录创建时绑定输出、刷新回调及颜色，之后切换默认回调不影响已有记录。复制回调不会延长其引用捕获对象的生命周期，目标资源仍需活到记录提交结束。日志文件通常不需要终端颜色：
+输出回调接收数据指针和字节长度。应在开始写日志前设置回调，不支持并发修改配置；每条记录创建时绑定输出回调及颜色，之后切换默认回调不影响已有记录。复制回调不会延长其引用捕获对象的生命周期，目标资源仍需活到记录提交结束。日志文件通常不需要终端颜色：
 
 ```cpp
 #include <cstdio>
@@ -78,7 +78,7 @@ dlog::Logger::SetOutput(
     dlog::LogLevelColorMode::OFF);
 ```
 
-记录析构中的补换行、输出或 FATAL 刷新发生异常时，当前过渡入口只向 stderr 报告，不让异常逃出析构；FATAL 仍尝试刷新并终止。正常日志不额外调用刷新回调。异步 FATAL 排空留待后续接入。
+记录析构中的补换行或输出发生异常时，当前过渡入口只向 stderr 报告，不让异常逃出析构。所有等级均不额外调用刷新回调；旧的 `SetFlush` 暂时保留以兼容源代码，但不再生效，需要刷新时由应用自行处理。
 
 ## AsyncLogger 单目标输出
 
@@ -102,7 +102,7 @@ int main()
 
 普通文件使用 `BuildAsyncLogger<FileFlush>(filename)`，轮转文件使用 `BuildAsyncLogger<RollFileFlush>(basePath, rollSize)`，终端可使用 `BuildAsyncLogger()` 或 Manager 的默认日志器。每个调用创建独立的单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/AsyncLoggerTest/main.cpp`](snippet/AsyncLoggerTest/main.cpp)。仓库中的示例按需构建：在该目录创建空的 `.buildme` 文件后，运行 `xmake -y AsyncLoggerTest` 和 `xmake run AsyncLoggerTest`。
 
-调用 `message(__FILE__, __LINE__, level).stream()` 写入，当前支持 TRACE 至 ERROR；异步 FATAL 尚未接入。现有 `DLOG_INFO()` 等宏仍使用旧 `Logger` 入口，不会自动写入 Manager 注册的日志器。原先使用 AsyncLogger Builder 或直接构造 AsyncLogger 的代码应改用 `BuildAsyncLogger`，并重新编译。
+调用 `message(__FILE__, __LINE__, level).stream()` 写入，支持 TRACE 至 FATAL。FATAL 与其他等级一样异步提交，不会立即排空或终止进程。现有 `DLOG_INFO()` 等宏仍使用旧 `Logger` 入口，不会自动写入 Manager 注册的日志器。原先使用 AsyncLogger Builder 或直接构造 AsyncLogger 的代码应改用 `BuildAsyncLogger`，并重新编译。
 
 停止或自动回收前，先结束生产线程及临时消息。未注册的日志器在最后一个持有者释放时自动回收；也可主动调用 `stop()` 等待排空，并捕获后台输出异常。前台提交失败只输出 stderr 诊断，`stop()` 无法反馈该错误。后台写入失败后放弃剩余待写数据，不自动重试。Manager 析构会停止默认和命名日志器；若停止失败，仍尝试关闭其他日志器，最后触发进程终止。正常退出的排空已在 Windows EXE + DLL 场景验证；跨 DLL 不共享 Manager，也不保证其他 DLL 的退出排空。
 

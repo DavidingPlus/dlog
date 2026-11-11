@@ -219,7 +219,6 @@ TEST_F(AsyncLoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
     const auto path = m_directory / "stopped.log";
     auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
 
-    EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::FATAL), std::invalid_argument);
     EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::LEVEL_COUNT), std::invalid_argument);
     testing::internal::CaptureStderr();
     {
@@ -318,4 +317,17 @@ TEST_F(AsyncLoggerFileTest, MessagePreservesSavedErrno)
     const auto errorText = std::error_code(EACCES, std::generic_category()).message();
     const auto expected = "[ERROR] [app.cpp:42] " + errorText + " (errno=" + std::to_string(EACCES) + ") open failed\n";
     EXPECT_NE(readFile(path).find(expected), std::string::npos);
+}
+
+TEST_F(AsyncLoggerFileTest, FatalAndFollowingRecordsAreWrittenOnStop)
+{
+    const auto path = m_directory / "fatal.log";
+    auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
+    logger->message("app.cpp", 1, LogLevel::FATAL, 1234567).stream() << "fatal record";
+    logger->message("app.cpp", 2, LogLevel::INFO).stream() << "after fatal";
+    logger->stop();
+    const auto text = readFile(path);
+    EXPECT_NE(text.find("[FATAL]"), std::string::npos);
+    EXPECT_NE(text.find("(errno=1234567) fatal record"), std::string::npos);
+    EXPECT_NE(text.find("after fatal"), std::string::npos);
 }

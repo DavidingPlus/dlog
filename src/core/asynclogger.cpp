@@ -15,7 +15,7 @@ AsyncLogger::AsyncLogger(std::shared_ptr<LogFlush> output)
 
 LogMessage AsyncLogger::message(const char *filename, int line, LogLevel level, int savedErrno)
 {
-    if (level < LogLevel::TRACE || level > LogLevel::ERROR) throw std::invalid_argument("AsyncLogger::message(): unsupported log level");
+    if (level < LogLevel::TRACE || level > LogLevel::FATAL) throw std::invalid_argument("AsyncLogger::message(): unsupported log level");
     if (!m_running) throw std::logic_error("AsyncLogger: logger has stopped");
 
     return LogMessage(
