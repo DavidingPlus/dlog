@@ -76,6 +76,7 @@ TEST_F(AsyncLoggerFileTest, CreatesBothFileModesWithNativePaths)
     auto rollingLogger = AsyncLogger::BuildAsyncLogger<RollFileFlush>(basePath, 1024);
     ASSERT_NE(normalLogger, nullptr);
     ASSERT_NE(rollingLogger, nullptr);
+    rollingLogger->message("app.cpp", 42, LogLevel::INFO).stream() << "rolling record";
     EXPECT_NO_THROW(normalLogger->stop());
     EXPECT_NO_THROW(rollingLogger->stop());
 
@@ -86,7 +87,9 @@ TEST_F(AsyncLoggerFileTest, CreatesBothFileModesWithNativePaths)
     ASSERT_EQ(paths.size(), 1u);
     EXPECT_EQ(paths.front().filename().u8string().find(basePath.filename().u8string() + '.'), 0u);
     EXPECT_EQ(paths.front().extension(), ".log");
-    EXPECT_EQ(std::filesystem::file_size(paths.front()), 0u);
+    const auto rollingText = readFile(paths.front());
+    EXPECT_NE(rollingText.find("[app.cpp:42] rolling record\n"), std::string::npos);
+    EXPECT_EQ(rollingText.find('\x1b'), std::string::npos);
 }
 
 TEST_F(AsyncLoggerFileTest, ConstructionErrorsPreserveExistingFileAndAllowRetry)
@@ -227,6 +230,44 @@ TEST_F(AsyncLoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
     EXPECT_NE(testing::internal::GetCapturedStderr().find("log message submission failed"), std::string::npos);
     EXPECT_THROW(logger->message("app.cpp", 43, LogLevel::INFO), std::logic_error);
     EXPECT_TRUE(readFile(path).empty());
+}
+
+
+TEST(AsyncLoggerFailureTest, StopReportsBackgroundErrorAfterJoining)
+{
+    class FailingFlush : public LogFlush
+    {
+    public:
+
+        explicit FailingFlush(int &calls) : m_calls(calls) {}
+        void writeAndFlush(const char *, size_t) override
+        {
+            ++m_calls;
+            throw std::runtime_error("output failed");
+        }
+
+    private:
+
+        int &m_calls;
+    };
+
+    int calls = 0;
+    auto logger = AsyncLogger::BuildAsyncLogger<FailingFlush>(calls);
+    logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
+    for (int i = 0; i < 2; ++i)
+    {
+        try
+        {
+            logger->stop();
+            FAIL() << "expected output failure";
+        }
+        catch (const std::runtime_error &error)
+        {
+            EXPECT_STREQ(error.what(), "output failed");
+        }
+    }
+    EXPECT_EQ(calls, 1);
+    EXPECT_THROW(logger->message("app.cpp", 2, LogLevel::INFO), std::logic_error);
 }
 
 
