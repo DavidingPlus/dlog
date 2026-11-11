@@ -7,7 +7,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持同步输出、文件�
 - 日志等级：提供 TRACE、DEBUG、INFO、WARN、ERROR 和 FATAL 六个等级。等级会显示在每条记录中；FATAL 记录输出后调用刷新回调并终止进程。
 - 日志格式：每条记录包含本地时间（精确到微秒）、源文件名、代码行号和消息正文，格式为 `[时间] [等级] [文件名:行号] 消息`。源文件名从编译器提供的文件路径中提取。
 - 消息拼接：日志宏采用流式写法，例如 `DLOG_INFO() << "request=" << requestId`。支持字符串、字符、布尔值、常见整数和浮点数；单条记录的 `FlexibleBuffer` 按需增长，超过原先 4000 字节的正文也会完整保留。一条日志在完整表达式结束时统一输出。
-- 记录实现：现有 `Logger` 入口保留，单条日志的格式化和析构提交委托给内部 `dlog::LogMessage`，`LogStream` 继续只负责拼接。长期 Logger / LoggerBuilder 尚未接入；本次 Logger 对象布局已变化，使用方需重新编译。
+- 记录实现：现有临时 `Logger` 和日志宏保留；长期 `AsyncLogger` 支持单目标异步输出，通过对象接口写入，单条记录由 `LogMessage` 管理。统一宏入口尚未接入；接口或对象布局变化后使用方需重新编译。
 - 输出方式：默认写入 `stdout`，也可通过 `dlog::Logger::SetOutput()` 设置自定义回调。回调收到日志数据指针和有效字节长度；可选择输出 ANSI 等级颜色，写文件时可关闭颜色码。
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
 - 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
@@ -78,7 +78,33 @@ dlog::Logger::SetOutput(
     dlog::LogLevelColorMode::OFF);
 ```
 
-记录析构中的补换行、输出或 FATAL 刷新发生异常时，当前过渡入口只向 stderr 报告，不让异常逃出析构；FATAL 仍尝试刷新并终止。正常日志不额外调用刷新回调。显式关闭时的错误反馈和异步 FATAL 排空留待长期 Logger 接入。
+记录析构中的补换行、输出或 FATAL 刷新发生异常时，当前过渡入口只向 stderr 报告，不让异常逃出析构；FATAL 仍尝试刷新并终止。正常日志不额外调用刷新回调。异步 FATAL 排空留待后续接入。
+
+## AsyncLogger 单目标输出
+
+`AsyncLogger` 是长期持有的异步日志器，每个实例使用一个输出目标。`LogManager` 提供固定的默认终端日志器，并管理显式注册的命名日志器：
+
+```cpp
+#include <dlog/core/logmanager.h>
+#include <filesystem>
+
+int main()
+{
+    auto &manager = dlog::LogManager::GetInstance();
+    auto file = dlog::AsyncLogger::BuildAsyncLogger<dlog::FileFlush>(std::filesystem::path("logs") / "app.log");
+    manager.registerLogger("file", file);
+
+    manager.getDefaultLogger()->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "console message";
+    manager.getLogger("file")->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "file message";
+    // 程序正常退出时由 Manager 停止并排空已注册日志器。
+}
+```
+
+普通文件使用 `BuildAsyncLogger<FileFlush>(filename)`，轮转文件使用 `BuildAsyncLogger<RollFileFlush>(basePath, rollSize)`，终端可使用 `BuildAsyncLogger()` 或 Manager 的默认日志器。每个调用创建独立的单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/AsyncLoggerTest/main.cpp`](snippet/AsyncLoggerTest/main.cpp)。仓库中的示例按需构建：在该目录创建空的 `.buildme` 文件后，运行 `xmake -y AsyncLoggerTest` 和 `xmake run AsyncLoggerTest`。
+
+调用 `message(__FILE__, __LINE__, level).stream()` 写入，当前支持 TRACE 至 ERROR；异步 FATAL 尚未接入。现有 `DLOG_INFO()` 等宏仍使用旧 `Logger` 入口，不会自动写入 Manager 注册的日志器。原先使用 AsyncLogger Builder 或直接构造 AsyncLogger 的代码应改用 `BuildAsyncLogger`，并重新编译。
+
+停止或自动回收前，先结束生产线程及临时消息。未注册的日志器在最后一个持有者释放时自动回收；也可主动调用 `stop()` 等待排空，并捕获后台输出异常。前台提交失败只输出 stderr 诊断，`stop()` 无法反馈该错误。后台写入失败后放弃剩余待写数据，不自动重试。Manager 析构会停止默认和命名日志器；若停止失败，仍尝试关闭其他日志器，最后触发进程终止。正常退出的排空已在 Windows EXE + DLL 场景验证；跨 DLL 不共享 Manager，也不保证其他 DLL 的退出排空。
 
 ## 异步文件输出
 
