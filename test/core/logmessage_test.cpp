@@ -28,7 +28,6 @@ TEST(LogMessageTest, SubmitsLongBinaryRecordOnceAtScopeEnd)
     payload[2500] = '\0';
     std::string output;
     size_t outputCalls = 0;
-    size_t flushCalls = 0;
 
     {
         LogMessage record(
@@ -38,30 +37,22 @@ TEST(LogMessageTest, SubmitsLongBinaryRecordOnceAtScopeEnd)
                 ++outputCalls;
                 output.append(data, len);
             },
-            [&]
-            { ++flushCalls; },
             LogLevelColorMode::OFF);
         record.stream() << std::string_view(payload.data(), payload.size());
         EXPECT_EQ(outputCalls, 0u);
     }
 
     EXPECT_EQ(outputCalls, 1u);
-    EXPECT_EQ(flushCalls, 0u);
     const std::string expected = "[INFO ] [record.cpp:42] " + payload + '\n';
     ASSERT_GE(output.size(), expected.size());
     EXPECT_EQ(output.substr(output.size() - expected.size()), expected);
     EXPECT_EQ(output.find('\x1b'), std::string::npos);
 }
 
-TEST(LogMessageTest, RejectsEmptyCallbacksBeforeARecordCanBeUsed)
+TEST(LogMessageTest, RejectsEmptyCallbackBeforeARecordCanBeUsed)
 {
     EXPECT_THROW((LogMessage(
-                     "record.cpp", 1, LogLevel::INFO, 0,
-                     {}, [] {}, LogLevelColorMode::OFF)),
-                 std::invalid_argument);
-    EXPECT_THROW((LogMessage(
-                     "record.cpp", 1, LogLevel::INFO, 0,
-                     [](const char *, size_t) {}, {}, LogLevelColorMode::OFF)),
+                     "record.cpp", 1, LogLevel::INFO, 0, {}, LogLevelColorMode::OFF)),
                  std::invalid_argument);
 }
 
@@ -74,7 +65,7 @@ TEST(LogMessageDeathTest, OutputFailureIsReportedWithoutTerminatingTheCaller)
                     "record.cpp", 1, LogLevel::INFO, 0,
                     [](const char *, size_t)
                     { throw std::runtime_error("output failed"); },
-                    [] {}, LogLevelColorMode::OFF);
+                    LogLevelColorMode::OFF);
                 record.stream() << "message";
             }
             std::_Exit(0);
@@ -93,19 +84,15 @@ TEST_P(LogMessageFormatTest, FormatsLevelAndLimitsColorToTheLevel)
     const auto [level, label] = levelAndLabel;
     std::string output;
     size_t calls = 0;
-    size_t flushes = 0;
     {
         LogMessage record(
             R"(dir\sub/record.cpp)", 123, level, 0,
             [&](const char *data, size_t len)
             { ++calls; output.assign(data, len); },
-            [&]
-            { ++flushes; },
             color);
         record.stream() << "body";
     }
     EXPECT_EQ(calls, 1u);
-    EXPECT_EQ(flushes, 0u);
     if (color == LogLevelColorMode::ON)
     {
         EXPECT_EQ(output.find("\x1b["), 29u);
@@ -125,14 +112,15 @@ TEST_P(LogMessageFormatTest, FormatsLevelAndLimitsColorToTheLevel)
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    NonFatalLevels, LogMessageFormatTest,
+    AllLevels, LogMessageFormatTest,
     ::testing::Combine(
         ::testing::Values(
             std::make_tuple(LogLevel::TRACE, "[TRACE] "),
             std::make_tuple(LogLevel::DEBUG, "[DEBUG] "),
             std::make_tuple(LogLevel::INFO, "[INFO ] "),
             std::make_tuple(LogLevel::WARN, "[WARN ] "),
-            std::make_tuple(LogLevel::ERROR, "[ERROR] ")),
+            std::make_tuple(LogLevel::ERROR, "[ERROR] "),
+            std::make_tuple(LogLevel::FATAL, "[FATAL] ")),
         ::testing::Values(LogLevelColorMode::OFF, LogLevelColorMode::ON)));
 
 TEST(LogMessageTest, EmptyBodyStillSubmitsOneCompleteRecord)
@@ -144,7 +132,7 @@ TEST(LogMessageTest, EmptyBodyStillSubmitsOneCompleteRecord)
             "empty.cpp", 0, LogLevel::INFO, 0,
             [&](const char *data, size_t len)
             { ++calls; output.assign(data, len); },
-            [] {}, LogLevelColorMode::OFF);
+            LogLevelColorMode::OFF);
         EXPECT_TRUE(output.empty());
     }
     EXPECT_EQ(calls, 1u);
@@ -163,7 +151,7 @@ TEST(LogMessageTest, SavedErrnoIsIndependentOfLaterErrnoChanges)
             "error.cpp", 7, LogLevel::ERROR, EINVAL,
             [&](const char *data, size_t len)
             { output.assign(data, len); },
-            [] {}, LogLevelColorMode::OFF);
+            LogLevelColorMode::OFF);
         errno = ENOENT;
         record.stream() << "failed";
     }
@@ -182,13 +170,13 @@ TEST(LogMessageTest, OverlappingRecordsKeepTheirOwnBodyAndBoundCallback)
     { first.assign(data, len); };
     {
         LogMessage outer(
-            "outer.cpp", 1, LogLevel::INFO, 0, output, [] {}, LogLevelColorMode::OFF);
+            "outer.cpp", 1, LogLevel::INFO, 0, output, LogLevelColorMode::OFF);
         outer.stream() << "outer before ";
         output = [&](const char *data, size_t len)
         { second.assign(data, len); };
         {
             LogMessage inner(
-                "inner.cpp", 2, LogLevel::DEBUG, 0, output, [] {}, LogLevelColorMode::OFF);
+                "inner.cpp", 2, LogLevel::DEBUG, 0, output, LogLevelColorMode::OFF);
             inner.stream() << "inner";
         }
         EXPECT_TRUE(first.empty());
@@ -210,7 +198,7 @@ TEST(LogMessageTest, SubmitsWhileUnwindingWithoutReplacingTheOriginalException)
             "unwind.cpp", 3, LogLevel::WARN, 0,
             [&](const char *data, size_t len)
             { output.assign(data, len); },
-            [] {}, LogLevelColorMode::OFF);
+            LogLevelColorMode::OFF);
         record.stream() << "before exception";
         throw std::runtime_error("original exception");
     }
@@ -233,7 +221,7 @@ TEST(LogMessageDeathTest, NonStandardOutputExceptionDuringUnwindingPreservesOrig
                     "unwind.cpp", 4, LogLevel::ERROR, 0,
                     [](const char *, size_t)
                     { throw 42; },
-                    [] {}, LogLevelColorMode::OFF);
+                    LogLevelColorMode::OFF);
                 throw std::runtime_error("original");
             }
             catch (const std::runtime_error &error)
@@ -245,18 +233,16 @@ TEST(LogMessageDeathTest, NonStandardOutputExceptionDuringUnwindingPreservesOrig
         ::testing::ExitedWithCode(0), "dlog: log message submission failed");
 }
 
-TEST(LogMessageTest, FatalSubmitsOnceWithoutFlushingOrTerminating)
+TEST(LogMessageTest, FatalSubmitsOnceWithoutTerminating)
 {
     std::string text;
     int outputs = 0;
-    int flushes = 0;
     {
         LogMessage record("fatal.cpp", 9, LogLevel::FATAL, 0,
                           [&](const char *data, size_t len) { ++outputs; text.assign(data, len); },
-                          [&] { ++flushes; }, LogLevelColorMode::OFF);
+                          LogLevelColorMode::OFF);
         record.stream() << "fatal body";
     }
     EXPECT_EQ(outputs, 1);
-    EXPECT_EQ(flushes, 0);
     EXPECT_NE(text.find("[FATAL] [fatal.cpp:9] fatal body\n"), std::string::npos);
 }

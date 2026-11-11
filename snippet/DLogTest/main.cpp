@@ -1,5 +1,5 @@
 #include "logcolorguard.h"
-#include "logger.h"
+#include "log.h"
 
 #include <cerrno>
 #include <array>
@@ -19,23 +19,14 @@ namespace
 
     void showLoggerColor(const LogLevelExample &example)
     {
-        dlog::Logger logger(__FILE__, __LINE__, example.level);
+        auto logger = dlog::LogManager::GetInstance().getDefaultLogger();
         // dlog::LogColorGuard color(logger.stream(), example.level);
-        logger.stream() << example.name << " (" << example.colorName << ") color sample";
+        logger->message(__FILE__, __LINE__, example.level).stream() << example.name << " (" << example.colorName << ") color sample";
     }
 
     void showFatalColor()
     {
-        dlog::LogStream stream;
-        {
-            // dlog::LogColorGuard color(stream, dlog::LogLevel::FATAL);
-            stream << "FATAL (spdlog CRITICAL, bold on red) color sample";
-        }
-
-        const dlog::FlexibleBuffer &buffer = stream.buffer();
-        std::fwrite(buffer.readableBegin(), sizeof(char), buffer.readableBytes(), stdout);
-        std::fputc('\n', stdout);
-        std::fflush(stdout);
+        DLOG_FATAL() << "FATAL (spdlog CRITICAL, bold on red) color sample";
     }
 
 } // namespace

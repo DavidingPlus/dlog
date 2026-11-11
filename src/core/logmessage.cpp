@@ -49,10 +49,10 @@ FileNameView::FileNameView(const char *path)
     if (std::string_view::npos != sepPos) m_view.remove_prefix(sepPos + 1);
 }
 
-LogMessage::LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, FlushFunc flush, LogLevelColorMode colorMode)
-    : m_impl(level, savedErrno, filename, line, colorMode), m_output(std::move(output)), m_flush(std::move(flush))
+LogMessage::LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, LogLevelColorMode colorMode)
+    : m_impl(level, savedErrno, filename, line, colorMode), m_output(std::move(output))
 {
-    if (!m_output || !m_flush) throw std::invalid_argument("LogMessage: output and flush must not be empty");
+    if (!m_output) throw std::invalid_argument("LogMessage: output must not be empty");
 }
 
 LogMessage::~LogMessage()

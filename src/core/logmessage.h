@@ -35,7 +35,7 @@ private:
 };
 
 
-// LogMessage 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。输出、刷新回调和颜色在构造时绑定，回调捕获的资源必须活到记录提交完成。
+// LogMessage 负责一条日志消息的生命周期管理和元数据拼接，LogStream 负责具体的格式化与缓冲。输出回调和颜色在构造时绑定，回调捕获的资源必须活到记录提交完成。
 // 一条日志的典型执行流程是：
 // 1. 创建 LogMessage 时，LogMessageImpl 将时间、日志等级和源文件位置写入内部 LogStream 的前缀；
 // 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到可增长缓冲区；
@@ -51,11 +51,8 @@ public:
     // 输出函数。OutputFunc 使用 size_t 表示显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。
     using OutputFunc = std::function<void(const char *msg, size_t len)>;
 
-    // 刷新缓冲区的函数。
-    using FlushFunc = std::function<void()>;
-
     // savedErrno 是调用方在系统错误发生时保存的 errno 快照；0 表示不附带系统错误信息。
-    LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, FlushFunc flush, LogLevelColorMode colorMode);
+    LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, LogLevelColorMode colorMode);
 
     // 未显式声明 noexcept 时，析构函数的异常说明由基类和成员的析构函数决定，默认隐式为 noexcept(true)。补换行、提交日志或刷新时可能抛异常，但不会改变析构函数默认不抛异常的规定。如果异常从这个析构函数中抛出去，程序会直接终止，所以在这里捕获异常并输出错误信息。同时也维持程序的相对稳定性，一条 LogMessage 出错就导致抛异常导致进程结束，这样的代价未免太大了，记录错误是更合理的选择。
     // 普通成员函数则相反：不写 noexcept 时，默认允许异常传播，即 noexcept(false)。
@@ -101,8 +98,6 @@ private:
     LogMessageImpl m_impl;
 
     OutputFunc m_output;
-
-    FlushFunc m_flush;
 };
 
 

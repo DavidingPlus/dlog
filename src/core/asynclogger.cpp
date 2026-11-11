@@ -27,7 +27,7 @@ LogMessage AsyncLogger::message(const char *filename, int line, LogLevel level, 
 
             logger->m_worker.append(data, len);
         },
-        [] {}, m_output->colorMode());
+        m_output->colorMode());
 }
 
 void AsyncLogger::stop()
