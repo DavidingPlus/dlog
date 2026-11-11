@@ -7,11 +7,11 @@ dlog 是一个基于 C++17 的轻量级日志库，支持异步输出和文件�
 - 日志等级：提供 TRACE、DEBUG、INFO、WARN、ERROR 和 FATAL 六个等级。FATAL 表示最高严重级别，不会自动刷新或终止进程。
 - 日志格式：每条记录包含本地时间（精确到微秒）、源文件名、代码行号和消息正文，格式为 `[时间] [等级] [文件名:行号] 消息`。源文件名从编译器提供的文件路径中提取。
 - 消息拼接：日志宏采用流式写法，例如 `DLOG_INFO() << "request=" << requestId`。支持字符串、字符、布尔值、常见整数和浮点数；单条记录的 `FlexibleBuffer` 按需增长，超过原先 4000 字节的正文也会完整保留。一条日志在完整表达式结束时统一输出。
-- 记录实现：长期 `AsyncLogger` 支持单目标异步输出，宏和对象接口共用 `LogMessage` 管理单条记录。
+- 记录实现：长期 `Logger` 支持单目标异步输出，宏和对象接口共用 `LogMessage` 管理单条记录。
 - 输出方式：默认日志器写入 `stdout`；可创建文件、轮转文件或自定义 `LogFlush` 输出目标。
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
 - 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
-- 异步写盘：`AsyncLogger` 通过 `AsyncWorker` 缓冲并在后台批量写入；正常 `stop()` 等待剩余数据处理完成。
+- 异步写盘：`Logger` 通过 `LogWorker` 缓冲并在后台批量写入；正常 `stop()` 等待剩余数据处理完成。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
 ## 基本用法
@@ -78,16 +78,16 @@ public:
     }
 };
 
-auto logger = dlog::AsyncLogger::BuildAsyncLogger<MyOutput>();
+auto logger = dlog::Logger::BuildLogger<MyOutput>();
 DLOG_LOGGER_INFO(logger) << "custom output";
 logger->stop();
 ```
 
 记录析构中的补换行或提交发生异常时，只向 stderr 报告，不让异常逃出析构。
 
-## AsyncLogger 单目标输出
+## Logger 单目标输出
 
-`AsyncLogger` 是长期持有的异步日志器，每个实例使用一个输出目标。`LogManager` 提供固定的默认终端日志器，并管理显式注册的命名日志器：
+`Logger` 是长期持有的异步日志器，每个实例使用一个输出目标。`LogManager` 提供固定的默认终端日志器，并管理显式注册的命名日志器：
 
 ```cpp
 #include <dlog/core/log.h>
@@ -96,7 +96,7 @@ logger->stop();
 int main()
 {
     auto &manager = dlog::LogManager::GetInstance();
-    auto file = dlog::AsyncLogger::BuildAsyncLogger<dlog::FileFlush>(std::filesystem::path("logs") / "app.log");
+    auto file = dlog::Logger::BuildLogger<dlog::FileFlush>(std::filesystem::path("logs") / "app.log");
     manager.registerLogger("file", file);
 
     DLOG_INFO() << "console message";
@@ -105,7 +105,7 @@ int main()
 }
 ```
 
-普通文件使用 `BuildAsyncLogger<FileFlush>(filename)`，轮转文件使用 `BuildAsyncLogger<RollFileFlush>(basePath, rollSize)`，终端可使用 `BuildAsyncLogger()` 或 Manager 的默认日志器。每个调用创建独立的单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/AsyncLoggerTest/main.cpp`](snippet/AsyncLoggerTest/main.cpp)。仓库中的示例按需构建：在该目录创建空的 `.buildme` 文件后，运行 `xmake -y AsyncLoggerTest` 和 `xmake run AsyncLoggerTest`。
+普通文件使用 `BuildLogger<FileFlush>(filename)`，轮转文件使用 `BuildLogger<RollFileFlush>(basePath, rollSize)`，终端可使用 `BuildLogger()` 或 Manager 的默认日志器。每个调用创建独立的单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/DLogTest/main2.cpp`](snippet/DLogTest/main2.cpp)。仓库中的示例按需构建：在 `snippet/DLogTest` 目录创建空的 `.buildme` 文件后，运行 `xmake -y DLogTest2` 和 `xmake run DLogTest2`。
 
 默认宏始终写入终端，显式宏 `DLOG_LOGGER_TRACE/DEBUG/INFO/WARN/ERROR/FATAL(logger)` 和 `DLOG_LOGGER_SYS_ERROR/SYS_FATAL(logger, savedErrno)` 写入指定日志器；空日志器抛出 `std::invalid_argument`。也可以使用 `message(__FILE__, __LINE__, level).stream()`。FATAL 与其他等级一样异步提交，不会立即排空或终止进程。
 
@@ -115,32 +115,32 @@ int main()
 
 ## 异步文件输出
 
-旧的 `Logger`、`SetOutput`、`SetFlush` 和 `AsyncLogging` 已移除，迁移时改用公共宏头文件和显式日志器，并重新编译。后台会自动创建缺失的父目录：
+旧的临时记录类型 `Logger`、`SetOutput`、`SetFlush` 和 `AsyncLogging` 已移除；现在的 `Logger` 是长期持有的异步日志器。此前的 `AsyncLogger`、`AsyncWorker` 和 `BuildAsyncLogger()` 分别改名为 `Logger`、`LogWorker` 和 `BuildLogger()`，头文件改为 `logger.h` 和 `logworker.h`；使用方需迁移并重新编译。后台会自动创建缺失的父目录：
 
 ```cpp
 #include <filesystem>
 #include <dlog/core/log.h>
 
 const auto basePath = std::filesystem::path("logs") / "app";
-auto logger = dlog::AsyncLogger::BuildAsyncLogger<dlog::RollFileFlush>(basePath, 64LL * 1024 * 1024);
+auto logger = dlog::Logger::BuildLogger<dlog::RollFileFlush>(basePath, 64LL * 1024 * 1024);
 DLOG_LOGGER_INFO(logger) << "written by the background thread";
 
 // 停止所有日志生产者后执行：
 logger->stop();
 ```
 
-日志文件名形如 `logs/app.YYYYMMDD.0.log`。更多示例见 [`snippet/AsyncLoggerTest/main.cpp`](snippet/AsyncLoggerTest/main.cpp)。
+日志文件名形如 `logs/app.YYYYMMDD.0.log`。更多示例见 [`snippet/DLogTest/main2.cpp`](snippet/DLogTest/main2.cpp)。
 
 ## 独立 Worker
 
 Worker 不格式化日志、不保存文件配置，输出方式由回调决定。构造不启动线程；可以先追加数据，再启动和停止：
 
 ```cpp
-#include <dlog/core/asyncworker.h>
+#include <dlog/core/logworker.h>
 #include <string>
 
 std::string received;
-dlog::AsyncWorker worker([&received](const dlog::LargeFixedBuffer &buffer) {
+dlog::LogWorker worker([&received](const dlog::LargeFixedBuffer &buffer) {
     received.append(buffer.readableBegin(), buffer.readableBytes());
 });
 worker.append("hello\n", 6);
