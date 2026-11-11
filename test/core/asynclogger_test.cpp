@@ -331,3 +331,33 @@ TEST_F(AsyncLoggerFileTest, FatalAndFollowingRecordsAreWrittenOnStop)
     EXPECT_NE(text.find("(errno=1234567) fatal record"), std::string::npos);
     EXPECT_NE(text.find("after fatal"), std::string::npos);
 }
+
+TEST_F(AsyncLoggerFileTest, RollingLoggerReopensUnicodePathWithoutLosingRecords)
+{
+    const auto base = m_directory / std::filesystem::u8path(u8"日志 路径") / "app";
+    {
+        auto logger = AsyncLogger::BuildAsyncLogger<RollFileFlush>(base, 1024);
+        logger->message("app.cpp", 1, LogLevel::INFO).stream() << "first run";
+        logger->stop();
+    }
+    {
+        auto logger = AsyncLogger::BuildAsyncLogger<RollFileFlush>(base, 1024);
+        logger->message("app.cpp", 2, LogLevel::INFO).stream() << "second run";
+        logger->stop();
+    }
+    std::string text;
+    for (const auto &entry : std::filesystem::directory_iterator(base.parent_path()))
+        text += readFile(entry.path());
+    EXPECT_NE(text.find("first run"), std::string::npos);
+    EXPECT_NE(text.find("second run"), std::string::npos);
+}
+
+#if defined(DLOG_OS_LINUX)
+TEST(AsyncLoggerFailureTest, FullDeviceErrorIsReportedOnStop)
+{
+    if (!std::filesystem::exists("/dev/full")) GTEST_SKIP() << "/dev/full is unavailable";
+    auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>("/dev/full");
+    logger->message("app.cpp", 1, LogLevel::ERROR).stream() << "write failure";
+    EXPECT_THROW(logger->stop(), std::exception);
+}
+#endif
