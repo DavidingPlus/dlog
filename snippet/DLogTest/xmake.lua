@@ -1,5 +1,11 @@
-target("DLogTest")
+target("DLogTest1")
     set_kind("binary")
-    add_files("main.cpp")
+    add_files("main1.cpp")
+    add_deps("dlog")
+target_end()
+
+target("DLogTest2")
+    set_kind("binary")
+    add_files("main2.cpp")
     add_deps("dlog")
 target_end()
