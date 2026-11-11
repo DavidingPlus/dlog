@@ -14,6 +14,23 @@ dlog 是一个基于 C++17 的轻量级日志库，支持异步输出和文件�
 - 异步写盘：`Logger` 通过 `LogWorker` 缓冲并在后台批量写入；正常 `stop()` 等待剩余数据处理完成。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
+## 构建、安装和外部使用
+
+项目使用 XMake、C++17 编译器和 `fmt`；运行单元测试还需要 GoogleTest。XMake 根据项目配置解析这些依赖。
+
+```sh
+xmake f -m debug --with_gtest=y
+xmake -y dlog
+xmake test -y
+xmake install -o <install-dir> -y dlog
+```
+
+Windows 下使用 `--build_shared=y` 构建 DLL，使用 `--build_shared=n` 构建静态库；Linux 同样支持该选项。未指定 `-o` 时，默认安装到构建目录下对应平台、架构和模式的 `install` 目录。安装会重建 `<install-dir>/include/dlog`，并覆盖本项目的同名库文件；不要将需要保留的其他文件放在 `include/dlog` 下。
+
+外部项目需要将 `<install-dir>/include` 加入头文件搜索路径，并链接 `<install-dir>/lib` 中的 dlog 和对应的 `fmt` 依赖。Windows DLL 消费方编译时还需定义 `DLOG_BUILD_SHARED`，运行时需让系统找到 `<install-dir>/bin/dlog.dll`；静态库消费方不定义该宏。Linux 动态库消费方需让运行时找到安装目录下的 `libdlog.so`，例如配置运行时库搜索路径。
+
+本次验证覆盖 Windows / MSVC / Debug 的 DLL 与静态库，以及 Ubuntu WSL / x86-64 / Debug 动态库：外部程序仅使用安装后的 dlog 头文件、库和独立配置的 `fmt`，验证了默认终端、普通文件、轮转文件、显式停止和注册日志器正常退出排空。Windows DLL 安装的 18 个公开头文件分别通过独立包含编译。该验证不代表所有公开符号及平台组合均已验证；Linux 静态库、Release 模式、真实磁盘故障及长期压力仍未验证。
+
 ## 基本用法
 
 `FlexibleBuffer` 和 `FixedBuffer` 位于 utils 模块，公共头文件为 `<dlog/utils/flexiblebuffer.h>`、`<dlog/utils/fixedbuffer.h>`。直接使用 `LogStream::buffer()` 时，返回类型为 `const dlog::FlexibleBuffer&`；通过 `readableBegin()` 和 `readableBytes()` 读取内容。
