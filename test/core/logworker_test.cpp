@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "asyncworker.h"
+#include "logworker.h"
 #include "logflush.h"
 
 #include <algorithm>
@@ -20,12 +20,12 @@ using namespace dlog;
 using namespace std::chrono_literals;
 
 
-TEST(AsyncWorkerTest, RejectsEmptyOutput)
+TEST(LogWorkerTest, RejectsEmptyOutput)
 {
-    EXPECT_THROW({ AsyncWorker worker(AsyncWorker::OutputFunc{}); }, std::invalid_argument);
+    EXPECT_THROW({ LogWorker worker(LogWorker::OutputFunc{}); }, std::invalid_argument);
 }
 
-TEST(AsyncWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThread)
+TEST(LogWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThread)
 {
     std::string input(2 * kLargeFixedBufferSize + 137, 'W');
     input[kLargeFixedBufferSize] = '\0';
@@ -33,7 +33,7 @@ TEST(AsyncWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThre
     std::string actual;
     bool allCallsOnBackgroundThread = true;
     const auto caller = std::this_thread::get_id();
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        {
                            allCallsOnBackgroundThread &= std::this_thread::get_id() != caller;
                            actual.append(buffer.readableBegin(), buffer.readableBytes()); },
@@ -49,10 +49,10 @@ TEST(AsyncWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThre
     EXPECT_TRUE(allCallsOnBackgroundThread);
 }
 
-TEST(AsyncWorkerTest, RepeatedStartStopAndAppendBetweenRunsPreserveData)
+TEST(LogWorkerTest, RepeatedStartStopAndAppendBetweenRunsPreserveData)
 {
     std::string actual;
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
                        60);
 
@@ -69,10 +69,10 @@ TEST(AsyncWorkerTest, RepeatedStartStopAndAppendBetweenRunsPreserveData)
     EXPECT_EQ(actual, "before|restart");
 }
 
-TEST(AsyncWorkerTest, EmptyWritesDoNotInvokeOutput)
+TEST(LogWorkerTest, EmptyWritesDoNotInvokeOutput)
 {
     size_t calls = 0;
-    AsyncWorker worker([&](const LargeFixedBuffer &)
+    LogWorker worker([&](const LargeFixedBuffer &)
                        { ++calls; },
                        60);
     worker.append(nullptr, 1);
@@ -83,12 +83,12 @@ TEST(AsyncWorkerTest, EmptyWritesDoNotInvokeOutput)
     EXPECT_EQ(calls, 0u);
 }
 
-TEST(AsyncWorkerTest, DestructorDrainsPartialBlock)
+TEST(LogWorkerTest, DestructorDrainsPartialBlock)
 {
     const std::string message("tail\0bytes", 10);
     std::string actual;
     {
-        AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+        LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
                            60);
         worker.append(message.data(), message.size());
@@ -97,9 +97,9 @@ TEST(AsyncWorkerTest, DestructorDrainsPartialBlock)
     EXPECT_EQ(actual, message);
 }
 
-TEST(AsyncWorkerTest, StopRethrowsOriginalBackgroundError)
+TEST(LogWorkerTest, StopRethrowsOriginalBackgroundError)
 {
-    AsyncWorker worker([](const LargeFixedBuffer &)
+    LogWorker worker([](const LargeFixedBuffer &)
                        { throw std::runtime_error("output failed"); },
                        60);
     worker.append("tail", 4);
@@ -120,7 +120,7 @@ TEST(AsyncWorkerTest, StopRethrowsOriginalBackgroundError)
     EXPECT_THROW(worker.stop(), std::runtime_error);
 }
 
-TEST(AsyncWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
+TEST(LogWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
 {
     struct OutputError
     {
@@ -131,7 +131,7 @@ TEST(AsyncWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
     std::promise<void> release;
     auto releaseResult = release.get_future();
     size_t calls = 0;
-    AsyncWorker worker([&](const LargeFixedBuffer &)
+    LogWorker worker([&](const LargeFixedBuffer &)
                        {
                            ++calls;
                            entered.set_value();
@@ -177,11 +177,11 @@ TEST(AsyncWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
     EXPECT_EQ(calls, 1u);
 }
 
-TEST(AsyncWorkerTest, DestructorJoinsAfterBackgroundErrorWithoutExplicitStop)
+TEST(LogWorkerTest, DestructorJoinsAfterBackgroundErrorWithoutExplicitStop)
 {
     size_t calls = 0;
     {
-        AsyncWorker worker([&](const LargeFixedBuffer &)
+        LogWorker worker([&](const LargeFixedBuffer &)
                            {
                                ++calls;
                                throw std::runtime_error("output failed during destruction"); },
@@ -192,11 +192,11 @@ TEST(AsyncWorkerTest, DestructorJoinsAfterBackgroundErrorWithoutExplicitStop)
     EXPECT_EQ(calls, 1u);
 }
 
-TEST(AsyncWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
+TEST(LogWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
 {
     std::promise<std::string> delivered;
     auto result = delivered.get_future();
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { delivered.set_value(buffer.toString()); },
                        0);
     worker.append("periodic", 8);
@@ -208,12 +208,12 @@ TEST(AsyncWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
     EXPECT_EQ(result.get(), "periodic");
 }
 
-TEST(AsyncWorkerTest, ConcurrentLongRecordsStayWholeAcrossBlocks)
+TEST(LogWorkerTest, ConcurrentLongRecordsStayWholeAcrossBlocks)
 {
     constexpr size_t recordSize = kLargeFixedBufferSize + 31;
     constexpr size_t producerCount = 4;
     std::string actual;
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
                        60);
     worker.start();
@@ -240,7 +240,7 @@ TEST(AsyncWorkerTest, ConcurrentLongRecordsStayWholeAcrossBlocks)
     }
 }
 
-TEST(AsyncWorkerTest, SlowOutputDoesNotHoldProducerMutex)
+TEST(LogWorkerTest, SlowOutputDoesNotHoldProducerMutex)
 {
     std::promise<void> entered;
     auto enteredResult = entered.get_future();
@@ -248,7 +248,7 @@ TEST(AsyncWorkerTest, SlowOutputDoesNotHoldProducerMutex)
     auto releaseResult = release.get_future();
     bool firstCall = true;
     std::string actual;
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        {
                            if (firstCall)
                            {
@@ -276,11 +276,11 @@ TEST(AsyncWorkerTest, SlowOutputDoesNotHoldProducerMutex)
     EXPECT_EQ(actual, fullBlock + "tail");
 }
 
-TEST(AsyncWorkerTest, DeliversBytesToStdoutFlush)
+TEST(LogWorkerTest, DeliversBytesToStdoutFlush)
 {
     const std::string message("stdout\0bytes", 12);
     StdoutFlush output;
-    AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+    LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
                        60);
 
@@ -292,14 +292,14 @@ TEST(AsyncWorkerTest, DeliversBytesToStdoutFlush)
     EXPECT_EQ(actual, message);
 }
 
-TEST(AsyncWorkerTest, DeliversBytesToPlainFileFlush)
+TEST(LogWorkerTest, DeliversBytesToPlainFileFlush)
 {
     const auto filename = std::filesystem::temp_directory_path() /
                           ("dlog_worker_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
     const std::string message("file\0bytes", 10);
     {
         FileFlush output(filename);
-        AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+        LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
                            60);
         worker.start();
@@ -317,12 +317,12 @@ TEST(AsyncWorkerTest, DeliversBytesToPlainFileFlush)
 }
 
 #if defined(DLOG_OS_LINUX)
-TEST(AsyncWorkerTest, ReportsFileShortWriteAtStop)
+TEST(LogWorkerTest, ReportsFileShortWriteAtStop)
 {
     if (!std::filesystem::exists("/dev/full")) GTEST_SKIP() << "/dev/full is unavailable";
 
     FileFlush output("/dev/full");
-    AsyncWorker worker([&output](const LargeFixedBuffer &buffer)
+    LogWorker worker([&output](const LargeFixedBuffer &buffer)
                        { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
                        60);
     // 超过文件流的 64 KiB 缓冲，使错误在 append 而非 flush 时发生。
@@ -342,13 +342,13 @@ TEST(AsyncWorkerTest, ReportsFileShortWriteAtStop)
 }
 #endif
 
-TEST(AsyncWorkerTest, DeliversBatchesToRollingFileFlush)
+TEST(LogWorkerTest, DeliversBatchesToRollingFileFlush)
 {
     const auto directory = std::filesystem::temp_directory_path() /
                            ("dlog_worker_roll_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     {
         RollFileFlush output(directory / "app", 4);
-        AsyncWorker worker([&](const LargeFixedBuffer &buffer)
+        LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
                            60);
         worker.append("abcd", 4);

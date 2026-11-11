@@ -13,7 +13,7 @@ LogManager::~LogManager()
     // 保存第一个停止异常，不要遇到异常就停止程序，让其余日志器仍有机会完成排空。全部停止后重新抛出，析构函数会因此终止进程。
     std::exception_ptr firstError;
 
-    auto stop = [&firstError](const AsyncLogger::Ptr &logger)
+    auto stop = [&firstError](const Logger::Ptr &logger)
     {
         try
         {
@@ -31,7 +31,7 @@ LogManager::~LogManager()
     if (firstError) std::rethrow_exception(firstError);
 }
 
-void LogManager::registerLogger(std::string name, AsyncLogger::Ptr logger)
+void LogManager::registerLogger(std::string name, Logger::Ptr logger)
 {
     if (name.empty() || !logger) throw std::invalid_argument("LogManager::registerLogger(): name and logger must not be empty");
 
@@ -40,7 +40,7 @@ void LogManager::registerLogger(std::string name, AsyncLogger::Ptr logger)
     if (!m_loggers.try_emplace(std::move(name), std::move(logger)).second) throw std::logic_error("LogManager::registerLogger(): logger name already registered");
 }
 
-AsyncLogger::Ptr LogManager::getLogger(const std::string &name) const
+Logger::Ptr LogManager::getLogger(const std::string &name) const
 {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
 

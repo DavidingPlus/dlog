@@ -13,7 +13,7 @@ DLOG_NAMESPACE_BEGIN(impl)
 // 使用具名命名空间中的外部链接 inline 函数，允许多个编译单元包含相同定义，并使宏在这些编译单元中引用同一实体；inline 不保证编译器一定展开调用。
 // 若改用匿名命名空间，每个编译单元会有不同的函数；在多个编译单元共享的外部链接 inline 函数或模板中使用宏时，可能违反单一定义规则。
 // 若改为头文件声明、.cpp 定义，函数需要外部链接，Windows DLL 构建还需导出该函数，才能供调用方链接。
-inline AsyncLogger::Ptr checkLogger(AsyncLogger::Ptr logger)
+inline Logger::Ptr checkLogger(Logger::Ptr logger)
 {
     if (!logger) throw std::invalid_argument("dlog: logger must not be null");
     return logger;

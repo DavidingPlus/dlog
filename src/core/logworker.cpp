@@ -1,4 +1,4 @@
-#include "asyncworker.h"
+#include "logworker.h"
 
 #include <algorithm>
 #include <chrono>
@@ -9,15 +9,15 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-AsyncWorker::AsyncWorker(OutputFunc output, unsigned int flushInterval)
-    : m_output(std::move(output)), m_flushInterval(flushInterval), m_thread(std::bind(&AsyncWorker::threadFunc, this), "AsyncWorker"), m_producerBuffer(std::make_unique<LargeFixedBuffer>())
+LogWorker::LogWorker(OutputFunc output, unsigned int flushInterval)
+    : m_output(std::move(output)), m_flushInterval(flushInterval), m_thread(std::bind(&LogWorker::threadFunc, this), "LogWorker"), m_producerBuffer(std::make_unique<LargeFixedBuffer>())
 {
-    if (!m_output) throw std::invalid_argument("AsyncWorker::constructor(): output must not be empty");
+    if (!m_output) throw std::invalid_argument("LogWorker::constructor(): output must not be empty");
 
     m_pendingBuffers.reserve(16);
 }
 
-void AsyncWorker::append(const char *data, size_t length)
+void LogWorker::append(const char *data, size_t length)
 {
     if (!data || 0 == length) return;
 
@@ -63,7 +63,7 @@ void AsyncWorker::append(const char *data, size_t length)
     if (queuedBuffer) m_cond.notify_one();
 }
 
-void AsyncWorker::start()
+void LogWorker::start()
 {
     // m_running 表示“允许后台继续消费”，started() 表示“本轮线程已启动且尚未 join”，防止重复启动应检查后者。
     // 例如同一控制线程按顺序调用：
@@ -95,7 +95,7 @@ void AsyncWorker::start()
     }
 }
 
-void AsyncWorker::stop()
+void LogWorker::stop()
 {
     stopAndJoin();
 
@@ -103,7 +103,7 @@ void AsyncWorker::stop()
     if (m_backgroundError) std::rethrow_exception(m_backgroundError);
 }
 
-void AsyncWorker::stopAndJoin()
+void LogWorker::stopAndJoin()
 {
     // m_running 是原子变量，单独读写它不会发生数据竞争；这里加锁是为了协调条件变量的“检查条件 -> 进入等待”。notify_one() 不会保存通知：通知发生时若还没有线程等待，之后进入等待的线程不会收到这次通知。例如 m_flushInterval == 60 秒，不持锁修改停止标志时可能出现以下时序：
     // 1. 后台线程持有 m_mtx，检查到队列为空且 m_running == true，等待谓词返回 false。
@@ -126,7 +126,7 @@ void AsyncWorker::stopAndJoin()
     m_thread.join();
 }
 
-void AsyncWorker::threadFunc()
+void LogWorker::threadFunc()
 {
     try
     {

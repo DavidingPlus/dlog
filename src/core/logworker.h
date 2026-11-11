@@ -1,5 +1,5 @@
-#ifndef _DLOG_ASYNCWORKER_H_
-#define _DLOG_ASYNCWORKER_H_
+#ifndef _DLOG_LOGWORKER_H_
+#define _DLOG_LOGWORKER_H_
 
 #include "fixedbuffer.h"
 #include "thread.h"
@@ -16,22 +16,22 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// AsyncWorker 只负责字节缓冲和后台批次处理，输出方式由回调决定，不承担日志记录格式化或文件配置。
-class DLOG_API_EXPORTED AsyncWorker
+// LogWorker 只负责字节缓冲和后台批次处理，输出方式由回调决定，不承担日志记录格式化或文件配置。
+class DLOG_API_EXPORTED LogWorker
 {
 
-    DLOG_CLASS_NONCOPYABLE(AsyncWorker)
+    DLOG_CLASS_NONCOPYABLE(LogWorker)
 
 public:
 
-    // 后台按批次交付只读缓冲块。缓冲区由 AsyncWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免后台线程 join 自身。
+    // 后台按批次交付只读缓冲块。缓冲区由 LogWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免后台线程 join 自身。
     using OutputFunc = std::function<void(const LargeFixedBuffer &)>;
 
     // 保存输出回调并准备缓冲，不启动线程；flushInterval 为周期处理间隔，单位为秒。
-    explicit AsyncWorker(OutputFunc output, unsigned int flushInterval = 3);
+    explicit LogWorker(OutputFunc output, unsigned int flushInterval = 3);
 
     // 停止并回收已启动的后台线程；后台异常由显式 stop() 报告。
-    ~AsyncWorker() { stopAndJoin(); }
+    ~LogWorker() { stopAndJoin(); }
 
     // 将一段已经格式化的日志字节复制到 Worker 的内存缓冲区。
     // 整次追加持有互斥锁，按顺序分段复制，写满的块移入待写队列；全部复制完成并释放锁后，若有完整块入队，只通知后台线程一次。后台失败后，非空追加重抛原异常。

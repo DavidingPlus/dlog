@@ -154,7 +154,7 @@ TEST(FileNameViewTest, ViewCanOutliveATemporaryFileNameView)
 TEST(LogMacroTest, ExplicitLevelsCaptureLocationAndContinueAfterFatal)
 {
     std::string text;
-    auto logger = AsyncLogger::BuildAsyncLogger<RecordingFlush>(text);
+    auto logger = Logger::BuildLogger<RecordingFlush>(text);
     const int line = __LINE__ + 1;
     DLOG_LOGGER_TRACE(logger) << "trace";
     DLOG_LOGGER_DEBUG(logger) << "debug";
@@ -174,8 +174,8 @@ TEST(LogMacroTest, ExplicitLevelsCaptureLocationAndContinueAfterFatal)
 TEST(LogMacroTest, ExplicitLoggersUseSeparateTargets)
 {
     std::string firstText, secondText;
-    auto first = AsyncLogger::BuildAsyncLogger<RecordingFlush>(firstText);
-    auto second = AsyncLogger::BuildAsyncLogger<RecordingFlush>(secondText);
+    auto first = Logger::BuildLogger<RecordingFlush>(firstText);
+    auto second = Logger::BuildLogger<RecordingFlush>(secondText);
     DLOG_LOGGER_INFO(first) << "first only";
     DLOG_LOGGER_INFO(second) << "second only";
     first->stop();
@@ -189,12 +189,12 @@ TEST(LogMacroTest, ExplicitLoggersUseSeparateTargets)
 TEST(LogMacroTest, TargetAndSavedErrnoAreEvaluatedOnceAndNullRejected)
 {
     std::string text;
-    auto logger = AsyncLogger::BuildAsyncLogger<RecordingFlush>(text);
+    auto logger = Logger::BuildLogger<RecordingFlush>(text);
     int targets = 0;
     int errors = 0;
     DLOG_LOGGER_SYS_ERROR((++targets, logger), (++errors, 1234567)) << "system error";
     DLOG_LOGGER_SYS_FATAL(logger, 1234568) << "fatal system error";
-    EXPECT_THROW(DLOG_LOGGER_INFO(AsyncLogger::Ptr{}) << "invalid", std::invalid_argument);
+    EXPECT_THROW(DLOG_LOGGER_INFO(Logger::Ptr{}) << "invalid", std::invalid_argument);
     logger->stop();
     EXPECT_EQ(targets, 1);
     EXPECT_EQ(errors, 1);

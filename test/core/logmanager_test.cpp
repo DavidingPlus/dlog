@@ -89,7 +89,7 @@ static void verifyFileAtExit(bool explicitStop)
 
     EXPECT_EXIT(
         {
-            auto logger = AsyncLogger::BuildAsyncLogger<FileFlush>(path);
+            auto logger = Logger::BuildLogger<FileFlush>(path);
             LogManager::GetInstance().registerLogger("exit-file-probe", logger);
             logger->message("app.cpp", 1, LogLevel::INFO).stream() << "exit file probe";
             if (explicitStop) logger->stop();
@@ -141,7 +141,7 @@ TEST(LogManagerDeathTest, TerminationReceivesFirstOutputException)
                 }
                 catch (...) {}
                 std::_Exit(43); });
-            auto logger = AsyncLogger::BuildAsyncLogger<DiagnosticFlush>();
+            auto logger = Logger::BuildLogger<DiagnosticFlush>();
             LogManager::GetInstance().registerLogger("diagnostic", logger);
             logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
             std::exit(EXIT_SUCCESS);
@@ -174,8 +174,8 @@ static void verifyRegistrationAndShutdown()
 
     auto console = manager.getDefaultLogger();
     EXPECT_NE(console, nullptr);
-    auto first = AsyncLogger::BuildAsyncLogger<RecordingFlush>(firstText);
-    auto second = AsyncLogger::BuildAsyncLogger<RecordingFlush>(secondText);
+    auto first = Logger::BuildLogger<RecordingFlush>(firstText);
+    auto second = Logger::BuildLogger<RecordingFlush>(secondText);
     EXPECT_THROW(manager.registerLogger("", first), std::invalid_argument);
     EXPECT_THROW(manager.registerLogger("missing", nullptr), std::invalid_argument);
     manager.registerLogger("console", console);
@@ -202,9 +202,9 @@ static void verifyShutdownAfterOutputFailure()
         std::_Exit(stopped ? 42 : 43); });
 
     auto &manager = LogManager::GetInstance();
-    auto first = AsyncLogger::BuildAsyncLogger<FailingFlush>(failures);
-    auto second = AsyncLogger::BuildAsyncLogger<FailingFlush>(failures);
-    auto healthy = AsyncLogger::BuildAsyncLogger<RecordingFlush>(healthyText);
+    auto first = Logger::BuildLogger<FailingFlush>(failures);
+    auto second = Logger::BuildLogger<FailingFlush>(failures);
+    auto healthy = Logger::BuildLogger<RecordingFlush>(healthyText);
     manager.registerLogger("first", first);
     manager.registerLogger("second", second);
     manager.registerLogger("healthy", healthy);
@@ -242,7 +242,7 @@ TEST(LogManagerDeathTest, ConcurrentFirstAccessReturnsTheSameManagerAndDefaultLo
         {
             constexpr size_t count = 8;
             std::vector<LogManager *> managers(count);
-            std::vector<AsyncLogger::Ptr> defaults(count);
+            std::vector<Logger::Ptr> defaults(count);
             std::atomic_bool start{false};
             std::vector<std::thread> threads;
             for (size_t i = 0; i < count; ++i)
@@ -269,7 +269,7 @@ TEST(LogManagerTest, MissingLookupDoesNotReserveAName)
     auto &manager = LogManager::GetInstance();
     EXPECT_EQ(manager.getLogger(""), nullptr);
     EXPECT_EQ(manager.getLogger("lookup-then-register"), nullptr);
-    auto logger = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
+    auto logger = Logger::BuildLogger<DiscardFlush>();
     manager.registerLogger("lookup-then-register", logger);
     EXPECT_EQ(manager.getLogger("lookup-then-register"), logger);
 }
@@ -278,7 +278,7 @@ TEST(LogManagerTest, InvalidRegistrationLeavesTheNameAndDefaultUnchanged)
 {
     auto &manager = LogManager::GetInstance();
     auto defaultLogger = manager.getDefaultLogger();
-    auto logger = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
+    auto logger = Logger::BuildLogger<DiscardFlush>();
     EXPECT_THROW(manager.registerLogger("", logger), std::invalid_argument);
     EXPECT_THROW(manager.registerLogger("invalid-then-valid", nullptr), std::invalid_argument);
     EXPECT_EQ(manager.getLogger(""), nullptr);
@@ -291,8 +291,8 @@ TEST(LogManagerTest, InvalidRegistrationLeavesTheNameAndDefaultUnchanged)
 TEST(LogManagerTest, DuplicateNamePreservesOriginalAndDoesNotConsumeReplacement)
 {
     auto &manager = LogManager::GetInstance();
-    auto original = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
-    auto replacement = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
+    auto original = Logger::BuildLogger<DiscardFlush>();
+    auto replacement = Logger::BuildLogger<DiscardFlush>();
     manager.registerLogger("duplicate-original", original);
     EXPECT_THROW(manager.registerLogger("duplicate-original", replacement), std::logic_error);
     EXPECT_EQ(manager.getLogger("duplicate-original"), original);
@@ -305,7 +305,7 @@ TEST(LogManagerTest, NamedDefaultDoesNotReplaceTheDefaultLogger)
 {
     auto &manager = LogManager::GetInstance();
     auto defaultLogger = manager.getDefaultLogger();
-    auto named = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
+    auto named = Logger::BuildLogger<DiscardFlush>();
     manager.registerLogger("default", named);
     EXPECT_EQ(manager.getLogger("default"), named);
     EXPECT_EQ(manager.getDefaultLogger(), defaultLogger);
@@ -315,9 +315,9 @@ TEST(LogManagerTest, NamedDefaultDoesNotReplaceTheDefaultLogger)
 TEST(LogManagerTest, RetainsRegisteredLoggerAfterCallerReleasesOwnership)
 {
     auto &manager = LogManager::GetInstance();
-    std::weak_ptr<AsyncLogger> observer;
+    std::weak_ptr<Logger> observer;
     {
-        auto logger = AsyncLogger::BuildAsyncLogger<DiscardFlush>();
+        auto logger = Logger::BuildLogger<DiscardFlush>();
         observer = logger;
         manager.registerLogger("retained", logger);
     }
@@ -333,8 +333,8 @@ TEST(LogManagerTest, ConcurrentRegistrationAndLookupKeepEachTarget)
 {
     auto &manager = LogManager::GetInstance();
     constexpr size_t count = 8;
-    std::vector<AsyncLogger::Ptr> loggers;
-    for (size_t i = 0; i < count; ++i) loggers.push_back(AsyncLogger::BuildAsyncLogger<DiscardFlush>());
+    std::vector<Logger::Ptr> loggers;
+    for (size_t i = 0; i < count; ++i) loggers.push_back(Logger::BuildLogger<DiscardFlush>());
     std::atomic_bool start{false};
     std::atomic_int errors{0};
     std::vector<std::thread> threads;
@@ -366,8 +366,8 @@ TEST(LogManagerTest, ConcurrentDuplicateRegistrationHasExactlyOneWinner)
 {
     auto &manager = LogManager::GetInstance();
     constexpr size_t count = 8;
-    std::vector<AsyncLogger::Ptr> loggers;
-    for (size_t i = 0; i < count; ++i) loggers.push_back(AsyncLogger::BuildAsyncLogger<DiscardFlush>());
+    std::vector<Logger::Ptr> loggers;
+    for (size_t i = 0; i < count; ++i) loggers.push_back(Logger::BuildLogger<DiscardFlush>());
     std::atomic_bool start{false};
     std::atomic_int successes{0}, duplicates{0}, errors{0};
     std::vector<std::thread> threads;
