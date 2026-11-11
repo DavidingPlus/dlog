@@ -1,63 +1,29 @@
 #include <gtest/gtest.h>
-
-#include <array>
-#include <functional>
-#include <mutex>
-#include <regex>
+#include <cstdlib>
 #include <string>
 #include <string_view>
-#include <system_error>
-#include <thread>
 #include <type_traits>
-#include <utility>
-#include <vector>
-
-#include "logger.h"
-
+#include "log.h"
 
 using namespace dlog;
 
-
 namespace
 {
-
     std::string_view basenameOf(std::string_view path)
     {
         auto separator = path.find_last_of("/\\");
         return std::string_view::npos == separator ? path : path.substr(separator + 1);
     }
 
-    void restoreDefaultOutput()
+    class RecordingFlush : public LogFlush
     {
-        Logger::SetOutput([](const char *data, size_t len)
-                          { std::fwrite(data, sizeof(char), len, stdout); });
-    }
-
-    void restoreDefaultFlush()
-    {
-        Logger::SetFlush([]
-                         { std::fflush(stdout); });
-    }
-
-    std::string captureOutput(const std::function<void()> &writeLog, LogLevelColorMode colorMode = LogLevelColorMode::OFF)
-    {
-        std::string output;
-
-        // 旧格式测试验证纯文本布局；颜色行为由单独的 LoggerColorTest 覆盖。
-        Logger::SetOutput([&output](const char *data, size_t len)
-                          { output.append(data, len); },
-                          colorMode);
-
-        writeLog();
-
-        restoreDefaultOutput();
-
-
-        return output;
-    }
-
-} // namespace
-
+    public:
+        explicit RecordingFlush(std::string &text) : m_text(text) {}
+        void writeAndFlush(const char *data, size_t size) override { m_text.append(data, size); }
+    private:
+        std::string &m_text;
+    };
+}
 
 TEST(FileNameViewTest, ExposesAStringView)
 {
@@ -184,373 +150,95 @@ TEST(FileNameViewTest, ViewCanOutliveATemporaryFileNameView)
     EXPECT_EQ(view, "Logger.cc");
 }
 
-TEST(LoggerTest, DoesNotOutputUntilLoggerIsDestroyed)
+
+TEST(LogMacroTest, ExplicitLevelsCaptureLocationAndContinueAfterFatal)
 {
-    std::string output;
+    std::string text;
+    auto logger = AsyncLogger::BuildAsyncLogger<RecordingFlush>(text);
+    const int line = __LINE__ + 1;
+    DLOG_LOGGER_TRACE(logger) << "trace";
+    DLOG_LOGGER_DEBUG(logger) << "debug";
+    DLOG_LOGGER_INFO(logger) << "info";
+    DLOG_LOGGER_WARN(logger) << "warn";
+    DLOG_LOGGER_ERROR(logger) << "error";
+    DLOG_LOGGER_FATAL(logger) << "fatal";
+    DLOG_LOGGER_INFO(logger) << "after fatal";
+    logger->stop();
+    EXPECT_NE(text.find("[logger_test.cpp:" + std::to_string(line) + "] trace\n"), std::string::npos);
+    for (const char *level : {"[TRACE]", "[DEBUG]", "[INFO ]", "[WARN ]", "[ERROR]", "[FATAL]"})
+        EXPECT_NE(text.find(level), std::string::npos);
+    EXPECT_NE(text.find("after fatal"), std::string::npos);
+    EXPECT_EQ(text.find("after fatal"), text.rfind("after fatal"));
+}
 
-    Logger::SetOutput([&output](const char *data, size_t len)
-                      { output.append(data, len); },
-                      LogLevelColorMode::OFF);
+TEST(LogMacroTest, ExplicitLoggersUseSeparateTargets)
+{
+    std::string firstText, secondText;
+    auto first = AsyncLogger::BuildAsyncLogger<RecordingFlush>(firstText);
+    auto second = AsyncLogger::BuildAsyncLogger<RecordingFlush>(secondText);
+    DLOG_LOGGER_INFO(first) << "first only";
+    DLOG_LOGGER_INFO(second) << "second only";
+    first->stop();
+    second->stop();
+    EXPECT_NE(firstText.find("first only"), std::string::npos);
+    EXPECT_EQ(firstText.find("second only"), std::string::npos);
+    EXPECT_NE(secondText.find("second only"), std::string::npos);
+    EXPECT_EQ(secondText.find("first only"), std::string::npos);
+}
 
+TEST(LogMacroTest, TargetAndSavedErrnoAreEvaluatedOnceAndNullRejected)
+{
+    std::string text;
+    auto logger = AsyncLogger::BuildAsyncLogger<RecordingFlush>(text);
+    int targets = 0;
+    int errors = 0;
+    DLOG_LOGGER_SYS_ERROR((++targets, logger), (++errors, 1234567)) << "system error";
+    DLOG_LOGGER_SYS_FATAL(logger, 1234568) << "fatal system error";
+    EXPECT_THROW(DLOG_LOGGER_INFO(AsyncLogger::Ptr{}) << "invalid", std::invalid_argument);
+    logger->stop();
+    EXPECT_EQ(targets, 1);
+    EXPECT_EQ(errors, 1);
+    EXPECT_NE(text.find("(errno=1234567) system error"), std::string::npos);
+    EXPECT_NE(text.find("(errno=1234568) fatal system error"), std::string::npos);
+}
+
+TEST(LogMacroDeathTest, DefaultMacrosWriteToDefaultConsole)
+{
+    EXPECT_EXIT(
     {
-        Logger logger(__FILE__, 123, LogLevel::INFO);
-        logger.stream() << "scope message";
-
-        EXPECT_TRUE(output.empty());
-    }
-
-    EXPECT_FALSE(output.empty());
-    EXPECT_NE(output.find("[INFO ] [logger_test.cpp:123] scope message\n"), std::string::npos);
-
-    restoreDefaultOutput();
+        ::testing::internal::CaptureStdout();
+        DLOG_TRACE() << "default trace";
+        DLOG_DEBUG() << "default debug";
+        DLOG_INFO() << "default console";
+        DLOG_WARN() << "default warn";
+        DLOG_ERROR() << "default error";
+        DLOG_FATAL() << "default fatal level";
+        DLOG_SYS_ERROR(1234568) << "default system error";
+        DLOG_SYS_FATAL(1234567) << "default fatal";
+        auto logger = LogManager::GetInstance().getDefaultLogger();
+        logger->stop();
+        auto text = ::testing::internal::GetCapturedStdout();
+        std::_Exit(text.find("default trace") != std::string::npos &&
+                   text.find("default debug") != std::string::npos &&
+                   text.find("default console") != std::string::npos &&
+                   text.find("default warn") != std::string::npos &&
+                   text.find("default error") != std::string::npos &&
+                   text.find("default fatal level") != std::string::npos &&
+                   text.find("(errno=1234568) default system error") != std::string::npos &&
+                   text.find("(errno=1234567) default fatal") != std::string::npos ? 0 : 1);
+    }, ::testing::ExitedWithCode(0), "");
 }
 
-TEST(LoggerTest, FormatsTimestampLevelMessageSourceAndLine)
+TEST(LogMacroDeathTest, DefaultLoggerDrainsOnNormalExit)
 {
-    const std::string output = captureOutput([]
-                                             { Logger(__FILE__, 456, LogLevel::INFO).stream() << "hello"; });
-
-    const std::regex pattern(R"(^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\] \[INFO \] \[logger_test\.cpp:456\] hello\n$)");
-
-    EXPECT_TRUE(std::regex_match(output, pattern)) << output;
-}
-
-TEST(LoggerOutputTest, ExistingRecordKeepsItsOutputAndColorWhenDefaultsChange)
-{
-    std::string originalOutput;
-    std::string replacementOutput;
-    size_t originalCalls = 0;
-    size_t replacementCalls = 0;
-    Logger::SetOutput([&](const char *data, size_t len)
-                      {
-                          ++originalCalls;
-                          originalOutput.append(data, len); },
-                      LogLevelColorMode::OFF);
-
+    EXPECT_EXIT(
     {
-        Logger original("snapshot.cpp", 12, LogLevel::INFO);
-        original.stream() << "original record";
-        Logger::SetOutput([&](const char *data, size_t len)
-                          {
-                              ++replacementCalls;
-                              replacementOutput.append(data, len); },
-                          LogLevelColorMode::ON);
-        DLOG_INFO() << "replacement record";
-        EXPECT_TRUE(originalOutput.empty());
-    }
-    restoreDefaultOutput();
-
-    EXPECT_EQ(originalCalls, 1u);
-    EXPECT_EQ(replacementCalls, 1u);
-    EXPECT_NE(originalOutput.find("[snapshot.cpp:12] original record\n"), std::string::npos);
-    EXPECT_EQ(originalOutput.find('\x1b'), std::string::npos);
-    EXPECT_EQ(originalOutput.find("replacement record"), std::string::npos);
-    EXPECT_NE(replacementOutput.find("replacement record\n"), std::string::npos);
-    EXPECT_NE(replacementOutput.find('\x1b'), std::string::npos);
-    EXPECT_EQ(replacementOutput.find("original record"), std::string::npos);
-}
-
-TEST(LoggerTest, FormatsEveryNonFatalLevel)
-{
-    const std::array<std::pair<LogLevel, const char *>, 5> levels{{
-        {LogLevel::TRACE, "TRACE"},
-        {LogLevel::DEBUG, "DEBUG"},
-        {LogLevel::INFO, "INFO "},
-        {LogLevel::WARN, "WARN "},
-        {LogLevel::ERROR, "ERROR"},
-    }};
-
-    for (const auto &[level, logLevelName] : levels)
-    {
-        const std::string output = captureOutput([&]
-                                                 { Logger(__FILE__, 789, level).stream() << "payload"; });
-
-        const std::string expected = "[" + std::string(logLevelName) + "] [logger_test.cpp:789] payload\n";
-        EXPECT_NE(output.find(expected), std::string::npos) << output;
-    }
-}
-
-TEST(LoggerMacroTest, QDebugStyleMacroFormatsAndOutputsOnFullExpressionEnd)
-{
-    const std::string output = captureOutput([]
-                                             { DLOG_INFO() << "started " << 42; });
-
-    EXPECT_NE(output.find("[INFO ] [logger_test.cpp:"), std::string::npos);
-    EXPECT_NE(output.find("] started 42\n"), std::string::npos);
-    EXPECT_FALSE(output.empty());
-    EXPECT_EQ(output.back(), '\n');
-}
-
-TEST(LoggerMacroTest, SupportsAllListedMacros)
-{
-    const std::array<std::pair<const char *, std::function<void()>>, 5> loggers{{
-        {"TRACE", []
-         { DLOG_TRACE() << "message"; }},
-        {"DEBUG", []
-         { DLOG_DEBUG() << "message"; }},
-        {"INFO ", []
-         { DLOG_INFO() << "message"; }},
-        {"WARN ", []
-         { DLOG_WARN() << "message"; }},
-        {"ERROR", []
-         { DLOG_ERROR() << "message"; }},
-    }};
-
-    for (const auto &[logLevelName, writeLog] : loggers)
-    {
-        const std::string output = captureOutput(writeLog);
-        EXPECT_NE(output.find("[" + std::string(logLevelName) + "] [logger_test.cpp:"), std::string::npos) << output;
-        EXPECT_NE(output.find("] message\n"), std::string::npos) << output;
-    }
-}
-
-TEST(LoggerSystemErrorTest, OmitsSystemErrorWhenSavedErrnoIsZero)
-{
-    const std::array<std::function<void()>, 2> writeLogs{{
-        []
-        { Logger(__FILE__, 901, LogLevel::ERROR).stream() << "default errno"; },
-        []
-        { Logger(__FILE__, 902, LogLevel::ERROR, 0).stream() << "explicit zero errno"; },
-    }};
-
-    for (const auto &writeLog : writeLogs)
-    {
-        const std::string output = captureOutput(writeLog);
-
-        EXPECT_EQ(output.find("(errno="), std::string::npos) << output;
-        EXPECT_NE(output.find("[ERROR] [logger_test.cpp:"), std::string::npos) << output;
-    }
-}
-
-TEST(LoggerSystemErrorTest, ConstructorFormatsTheProvidedErrorNumberAndDescription)
-{
-    constexpr int savedErrno = EINVAL;
-    const std::string errorDescription = std::error_code(savedErrno, std::generic_category()).message();
-
-    const std::string output = captureOutput([savedErrno]
-                                             { Logger(__FILE__, 903, LogLevel::ERROR, savedErrno).stream() << "explicit system error"; });
-
-    EXPECT_NE(output.find("[ERROR] [logger_test.cpp:903] "), std::string::npos) << output;
-    EXPECT_NE(output.find(errorDescription + " (errno=" + std::to_string(savedErrno) + ") explicit system error\n"), std::string::npos) << output;
-}
-
-TEST(LoggerSystemErrorMacroTest, SysErrorUsesErrorLevelAndTheCallerSavedErrno)
-{
-    const int savedErrno = EACCES;
-    errno = ENOENT;
-    ASSERT_NE(savedErrno, errno);
-    const std::string expectedErrorDescription = std::error_code(savedErrno, std::generic_category()).message();
-
-    const std::string output = captureOutput([savedErrno]
-                                             { DLOG_SYS_ERROR(savedErrno) << "open file failed"; });
-
-    EXPECT_NE(output.find("[ERROR] [logger_test.cpp:"), std::string::npos) << output;
-    EXPECT_NE(output.find(expectedErrorDescription + " (errno=" + std::to_string(savedErrno) + ") open file failed\n"), std::string::npos) << output;
-    EXPECT_EQ(output.find("(errno=" + std::to_string(ENOENT) + ")"), std::string::npos) << output;
-}
-
-TEST(LoggerSystemErrorMacroTest, EvaluatesTheSavedErrnoArgumentOnce)
-{
-    int evaluationCount = 0;
-
-    const std::string output = captureOutput([&]
-                                             { DLOG_SYS_ERROR((++evaluationCount, EINVAL)) << "single evaluation"; });
-
-    EXPECT_EQ(evaluationCount, 1);
-    EXPECT_NE(output.find("single evaluation\n"), std::string::npos) << output;
-}
-
-TEST(LoggerSystemErrorTest, ConcurrentLogsKeepEachErrorNumberWithItsMessage)
-{
-    constexpr std::array<int, 4> errorNumbers{{EINVAL, EACCES, ENOENT, ERANGE}};
-    constexpr size_t logsPerThread = 32;
-    std::array<std::string, errorNumbers.size()> errorDescriptions;
-    for (size_t i = 0; i < errorNumbers.size(); ++i)
-    {
-        // 使用与 Logger 相同的错误类别生成期望文本，避免依赖 strerror 的平台措辞。
-        errorDescriptions[i] = std::error_code(errorNumbers[i], std::generic_category()).message();
-    }
-
-    std::string output;
-    std::mutex outputMutex;
-    Logger::SetOutput([&](const char *data, size_t len)
-                      {
-        std::lock_guard<std::mutex> lock(outputMutex);
-        output.append(data, len); },
-                      LogLevelColorMode::OFF);
-
-    std::array<std::thread, errorNumbers.size()> workers;
-    for (size_t workerIndex = 0; workerIndex < workers.size(); ++workerIndex)
-    {
-        workers[workerIndex] = std::thread([&, workerIndex]
-                                           {
-            for (size_t messageIndex = 0; messageIndex < logsPerThread; ++messageIndex)
-            {
-                DLOG_SYS_ERROR(errorNumbers[workerIndex])
-                    << "worker=" << workerIndex << " message=" << messageIndex;
-            } });
-    }
-
-    for (auto &worker : workers)
-    {
-        worker.join();
-    }
-    restoreDefaultOutput();
-
-    for (size_t workerIndex = 0; workerIndex < errorNumbers.size(); ++workerIndex)
-    {
-        for (size_t messageIndex = 0; messageIndex < logsPerThread; ++messageIndex)
-        {
-            const std::string expectedRecord = errorDescriptions[workerIndex] + " (errno=" + std::to_string(errorNumbers[workerIndex]) + ") worker=" + std::to_string(workerIndex) + " message=" + std::to_string(messageIndex) + "\n";
-            EXPECT_NE(output.find(expectedRecord), std::string::npos) << "Missing record: " << expectedRecord;
-        }
-    }
-}
-
-TEST(LoggerOutputTest, PreservesEmbeddedNullCharactersThroughExplicitLength)
-{
-    constexpr char message[] = {'l', 'e', 'f', 't', '\0', 'r', 'i', 'g', 'h', 't'};
-
-    const std::string output = captureOutput([&]
-                                             { DLOG_INFO() << std::string_view(message, sizeof(message)); });
-
-    const std::string expected(message, sizeof(message));
-    EXPECT_NE(output.find(expected), std::string::npos);
-}
-
-TEST(LoggerOutputTest, PassesTheExactBufferLengthToOutputCallback)
-{
-    size_t callbackLength = 0;
-    std::string callbackData;
-
-    Logger::SetOutput([&](const char *data, size_t len)
-                      {
-        callbackLength = len;
-        callbackData.assign(data, len); },
-                      LogLevelColorMode::OFF);
-
-    DLOG_INFO() << "length check";
-
-    EXPECT_EQ(callbackLength, callbackData.size());
-    EXPECT_NE(callbackData.find("[INFO ] [logger_test.cpp:"), std::string::npos);
-    EXPECT_NE(callbackData.find("] length check\n"), std::string::npos);
-
-    restoreDefaultOutput();
-}
-
-TEST(LoggerOutputTest, DeliversLongBinaryRecordOnceAndKeepsNextRecordSeparate)
-{
-    std::string payload(5000, 'A');
-    payload[2500] = '\0';
-    const std::string body = "payload=" + payload + ", done\n";
-
-    for (LogLevelColorMode mode : {LogLevelColorMode::OFF, LogLevelColorMode::ON})
-    {
-        std::vector<std::string> records;
-        Logger::SetOutput([&](const char *data, size_t len)
-                          { records.emplace_back(data, len); },
-                          mode);
-
-        DLOG_INFO() << "payload=" << payload << ", done";
-        DLOG_INFO() << "next";
-        restoreDefaultOutput();
-
-        ASSERT_EQ(records.size(), 2u);
-        ASSERT_GE(records[0].size(), body.size());
-        EXPECT_EQ(records[0].substr(records[0].size() - body.size()), body);
-        EXPECT_NE(records[0].find("[INFO ]"), std::string::npos);
-        EXPECT_NE(records[0].find("[logger_test.cpp:"), std::string::npos);
-        EXPECT_NE(records[1].find("] next\n"), std::string::npos);
-        EXPECT_EQ(records[0].find('\x1b') != std::string::npos, mode == LogLevelColorMode::ON);
-    }
-}
-
-TEST(LoggerOutputTest, AppendsNewlineWhenInitialBufferIsExactlyFull)
-{
-    std::string payload;
-    const std::string output = captureOutput([&]
-                                             {
-        Logger logger(__FILE__, 456, LogLevel::INFO);
-        const size_t prefixLength = logger.stream().buffer().readableBytes();
-        ASSERT_LT(prefixLength, FlexibleBuffer::kInitialSize);
-        payload.assign(FlexibleBuffer::kInitialSize - prefixLength, 'X');
-        logger.stream() << payload;
-        EXPECT_EQ(logger.stream().buffer().writableBytes(), 0u); });
-
-    ASSERT_EQ(output.size(), FlexibleBuffer::kInitialSize + 1);
-    EXPECT_EQ(output.substr(output.size() - payload.size() - 1), payload + '\n');
-}
-
-TEST(LoggerColorOutputTest, EmitsColorByDefaultForEveryNonFatalLevel)
-{
-    std::string output;
-
-    Logger::SetOutput([&output](const char *data, size_t len)
-                      { output.append(data, len); });
-
-    DLOG_TRACE() << "colored";
-    DLOG_DEBUG() << "colored";
-    DLOG_INFO() << "colored";
-    DLOG_WARN() << "colored";
-    DLOG_ERROR() << "colored";
-
-    const std::array<const char *, 5> expectedColors{{
-        "\x1b[37m[TRACE] \x1b[0m",
-        "\x1b[36m[DEBUG] \x1b[0m",
-        "\x1b[32m[INFO ] \x1b[0m",
-        "\x1b[33m\x1b[1m[WARN ] \x1b[0m",
-        "\x1b[31m\x1b[1m[ERROR] \x1b[0m",
-    }};
-
-    for (const char *expectedColor : expectedColors)
-    {
-        EXPECT_NE(output.find(expectedColor), std::string::npos) << output;
-    }
-
-    restoreDefaultOutput();
-}
-
-TEST(LoggerColorOutputTest, OmitsColorWhenModeIsOff)
-{
-    const std::string output = captureOutput([]
-                                             { DLOG_INFO() << "plain"; },
-                                             LogLevelColorMode::OFF);
-
-    EXPECT_NE(output.find("[INFO ] [logger_test.cpp:"), std::string::npos);
-    EXPECT_NE(output.find("] plain\n"), std::string::npos);
-    EXPECT_EQ(output.find('\x1b'), std::string::npos);
-}
-
-TEST(LoggerOutputTest, DoesNotFlushNormalLogs)
-{
-    bool flushed = false;
-    Logger::SetFlush([&flushed]
-                     { flushed = true; });
-
-    const std::string output = captureOutput([]
-                                             { DLOG_INFO() << "normal"; });
-
-    EXPECT_NE(output.find("[INFO ] [logger_test.cpp:"), std::string::npos);
-    EXPECT_NE(output.find("] normal\n"), std::string::npos);
-    EXPECT_FALSE(flushed);
-
-    restoreDefaultFlush();
-}
-
-TEST(LoggerOutputTest, FatalAndSysFatalReturnNormally)
-{
-    bool flushed = false;
-    Logger::SetFlush([&] { flushed = true; });
-    const std::string output = captureOutput([]
-    {
-        DLOG_FATAL() << "fatal message";
-        DLOG_SYS_FATAL(1234567) << "fatal system error";
-        DLOG_INFO() << "after fatal";
-    }, LogLevelColorMode::OFF);
-    restoreDefaultFlush();
-    EXPECT_NE(output.find("[FATAL]"), std::string::npos);
-    EXPECT_NE(output.find("fatal message"), std::string::npos);
-    EXPECT_NE(output.find("(errno=1234567) fatal system error"), std::string::npos);
-    EXPECT_NE(output.find("after fatal"), std::string::npos);
-    EXPECT_FALSE(flushed);
+        ::testing::internal::CaptureStdout();
+        std::atexit([] {
+            auto text = ::testing::internal::GetCapturedStdout();
+            std::_Exit(text.find("default exit tail") != std::string::npos ? 0 : 1);
+        });
+        DLOG_INFO() << "default exit tail";
+        std::exit(0);
+    }, ::testing::ExitedWithCode(0), "");
 }

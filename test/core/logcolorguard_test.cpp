@@ -6,7 +6,7 @@
 #include <string_view>
 #include <type_traits>
 
-#include "logger.h"
+#include "logmessage.h"
 #include "logcolorguard.h"
 
 
