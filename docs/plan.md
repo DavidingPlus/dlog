@@ -164,6 +164,8 @@ Logger::message() → LogMessage 通过 LogStream 格式化
 
 ## 5. 实施阶段与逐步审核
 
+本节的 Worker 固定块、周期刷新和独立线程描述保留当时的实施记录；当前 Worker 正在迁移共享池和可增长双缓冲，进度与已知关闭问题以 [线程池接入计划](thread-pool-plan.md) 为准。
+
 ### 第一步：独立 AsyncWorker
 
 已完成 `src/core/logworker.h/.cpp` 和直接测试。原 AsyncLogging、测试和异步示例目前保留原调用链。Worker 复用原后端的固定块组织和消费流程，输出由批次回调决定。旧调用链的迁移随长期 AsyncLogger 实施。

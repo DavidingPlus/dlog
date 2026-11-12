@@ -65,7 +65,7 @@ int main()
 [2026/09/24 15:30:12.123456] [INFO ] [main.cpp:6] server started, port=8080
 ```
 
-日志宏在完整表达式结束时提交；未满块的数据由后台周期处理，默认间隔为 3 秒，线程调度或慢输出可能导致更长延迟，不保证立即显示。FATAL 日志不会终止进程。
+日志宏在完整表达式结束时提交；有数据时安排后台处理，线程池调度或慢输出可能导致延迟，不保证立即显示。FATAL 日志不会终止进程。
 
 正常退出时 Manager 会自动清理。需要主动控制清理时机（例如 Windows 业务 DLL 卸载前），可在停止外部生产者并结束临时日志消息后调用：
 
@@ -73,7 +73,7 @@ int main()
 dlog::LogManager::Shutdown();
 ```
 
-该调用等待共享线程池中的任务完成，再停止并排空 Manager 管理的日志器。关闭后 Manager 不可重新使用。请在普通控制线程中串行调用，不要在 `DllMain`、线程池任务或日志输出回调中调用。详见 [Windows DLL 退出说明](docs/windows-dll-exit.md)。
+当前调用先停止共享线程池，再停止 Manager 管理的日志器；若池中普通任务此时继续写日志，输出任务可能被拒绝，关闭时序仍待修复。关闭后 Manager 不可重新使用。请在普通控制线程中串行调用，不要在 `DllMain`、线程池任务或日志输出回调中调用。详见 [Windows DLL 退出说明](docs/windows-dll-exit.md)。
 
 系统错误日志应在系统调用失败后立即保存 `errno`，再传给日志宏：
 
@@ -161,19 +161,22 @@ Worker 不格式化日志、不保存文件配置，输出方式由回调决定�
 
 ```cpp
 #include <dlog/core/logworker.h>
+#include <dlog/utils/threadpool.h>
+#include <memory>
 #include <string>
 
+auto pool = std::make_shared<dlog::ThreadPool>(2);
 std::string received;
-dlog::LogWorker worker([&received](const dlog::LargeFixedBuffer &buffer) {
+dlog::LogWorker worker([&received](const dlog::FlexibleBuffer &buffer) {
     received.append(buffer.readableBegin(), buffer.readableBytes());
-});
+}, pool);
 worker.append("hello\n", 6);
 worker.start();
 worker.stop();
-// stop/join 完成后读取 received，内容为 "hello\n"。
+// stop 完成后读取 received，内容为 "hello\n"。
 ```
 
-回调在后台、队列锁外执行，接收 `const LargeFixedBuffer &`，通过 `readableBegin()` 和 `readableBytes()` 读取本批字节。缓冲区的清空和复用由 Worker 管理，引用及数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop/join 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。默认按整块唤醒、未满块周期处理，间隔为秒，传入 0 时至少等待 1 秒。
+回调在后台、队列锁外执行，接收 `const FlexibleBuffer &`，通过 `readableBegin()` 和 `readableBytes()` 读取本批字节。缓冲区的清空和复用由 Worker 管理，引用及数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。有数据时安排线程池任务，输出期间可继续追加；线程池由调用方提供并管理。
 
-后台抛出异常时，Worker 停止消费并放弃剩余待写数据。显式 `stop()` 等线程退出后重抛原异常，析构只负责回收。失败后的非空 `append()` 和 `start()` 也会重抛该异常。未启动时 `stop()` 不输出缓存数据。
+后台抛出异常时，Worker 停止消费并放弃剩余待写数据。显式 `stop()` 等任务结束后重抛原异常，析构只负责回收。失败后的非空 `append()` 和 `start()` 也会重抛该异常。未启动时 `stop()` 不输出缓存数据。
 
