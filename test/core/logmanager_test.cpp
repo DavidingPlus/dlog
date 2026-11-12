@@ -383,11 +383,12 @@ static void verifyExplicitShutdown()
     auto pool = manager.getThreadPool();
     std::promise<void> started, release;
     auto releaseSignal = release.get_future().share();
-    auto task = pool->enqueue([logger, &started, releaseSignal]
+    auto task = pool->enqueue([logger, pool, &started, releaseSignal]
                               {
         started.set_value();
         releaseSignal.wait();
-        logger->message("app.cpp", 1, LogLevel::INFO).stream() << "task record"; });
+        logger->message("app.cpp", 1, LogLevel::INFO).stream() << "task record";
+        pool->enqueue([logger] { logger->message("app.cpp", 2, LogLevel::INFO).stream() << "nested record"; }); });
     started.get_future().wait();
     auto shutdown = std::async(std::launch::async, []
                                { LogManager::Shutdown(); });
@@ -396,6 +397,7 @@ static void verifyExplicitShutdown()
     shutdown.get();
     task.get();
     EXPECT_NE(text.find("task record"), std::string::npos);
+    EXPECT_NE(text.find("nested record"), std::string::npos);
     EXPECT_THROW(pool->enqueue([] {}), std::runtime_error);
     EXPECT_THROW(logger->message("app.cpp", 1, LogLevel::INFO), std::logic_error);
     EXPECT_THROW(manager.buildLogger<DiscardFlush>("after-shutdown"), std::logic_error);

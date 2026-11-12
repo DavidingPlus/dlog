@@ -41,18 +41,39 @@ void ThreadPool::run()
             std::unique_lock<std::mutex> lock(m_mutex);
 
             // 等待任务队列不为空或线程池停止。
-            m_condition.wait(lock, [this]
-                             { return !m_running || !m_tasks.empty(); });
+            m_taskCond.wait(lock, [this]
+                            { return !m_running || !m_tasks.empty(); });
             if (!m_running && m_tasks.empty()) return;
 
             // 取出任务。
             task = std::move(m_tasks.front());
             m_tasks.pop();
+
+            ++m_activeTasks;
         }
 
         // 执行任务。
         task();
+
+        // 先释放任务捕获的对象，再判断线程池是否空闲。
+        task = {};
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            --m_activeTasks;
+
+            if (0 == m_activeTasks && m_tasks.empty()) m_idleCond.notify_all();
+        }
     }
+}
+
+void ThreadPool::waitUntilIdle()
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+
+    m_idleCond.wait(lock, [this]
+                    { return 0 == m_activeTasks && m_tasks.empty(); });
 }
 
 void ThreadPool::stopAndJoin()
@@ -64,7 +85,7 @@ void ThreadPool::stopAndJoin()
         m_running = false;
     }
 
-    m_condition.notify_all();
+    m_taskCond.notify_all();
 
     for (auto &worker : m_workers) worker->join();
 }

@@ -29,7 +29,7 @@ public:
     // 可选。可在首次获取 LogManager（即 GetInstance()）前设置共享池线程数。线程数为 0 时抛出异常，LogManager 初始化后配置会警告并忽略。
     static void ConfigureThreadPool(size_t threadCount);
 
-    // 可选。显式关闭，先停止外部生产者并结束临时日志消息，再由控制线程串行调用，不可从线程池任务或输出回调中调用。等待已提交的线程池任务，再停止并排空受管理的 Logger；关闭后不可重新使用，可重复调用。未使用过时调用会先创建实例。后台输出失败时停止其余 Logger 后重抛第一个异常。
+    // 可选。显式关闭，先停止外部日志生产者、线程池任务提交者并结束临时日志消息，再由控制线程串行调用，不可从线程池任务或输出回调中调用。等待线程池空闲，再停止并排空受管理的 Logger，最后关闭线程池；关闭后不可重新使用，可重复调用。未使用过时调用会先创建实例。后台输出失败时停止其余 Logger 后重抛第一个异常。
     static void Shutdown() { GetInstance().shutdown(); }
 
 
@@ -65,7 +65,7 @@ private:
     static ThreadPoolConfig &GetThreadPoolConfig();
 
 
-    // 线程池由 Manager 持有，关闭时先等待池中任务，再停止已管理的 Logger。
+    // 线程池由 Manager 持有，关闭时先等待池空闲，再停止日志器，最后关闭池。
     // GetInstance() 中会调用此构造函数，在外部已对 m_configMutex 加锁，这里不考虑竞争问题。
     explicit LogManager(ThreadPoolConfig &config) : m_threadPool(std::make_shared<ThreadPool>(config.m_threadCount)), m_defaultLogger(buildLoggerImpl(LogFlushFactory::CreateLogFlush<StdoutFlush>())) { config.m_initialized = true; }
 
