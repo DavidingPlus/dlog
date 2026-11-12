@@ -48,6 +48,27 @@ namespace
         void writeAndFlush(const char *, size_t) override {}
     };
 
+    class BlockingFlush : public LogFlush
+    {
+    public:
+
+        BlockingFlush(std::string &text, std::promise<void> &started, std::shared_future<void> release)
+            : m_text(text), m_started(started), m_release(std::move(release)) {}
+
+        void writeAndFlush(const char *data, size_t len) override
+        {
+            m_started.set_value();
+            m_release.wait();
+            m_text.append(data, len);
+        }
+
+    private:
+
+        std::string &m_text;
+        std::promise<void> &m_started;
+        std::shared_future<void> m_release;
+    };
+
     struct OutputError
     {
     };
@@ -420,11 +441,53 @@ static void verifyExplicitShutdownAfterFailure()
     EXPECT_NO_THROW(LogManager::Shutdown());
 }
 
+static void verifyShutdownWithQueuedAndRunningOutput()
+{
+    LogManager::ConfigureThreadPool(1);
+    auto &manager = LogManager::GetInstance();
+    auto pool = manager.getThreadPool();
+    std::promise<void> taskStarted, releaseTask, outputStarted, releaseOutput;
+    auto taskReady = taskStarted.get_future();
+    auto outputReady = outputStarted.get_future();
+    auto taskRelease = releaseTask.get_future().share();
+    std::string text;
+    auto logger = manager.buildLogger<BlockingFlush>("blocked", text, outputStarted, releaseOutput.get_future().share());
+    auto task = pool->enqueue([&taskStarted, taskRelease] { taskStarted.set_value(); taskRelease.wait(); });
+    if (taskReady.wait_for(std::chrono::seconds(5)) != std::future_status::ready) std::_Exit(EXIT_FAILURE);
+
+    logger->message("app.cpp", 1, LogLevel::INFO).stream() << "first record";
+    logger->message("app.cpp", 2, LogLevel::INFO).stream() << "tail record";
+    auto shutdown = std::async(std::launch::async, [] { LogManager::Shutdown(); });
+    EXPECT_EQ(shutdown.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    releaseTask.set_value();
+    if (outputReady.wait_for(std::chrono::seconds(5)) != std::future_status::ready) std::_Exit(EXIT_FAILURE);
+    EXPECT_EQ(shutdown.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    releaseOutput.set_value();
+    if (shutdown.wait_for(std::chrono::seconds(5)) != std::future_status::ready) std::_Exit(EXIT_FAILURE);
+    shutdown.get();
+    task.get();
+    const auto first = text.find("first record");
+    const auto tail = text.find("tail record");
+    EXPECT_NE(first, std::string::npos);
+    EXPECT_NE(tail, std::string::npos);
+    EXPECT_LT(first, tail);
+}
+
 TEST(LogManagerDeathTest, ExplicitShutdownDrainsTasksAndLoggers)
 {
     EXPECT_EXIT(
         {
             verifyExplicitShutdown();
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
+TEST(LogManagerDeathTest, ShutdownWaitsForQueuedAndRunningOutput)
+{
+    EXPECT_EXIT(
+        {
+            verifyShutdownWithQueuedAndRunningOutput();
             std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
         },
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
