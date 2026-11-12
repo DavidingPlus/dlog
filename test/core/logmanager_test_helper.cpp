@@ -18,8 +18,7 @@ extern "C" __declspec(dllexport) void ProbeSubmit(const char *prefix)
 {
     auto &manager = dlog::LogManager::GetInstance();
     const std::string base(prefix);
-    auto logger = dlog::Logger::BuildLogger<dlog::FileFlush>(base + ".log");
-    manager.registerLogger("dll-exit", logger);
+    auto logger = manager.buildLogger<dlog::FileFlush>("dll-exit", base + ".log");
     logger->message("dll.cpp", 1, dlog::LogLevel::INFO).stream() << "dll log at exit";
     task = manager.getThreadPool()->enqueue([base]
                                             {

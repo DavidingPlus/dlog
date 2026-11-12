@@ -171,7 +171,7 @@ TEST(FileNameViewTest, ViewCanOutliveATemporaryFileNameView)
 TEST(LogMacroTest, ExplicitLevelsCaptureLocationAndContinueAfterFatal)
 {
     std::string text;
-    auto logger = Logger::BuildLogger<RecordingFlush>(text);
+    auto logger = LogManager::GetInstance().buildLogger<RecordingFlush>("logger-test-174", text);
     const int line = __LINE__ + 1;
     DLOG_LOGGER_TRACE(logger) << "trace";
     DLOG_LOGGER_DEBUG(logger) << "debug";
@@ -191,8 +191,8 @@ TEST(LogMacroTest, ExplicitLevelsCaptureLocationAndContinueAfterFatal)
 TEST(LogMacroTest, ExplicitLoggersUseSeparateTargets)
 {
     std::string firstText, secondText;
-    auto first = Logger::BuildLogger<RecordingFlush>(firstText);
-    auto second = Logger::BuildLogger<RecordingFlush>(secondText);
+    auto first = LogManager::GetInstance().buildLogger<RecordingFlush>("logger-test-194", firstText);
+    auto second = LogManager::GetInstance().buildLogger<RecordingFlush>("logger-test-195", secondText);
     DLOG_LOGGER_INFO(first) << "first only";
     DLOG_LOGGER_INFO(second) << "second only";
     first->stop();
@@ -206,7 +206,7 @@ TEST(LogMacroTest, ExplicitLoggersUseSeparateTargets)
 TEST(LogMacroTest, TargetAndSavedErrnoAreEvaluatedOnceAndNullRejected)
 {
     std::string text;
-    auto logger = Logger::BuildLogger<RecordingFlush>(text);
+    auto logger = LogManager::GetInstance().buildLogger<RecordingFlush>("logger-test-209", text);
     int targets = 0;
     int errors = 0;
     DLOG_LOGGER_SYS_ERROR((++targets, logger), (++errors, 1234567)) << "system error";
@@ -268,6 +268,28 @@ TEST(LogMacroDeathTest, DefaultLoggerDrainsOnNormalExit)
 namespace
 {
 
+    std::vector<std::filesystem::path> testDirectories;
+
+    class LoggerTestCleanup : public ::testing::Environment
+    {
+        void SetUp() override
+        {
+            // Manager 在测试中创建，其析构先于此回调，确保文件句柄已关闭。
+            ASSERT_EQ(std::atexit([]
+            {
+                for (const auto &directory : testDirectories)
+                {
+                    std::error_code error;
+                    std::filesystem::remove_all(directory, error);
+                }
+            }), 0);
+        }
+
+        void TearDown() override { EXPECT_NO_THROW(LogManager::Shutdown()); }
+    };
+
+    [[maybe_unused]] const auto *cleanup = ::testing::AddGlobalTestEnvironment(new LoggerTestCleanup);
+
     class LoggerFileTest : public ::testing::Test
     {
     protected:
@@ -277,13 +299,7 @@ namespace
             const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
             m_directory = std::filesystem::temp_directory_path() / ("dlog_logger_test_" + std::to_string(suffix));
             std::filesystem::create_directories(m_directory);
-        }
-
-        void TearDown() override
-        {
-            std::error_code error;
-            std::filesystem::remove_all(m_directory, error);
-            EXPECT_FALSE(error) << error.message();
+            testDirectories.push_back(m_directory);
         }
 
         std::filesystem::path m_directory;
@@ -318,8 +334,8 @@ TEST_F(LoggerFileTest, CreatesBothFileModesWithNativePaths)
 {
     const auto filename = m_directory / "normal" / std::filesystem::u8path(u8"\u65e5\u5fd7 \U0001f680.log");
     const auto basePath = m_directory / "rolling" / std::filesystem::u8path(u8"\u8f6e\u8f6c \U0001f680");
-    auto normalLogger = Logger::BuildLogger<FileFlush>(filename);
-    auto rollingLogger = Logger::BuildLogger<RollFileFlush>(basePath, 1024);
+    auto normalLogger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-321", filename);
+    auto rollingLogger = LogManager::GetInstance().buildLogger<RollFileFlush>("logger-test-322", basePath, 1024);
     ASSERT_NE(normalLogger, nullptr);
     ASSERT_NE(rollingLogger, nullptr);
     rollingLogger->message("app.cpp", 42, LogLevel::INFO).stream() << "rolling record";
@@ -350,12 +366,12 @@ TEST_F(LoggerFileTest, ConstructionErrorsPreserveExistingFileAndAllowRetry)
     const auto recovered = m_directory / "recovered.log";
     const int workersBefore = Thread::NumCreated();
 
-    EXPECT_THROW(Logger::BuildLogger<FileFlush>(std::filesystem::path{}), std::invalid_argument);
-    EXPECT_THROW(Logger::BuildLogger<RollFileFlush>(std::filesystem::path{}, 1024), std::invalid_argument);
-    EXPECT_THROW(Logger::BuildLogger<FileFlush>(invalidPath), std::filesystem::filesystem_error);
-    EXPECT_THROW(Logger::BuildLogger<RollFileFlush>(invalidPath, 1024), std::filesystem::filesystem_error);
+    EXPECT_THROW(LogManager::GetInstance().buildLogger<FileFlush>("logger-test-353", std::filesystem::path{}), std::invalid_argument);
+    EXPECT_THROW(LogManager::GetInstance().buildLogger<RollFileFlush>("logger-test-354", std::filesystem::path{}, 1024), std::invalid_argument);
+    EXPECT_THROW(LogManager::GetInstance().buildLogger<FileFlush>("logger-test-355", invalidPath), std::filesystem::filesystem_error);
+    EXPECT_THROW(LogManager::GetInstance().buildLogger<RollFileFlush>("logger-test-356", invalidPath, 1024), std::filesystem::filesystem_error);
     EXPECT_EQ(Thread::NumCreated(), workersBefore);
-    EXPECT_NO_THROW(Logger::BuildLogger<FileFlush>(recovered));
+    EXPECT_NO_THROW(LogManager::GetInstance().buildLogger<FileFlush>("logger-test-358", recovered));
     EXPECT_TRUE(std::filesystem::is_regular_file(recovered));
 
     std::ifstream input(blocked, std::ios::binary);
@@ -364,12 +380,12 @@ TEST_F(LoggerFileTest, ConstructionErrorsPreserveExistingFileAndAllowRetry)
     EXPECT_EQ(contents, "keep");
 }
 
-TEST(LoggerLifetimeTest, LastOwnerAutomaticallyReclaimsWorkerAndOutput)
+TEST(LoggerLifetimeTest, ManagerRetainsLoggerAfterExternalOwnersRelease)
 {
-    int constructions = 0;
-    int destructions = 0;
+    static int constructions = 0;
+    static int destructions = 0;
     auto value = std::make_unique<int>(42);
-    auto logger = Logger::BuildLogger<TrackedFlush>(constructions, destructions, std::move(value));
+    auto logger = LogManager::GetInstance().buildLogger<TrackedFlush>("logger-test-372", constructions, destructions, std::move(value));
     EXPECT_EQ(value, nullptr);
     EXPECT_EQ(constructions, 1);
     EXPECT_EQ(destructions, 0);
@@ -379,18 +395,18 @@ TEST(LoggerLifetimeTest, LastOwnerAutomaticallyReclaimsWorkerAndOutput)
     EXPECT_FALSE(observer.expired());
     EXPECT_EQ(destructions, 0);
 
-    // 无需显式 stop；弱引用过期且输出析构，验证不存在回调反向强持有日志器的循环。
     anotherOwner.reset();
-    EXPECT_TRUE(observer.expired());
-    EXPECT_EQ(destructions, 1);
+    EXPECT_FALSE(observer.expired());
+    EXPECT_EQ(destructions, 0);
+    observer.lock()->stop();
 }
 
 TEST_F(LoggerFileTest, ExplicitStopDrainsOnlyItsOwnTarget)
 {
     const auto firstPath = m_directory / "first.log";
     const auto secondPath = m_directory / "second.log";
-    auto first = Logger::BuildLogger<FileFlush>(firstPath);
-    auto second = Logger::BuildLogger<FileFlush>(secondPath);
+    auto first = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-392", firstPath);
+    auto second = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-393", secondPath);
 
     first->message("src/app.cpp", 42, LogLevel::INFO).stream() << "first record";
     second->message("src/app.cpp", 43, LogLevel::WARN).stream() << "second record";
@@ -408,10 +424,10 @@ TEST_F(LoggerFileTest, ExplicitStopDrainsOnlyItsOwnTarget)
 }
 
 
-TEST_F(LoggerFileTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
+TEST_F(LoggerFileTest, LiveMessageRemainsValidAfterExternalOwnerReleases)
 {
     const auto path = m_directory / "auto.log";
-    auto logger = Logger::BuildLogger<FileFlush>(path);
+    auto logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-414", path);
     std::weak_ptr<Logger> observer = logger;
     {
         auto message = logger->message("app.cpp", 42, LogLevel::INFO);
@@ -419,7 +435,8 @@ TEST_F(LoggerFileTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
         EXPECT_FALSE(observer.expired());
         message.stream() << "last record";
     }
-    EXPECT_TRUE(observer.expired());
+    EXPECT_FALSE(observer.expired());
+    observer.lock()->stop();
     EXPECT_NE(readFile(path).find("[app.cpp:42] last record\n"), std::string::npos);
 }
 
@@ -427,7 +444,7 @@ TEST_F(LoggerFileTest, LiveMessageKeepsLoggerAliveAndDrainsOnRelease)
 TEST_F(LoggerFileTest, ConcurrentRecordsStayWholeAcrossBufferBoundaries)
 {
     const auto path = m_directory / "concurrent.log";
-    auto logger = Logger::BuildLogger<FileFlush>(path);
+    auto logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-430", path);
     std::string longRecord(2 * kLargeFixedBufferSize + 1, 'a');
     longRecord[kLargeFixedBufferSize] = '\0';
     const std::string otherRecord(kLargeFixedBufferSize + 1, 'b');
@@ -463,7 +480,7 @@ TEST_F(LoggerFileTest, ConcurrentRecordsStayWholeAcrossBufferBoundaries)
 TEST_F(LoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
 {
     const auto path = m_directory / "stopped.log";
-    auto logger = Logger::BuildLogger<FileFlush>(path);
+    auto logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-466", path);
 
     EXPECT_THROW(logger->message("app.cpp", 42, LogLevel::LEVEL_COUNT), std::invalid_argument);
     testing::internal::CaptureStderr();
@@ -480,45 +497,51 @@ TEST_F(LoggerFileTest, RejectsUnsupportedLevelsAndMessagesAfterStop)
 
 TEST(LoggerFailureTest, StopReportsBackgroundErrorAfterJoining)
 {
-    class FailingFlush : public LogFlush
-    {
-    public:
-
-        explicit FailingFlush(int &calls) : m_calls(calls) {}
-        void writeAndFlush(const char *, size_t) override
+    EXPECT_EXIT(
         {
-            ++m_calls;
-            throw std::runtime_error("output failed");
-        }
+            class FailingFlush : public LogFlush
+            {
+            public:
 
-    private:
+                explicit FailingFlush(int &calls) : m_calls(calls) {}
+                void writeAndFlush(const char *, size_t) override
+                {
+                    ++m_calls;
+                    throw std::runtime_error("output failed");
+                }
 
-        int &m_calls;
-    };
+            private:
 
-    int calls = 0;
-    auto logger = Logger::BuildLogger<FailingFlush>(calls);
-    logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
-    for (int i = 0; i < 2; ++i)
-    {
-        try
-        {
-            logger->stop();
-            FAIL() << "expected output failure";
-        }
-        catch (const std::runtime_error &error)
-        {
-            EXPECT_STREQ(error.what(), "output failed");
-        }
-    }
-    EXPECT_EQ(calls, 1);
-    EXPECT_THROW(logger->message("app.cpp", 2, LogLevel::INFO), std::logic_error);
+                int &m_calls;
+            };
+
+            int calls = 0;
+            auto logger = LogManager::GetInstance().buildLogger<FailingFlush>("logger-test-500", calls);
+            logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
+            for (int i = 0; i < 2; ++i)
+            {
+                try
+                {
+                    logger->stop();
+                    FAIL() << "expected output failure";
+                }
+                catch (const std::runtime_error &error)
+                {
+                    EXPECT_STREQ(error.what(), "output failed");
+                }
+            }
+            EXPECT_EQ(calls, 1);
+            EXPECT_THROW(logger->message("app.cpp", 2, LogLevel::INFO), std::logic_error);
+
+            std::_Exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
 
 TEST(LoggerMessageTest, DefaultStdoutColorsTheLevel)
 {
-    auto logger = Logger::BuildLogger();
+    auto logger = LogManager::GetInstance().buildLogger("logger-test-521");
     testing::internal::CaptureStdout();
     logger->message("app.cpp", 42, LogLevel::INFO).stream() << "console record";
     EXPECT_NO_THROW(logger->stop());
@@ -544,7 +567,7 @@ TEST(LoggerMessageTest, CustomOutputCanEnableLevelColor)
     };
 
     std::string text;
-    auto logger = Logger::BuildLogger<ColoredFlush>(text);
+    auto logger = LogManager::GetInstance().buildLogger<ColoredFlush>("logger-test-547", text);
     logger->message("app.cpp", 42, LogLevel::INFO).stream() << "custom record";
     logger->stop();
 
@@ -556,7 +579,7 @@ TEST(LoggerMessageTest, CustomOutputCanEnableLevelColor)
 TEST_F(LoggerFileTest, MessagePreservesSavedErrno)
 {
     const auto path = m_directory / "errno.log";
-    Logger::Ptr logger = Logger::BuildLogger<FileFlush>(path);
+    Logger::Ptr logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-559", path);
     logger->message("app.cpp", 42, LogLevel::ERROR, EACCES).stream() << "open failed";
     logger->stop();
 
@@ -568,7 +591,7 @@ TEST_F(LoggerFileTest, MessagePreservesSavedErrno)
 TEST_F(LoggerFileTest, FatalAndFollowingRecordsAreWrittenOnStop)
 {
     const auto path = m_directory / "fatal.log";
-    auto logger = Logger::BuildLogger<FileFlush>(path);
+    auto logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-571", path);
     logger->message("app.cpp", 1, LogLevel::FATAL, 1234567).stream() << "fatal record";
     logger->message("app.cpp", 2, LogLevel::INFO).stream() << "after fatal";
     logger->stop();
@@ -582,12 +605,12 @@ TEST_F(LoggerFileTest, RollingLoggerReopensUnicodePathWithoutLosingRecords)
 {
     const auto base = m_directory / std::filesystem::u8path(u8"日志 路径") / "app";
     {
-        auto logger = Logger::BuildLogger<RollFileFlush>(base, 1024);
+        auto logger = LogManager::GetInstance().buildLogger<RollFileFlush>("logger-test-585", base, 1024);
         logger->message("app.cpp", 1, LogLevel::INFO).stream() << "first run";
         logger->stop();
     }
     {
-        auto logger = Logger::BuildLogger<RollFileFlush>(base, 1024);
+        auto logger = LogManager::GetInstance().buildLogger<RollFileFlush>("logger-test-590", base, 1024);
         logger->message("app.cpp", 2, LogLevel::INFO).stream() << "second run";
         logger->stop();
     }
@@ -602,8 +625,14 @@ TEST_F(LoggerFileTest, RollingLoggerReopensUnicodePathWithoutLosingRecords)
 TEST(LoggerFailureTest, FullDeviceErrorIsReportedOnStop)
 {
     if (!std::filesystem::exists("/dev/full")) GTEST_SKIP() << "/dev/full is unavailable";
-    auto logger = Logger::BuildLogger<FileFlush>("/dev/full");
-    logger->message("app.cpp", 1, LogLevel::ERROR).stream() << "write failure";
-    EXPECT_THROW(logger->stop(), std::exception);
+    EXPECT_EXIT(
+        {
+            auto logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-605", "/dev/full");
+            logger->message("app.cpp", 1, LogLevel::ERROR).stream() << "write failure";
+            EXPECT_THROW(logger->stop(), std::exception);
+
+            std::_Exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 #endif

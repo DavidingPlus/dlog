@@ -29,12 +29,17 @@ public:
     // 可选。可在首次获取 LogManager（即 GetInstance()）前设置共享池线程数。线程数为 0 时抛出异常，LogManager 初始化后配置会警告并忽略。
     static void ConfigureThreadPool(size_t threadCount);
 
-    // 可选。显式关闭，先停止外部生产者并结束临时日志消息，再由控制线程串行调用，不可从线程池任务或输出回调中调用。等待已提交的线程池任务，再停止并排空受管理的 Logger；关闭后不可重新使用，可重复调用。未使用过时调用会先创建实例。未注册的独立 Logger 由调用方自行停止；后台输出失败时停止其余 Logger 后重抛第一个异常。
+    // 可选。显式关闭，先停止外部生产者并结束临时日志消息，再由控制线程串行调用，不可从线程池任务或输出回调中调用。等待已提交的线程池任务，再停止并排空受管理的 Logger；关闭后不可重新使用，可重复调用。未使用过时调用会先创建实例。后台输出失败时停止其余 Logger 后重抛第一个异常。
     static void Shutdown() { GetInstance().shutdown(); }
 
 
-    // 空名称或空目标抛出 invalid_argument，重复名称抛出 logic_error。不推荐用多个名称注册同一实例或注册默认实例，关闭时会重复调用 stop()，后果不可预期。
-    DLOG_API_EXPORTED void registerLogger(std::string name, Logger::Ptr logger);
+    // 按名称创建并注册日志器；名称为空或重复时抛出异常。buildLogger 通过模板参数选择输出类型，LogFlushFactory 将实参原样转发给该类型的构造函数。
+    // 1. buildLogger() 使用默认的 StdoutFlush，无需构造参数。
+    // 2. buildLogger<FileFlush>(filename) 按完整文件名打开普通日志文件。
+    // 3. buildLogger<RollFileFlush>(basePath, rollSize) 按基础路径和大小阈值初始化轮转日志文件。
+    // 输出构造成功后，三种调用都进入 buildLoggerImpl，通过构造函数创建日志器 Logger 并启动 Worker。
+    template <typename LogFlushType = StdoutFlush, typename... Args>
+    Logger::Ptr buildLogger(const std::string &name, Args &&...args);
 
     DLOG_API_EXPORTED Logger::Ptr getLogger(const std::string &name) const;
 
@@ -61,10 +66,12 @@ private:
 
 
     // 线程池由 Manager 持有，关闭时先等待池中任务，再停止已管理的 Logger。
-    // GetInstance() 中调用构造函数，在外部已对 m_configMutex，这里不考虑竞争问题。
-    explicit LogManager(ThreadPoolConfig &config) : m_threadPool(std::make_shared<ThreadPool>(config.m_threadCount)), m_defaultLogger(Logger::BuildLogger()) { config.m_initialized = true; }
+    // GetInstance() 中会调用此构造函数，在外部已对 m_configMutex 加锁，这里不考虑竞争问题。
+    explicit LogManager(ThreadPoolConfig &config) : m_threadPool(std::make_shared<ThreadPool>(config.m_threadCount)), m_defaultLogger(buildLoggerImpl(LogFlushFactory::CreateLogFlush<StdoutFlush>())) { config.m_initialized = true; }
 
     ~LogManager() { shutdown(); }
+
+    DLOG_API_EXPORTED Logger::Ptr buildLoggerImpl(std::shared_ptr<LogFlush> output);
 
     DLOG_API_EXPORTED void shutdown();
 
@@ -82,6 +89,32 @@ private:
     // 注册进命名表的其他日志器。
     std::unordered_map<std::string, Logger::Ptr> m_loggers;
 };
+
+
+template <typename LogFlushType, typename... Args>
+Logger::Ptr LogManager::buildLogger(const std::string &name, Args &&...args)
+{
+    if (name.empty()) throw std::invalid_argument("LogManager::buildLogger(): name must not be empty");
+
+    {
+        std::shared_lock<std::shared_mutex> lock(m_loggerMapMutex);
+
+        if (m_shutdown) throw std::logic_error("LogManager::buildLogger(): manager has stopped");
+        if (m_loggers.count(name)) throw std::logic_error("LogManager::buildLogger(): logger name already registered");
+    }
+
+    auto logger = buildLoggerImpl(LogFlushFactory::CreateLogFlush<LogFlushType>(std::forward<Args>(args)...));
+
+    {
+        std::unique_lock<std::shared_mutex> lock(m_loggerMapMutex);
+
+        if (m_shutdown) throw std::logic_error("LogManager::buildLogger(): manager has stopped");
+        if (!m_loggers.try_emplace(name, logger).second) throw std::logic_error("LogManager::buildLogger(): logger name already registered");
+    }
+
+
+    return logger;
+}
 
 
 // XXX

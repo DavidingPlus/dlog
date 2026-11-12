@@ -96,8 +96,7 @@ static void verifyFileAtExit(bool explicitStop)
 
     EXPECT_EXIT(
         {
-            auto logger = Logger::BuildLogger<FileFlush>(path);
-            LogManager::GetInstance().registerLogger("exit-file-probe", logger);
+            auto logger = LogManager::GetInstance().buildLogger<FileFlush>("exit-file-probe", path);
             logger->message("app.cpp", 1, LogLevel::INFO).stream() << "exit file probe";
             if (explicitStop) logger->stop();
             std::exit(EXIT_SUCCESS);
@@ -148,8 +147,7 @@ TEST(LogManagerDeathTest, TerminationReceivesFirstOutputException)
                 }
                 catch (...) {}
                 std::_Exit(43); });
-            auto logger = Logger::BuildLogger<DiagnosticFlush>();
-            LogManager::GetInstance().registerLogger("diagnostic", logger);
+            auto logger = LogManager::GetInstance().buildLogger<DiagnosticFlush>("diagnostic");
             logger->message("app.cpp", 1, LogLevel::INFO).stream() << "record";
             std::exit(EXIT_SUCCESS);
         },
@@ -181,15 +179,8 @@ static void verifyRegistrationAndShutdown()
 
     auto console = manager.getDefaultLogger();
     EXPECT_NE(console, nullptr);
-    auto first = Logger::BuildLogger<RecordingFlush>(firstText);
-    auto second = Logger::BuildLogger<RecordingFlush>(secondText);
-    EXPECT_THROW(manager.registerLogger("", first), std::invalid_argument);
-    EXPECT_THROW(manager.registerLogger("missing", nullptr), std::invalid_argument);
-    manager.registerLogger("console", console);
-    manager.registerLogger("first", first);
-    manager.registerLogger("first-alias", first);
-    manager.registerLogger("second", second);
-    EXPECT_THROW(manager.registerLogger("first", second), std::logic_error);
+    auto first = LogManager::GetInstance().buildLogger<RecordingFlush>("first", firstText);
+    auto second = LogManager::GetInstance().buildLogger<RecordingFlush>("second", secondText);
     EXPECT_EQ(manager.getLogger("first"), first);
     EXPECT_EQ(manager.getDefaultLogger(), console);
 
@@ -209,12 +200,9 @@ static void verifyShutdownAfterOutputFailure()
         std::_Exit(stopped ? 42 : 43); });
 
     auto &manager = LogManager::GetInstance();
-    auto first = Logger::BuildLogger<FailingFlush>(failures);
-    auto second = Logger::BuildLogger<FailingFlush>(failures);
-    auto healthy = Logger::BuildLogger<RecordingFlush>(healthyText);
-    manager.registerLogger("first", first);
-    manager.registerLogger("second", second);
-    manager.registerLogger("healthy", healthy);
+    auto first = LogManager::GetInstance().buildLogger<FailingFlush>("first", failures);
+    auto second = LogManager::GetInstance().buildLogger<FailingFlush>("second", failures);
+    auto healthy = LogManager::GetInstance().buildLogger<RecordingFlush>("healthy", healthyText);
     first->message("app.cpp", 1, LogLevel::INFO).stream() << "first failure";
     second->message("app.cpp", 2, LogLevel::INFO).stream() << "second failure";
 
@@ -346,8 +334,7 @@ TEST(LogManagerTest, MissingLookupDoesNotReserveAName)
     auto &manager = LogManager::GetInstance();
     EXPECT_EQ(manager.getLogger(""), nullptr);
     EXPECT_EQ(manager.getLogger("lookup-then-register"), nullptr);
-    auto logger = Logger::BuildLogger<DiscardFlush>();
-    manager.registerLogger("lookup-then-register", logger);
+    auto logger = manager.buildLogger<DiscardFlush>("lookup-then-register");
     EXPECT_EQ(manager.getLogger("lookup-then-register"), logger);
 }
 
@@ -392,8 +379,7 @@ static void verifyExplicitShutdown()
 {
     std::string text;
     auto &manager = LogManager::GetInstance();
-    auto logger = Logger::BuildLogger<RecordingFlush>(text);
-    manager.registerLogger("shutdown", logger);
+    auto logger = manager.buildLogger<RecordingFlush>("shutdown", text);
     auto pool = manager.getThreadPool();
     std::promise<void> started, release;
     auto releaseSignal = release.get_future().share();
@@ -412,7 +398,7 @@ static void verifyExplicitShutdown()
     EXPECT_NE(text.find("task record"), std::string::npos);
     EXPECT_THROW(pool->enqueue([] {}), std::runtime_error);
     EXPECT_THROW(logger->message("app.cpp", 1, LogLevel::INFO), std::logic_error);
-    EXPECT_THROW(manager.registerLogger("after-shutdown", logger), std::logic_error);
+    EXPECT_THROW(manager.buildLogger<DiscardFlush>("after-shutdown"), std::logic_error);
     EXPECT_NO_THROW(LogManager::Shutdown());
 }
 
@@ -421,10 +407,8 @@ static void verifyExplicitShutdownAfterFailure()
     std::atomic_int failures{0};
     std::string text;
     auto &manager = LogManager::GetInstance();
-    auto failing = Logger::BuildLogger<FailingFlush>(failures);
-    auto healthy = Logger::BuildLogger<RecordingFlush>(text);
-    manager.registerLogger("failing", failing);
-    manager.registerLogger("healthy", healthy);
+    auto failing = manager.buildLogger<FailingFlush>("failing", failures);
+    auto healthy = manager.buildLogger<RecordingFlush>("healthy", text);
     failing->message("app.cpp", 1, LogLevel::INFO).stream() << "failure";
     healthy->message("app.cpp", 2, LogLevel::INFO).stream() << "healthy record";
     EXPECT_THROW(LogManager::Shutdown(), OutputError);
@@ -454,124 +438,146 @@ TEST(LogManagerDeathTest, ExplicitShutdownStopsAllAfterOutputFailure)
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
-TEST(LogManagerTest, InvalidRegistrationLeavesTheNameAndDefaultUnchanged)
+TEST(LogManagerDeathTest, CannotCreateLoggerAfterShutdown)
 {
-    auto &manager = LogManager::GetInstance();
-    auto defaultLogger = manager.getDefaultLogger();
-    auto logger = Logger::BuildLogger<DiscardFlush>();
-    EXPECT_THROW(manager.registerLogger("", logger), std::invalid_argument);
-    EXPECT_THROW(manager.registerLogger("invalid-then-valid", nullptr), std::invalid_argument);
-    EXPECT_EQ(manager.getLogger(""), nullptr);
-    EXPECT_EQ(manager.getLogger("invalid-then-valid"), nullptr);
-    EXPECT_NO_THROW(manager.registerLogger("invalid-then-valid", logger));
-    EXPECT_EQ(manager.getLogger("invalid-then-valid"), logger);
-    EXPECT_EQ(manager.getDefaultLogger(), defaultLogger);
+    EXPECT_EXIT(
+        {
+            auto &manager = LogManager::GetInstance();
+            LogManager::Shutdown();
+            try { manager.buildLogger<DiscardFlush>("after-shutdown"); }
+            catch (const std::logic_error &) { std::exit(EXIT_SUCCESS); }
+            std::exit(EXIT_FAILURE);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
-TEST(LogManagerTest, DuplicateNamePreservesOriginalAndDoesNotConsumeReplacement)
+TEST(LogManagerDeathTest, ShutdownStopsButRetainsManagedLoggers)
 {
-    auto &manager = LogManager::GetInstance();
-    auto original = Logger::BuildLogger<DiscardFlush>();
-    auto replacement = Logger::BuildLogger<DiscardFlush>();
-    manager.registerLogger("duplicate-original", original);
-    EXPECT_THROW(manager.registerLogger("duplicate-original", replacement), std::logic_error);
-    EXPECT_EQ(manager.getLogger("duplicate-original"), original);
-    EXPECT_NO_THROW(replacement->message("app.cpp", 1, LogLevel::INFO).stream() << "still usable");
-    EXPECT_NO_THROW(manager.registerLogger("duplicate-replacement", replacement));
-    EXPECT_EQ(manager.getLogger("duplicate-replacement"), replacement);
+    EXPECT_EXIT(
+        {
+            auto &manager = LogManager::GetInstance();
+            std::weak_ptr<Logger> observer = manager.buildLogger<DiscardFlush>("release");
+            EXPECT_FALSE(observer.expired());
+            LogManager::Shutdown();
+            EXPECT_FALSE(observer.expired());
+            EXPECT_EQ(manager.getLogger("release"), observer.lock());
+            EXPECT_THROW(observer.lock()->message("app.cpp", 1, LogLevel::INFO), std::logic_error);
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
-TEST(LogManagerTest, NamedDefaultDoesNotReplaceTheDefaultLogger)
+TEST(LogManagerDeathTest, DefaultLoggerHoldsManagerThreadPool)
 {
-    auto &manager = LogManager::GetInstance();
-    auto defaultLogger = manager.getDefaultLogger();
-    auto named = Logger::BuildLogger<DiscardFlush>();
-    manager.registerLogger("default", named);
-    EXPECT_EQ(manager.getLogger("default"), named);
-    EXPECT_EQ(manager.getDefaultLogger(), defaultLogger);
-    EXPECT_NE(manager.getDefaultLogger(), named);
+    EXPECT_EXIT(
+        {
+            auto pool = LogManager::GetInstance().getThreadPool();
+            std::exit(pool.use_count() == 3 ? EXIT_SUCCESS : EXIT_FAILURE);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
-TEST(LogManagerTest, RetainsRegisteredLoggerAfterCallerReleasesOwnership)
+TEST(LogManagerTest, CreatedLoggerIsRetainedAndUsesSharedThreadPool)
 {
     auto &manager = LogManager::GetInstance();
+    auto pool = manager.getThreadPool();
+    const auto before = pool.use_count();
     std::weak_ptr<Logger> observer;
     {
-        auto logger = Logger::BuildLogger<DiscardFlush>();
+        auto logger = manager.buildLogger<DiscardFlush>("retained");
         observer = logger;
-        manager.registerLogger("retained", logger);
+        EXPECT_EQ(pool.use_count(), before + 1);
     }
     ASSERT_FALSE(observer.expired());
-    auto retained = manager.getLogger("retained");
-    ASSERT_NE(retained, nullptr);
-    EXPECT_EQ(retained, observer.lock());
-    EXPECT_NO_THROW(retained->message("app.cpp", 2, LogLevel::INFO).stream() << "retained");
-    EXPECT_NO_THROW(retained->stop());
+    EXPECT_EQ(manager.getLogger("retained"), observer.lock());
+    observer.lock()->stop();
 }
 
-TEST(LogManagerTest, ConcurrentRegistrationAndLookupKeepEachTarget)
+TEST(LogManagerTest, RejectsEmptyAndDuplicateNamesBeforeCreatingOutput)
+{
+    auto &manager = LogManager::GetInstance();
+    EXPECT_THROW(manager.buildLogger<DiscardFlush>(""), std::invalid_argument);
+    auto original = manager.buildLogger<DiscardFlush>("unique");
+    const auto before = Thread::NumCreated();
+    EXPECT_THROW(manager.buildLogger<DiscardFlush>("unique"), std::logic_error);
+    EXPECT_EQ(Thread::NumCreated(), before);
+    EXPECT_EQ(manager.getLogger("unique"), original);
+}
+
+TEST(LogManagerTest, FailedOutputConstructionDoesNotReserveName)
+{
+    class InvalidFlush : public LogFlush
+    {
+    public:
+        InvalidFlush() { throw std::runtime_error("output construction failed"); }
+        void writeAndFlush(const char *, size_t) override {}
+    };
+    auto &manager = LogManager::GetInstance();
+    EXPECT_THROW(manager.buildLogger<InvalidFlush>("retry"), std::runtime_error);
+    EXPECT_EQ(manager.getLogger("retry"), nullptr);
+    auto logger = manager.buildLogger<DiscardFlush>("retry");
+    EXPECT_EQ(manager.getLogger("retry"), logger);
+}
+
+TEST(LogManagerTest, ConcurrentCreationAndLookupKeepEachTarget)
 {
     auto &manager = LogManager::GetInstance();
     constexpr size_t count = 8;
-    std::vector<Logger::Ptr> loggers;
-    for (size_t i = 0; i < count; ++i) loggers.push_back(Logger::BuildLogger<DiscardFlush>());
-    std::atomic_bool start{false};
+    std::vector<Logger::Ptr> loggers(count);
     std::atomic_int errors{0};
     std::vector<std::thread> threads;
     for (size_t i = 0; i < count; ++i)
         threads.emplace_back([&, i]
-                             {
-            while (!start.load()) std::this_thread::yield();
+        {
             try
             {
-                const auto name = "concurrent-" + std::to_string(i);
-                manager.registerLogger(name, loggers[i]);
-                for (size_t j = 0; j < count; ++j)
-                {
-                    if (manager.getLogger(name) != loggers[i]) ++errors;
-                    auto found = manager.getLogger("concurrent-" + std::to_string(j));
-                    if (found && found != loggers[j]) ++errors;
-                    if (!manager.getDefaultLogger()) ++errors;
-                }
+                auto name = "concurrent-" + std::to_string(i);
+                loggers[i] = manager.buildLogger<DiscardFlush>(name);
+                if (manager.getLogger(name) != loggers[i]) ++errors;
             }
-            catch (...) { ++errors; } });
-    start = true;
+            catch (...) { ++errors; }
+        });
     for (auto &thread : threads) thread.join();
     EXPECT_EQ(errors.load(), 0);
     for (size_t i = 0; i < count; ++i)
         EXPECT_EQ(manager.getLogger("concurrent-" + std::to_string(i)), loggers[i]);
 }
 
-TEST(LogManagerTest, ConcurrentDuplicateRegistrationHasExactlyOneWinner)
+TEST(LogManagerTest, NamedDefaultDoesNotReplaceDefaultLogger)
+{
+    auto &manager = LogManager::GetInstance();
+    auto original = manager.getDefaultLogger();
+    auto named = manager.buildLogger<DiscardFlush>("default");
+    EXPECT_EQ(manager.getLogger("default"), named);
+    EXPECT_EQ(manager.getDefaultLogger(), original);
+    EXPECT_NE(named, original);
+}
+
+TEST(LogManagerTest, ConcurrentDuplicateCreationHasExactlyOneWinner)
 {
     auto &manager = LogManager::GetInstance();
     constexpr size_t count = 8;
-    std::vector<Logger::Ptr> loggers;
-    for (size_t i = 0; i < count; ++i) loggers.push_back(Logger::BuildLogger<DiscardFlush>());
     std::atomic_bool start{false};
     std::atomic_int successes{0}, duplicates{0}, errors{0};
     std::vector<std::thread> threads;
     for (size_t i = 0; i < count; ++i)
-        threads.emplace_back([&, i]
-                             {
+        threads.emplace_back([&]
+        {
             while (!start.load()) std::this_thread::yield();
             try
             {
-                manager.registerLogger("concurrent-duplicate", loggers[i]);
+                auto logger = manager.buildLogger<DiscardFlush>("concurrent-duplicate");
+                if (manager.getLogger("concurrent-duplicate") != logger) ++errors;
                 ++successes;
-                if (manager.getLogger("concurrent-duplicate") != loggers[i]) ++errors;
             }
             catch (const std::logic_error &) { ++duplicates; }
-            catch (...) { ++errors; } });
+            catch (...) { ++errors; }
+        });
     start = true;
     for (auto &thread : threads) thread.join();
     EXPECT_EQ(successes.load(), 1);
     EXPECT_EQ(duplicates.load(), static_cast<int>(count - 1));
     EXPECT_EQ(errors.load(), 0);
-    auto winner = manager.getLogger("concurrent-duplicate");
-    bool known = false;
-    for (const auto &logger : loggers) known = known || winner == logger;
-    EXPECT_TRUE(known);
 }
 
 #ifdef _WIN32

@@ -1,12 +1,16 @@
 #include "logmanager.h"
 
-#include <exception>
-#include <stdexcept>
-#include <utility>
-
 
 DLOG_NAMESPACE_BEGIN(dlog)
 
+
+Logger::Ptr LogManager::buildLoggerImpl(std::shared_ptr<LogFlush> output)
+{
+    // 建立 shared_ptr 所有权，供 Logger::message() 的 shared_from_this() 使用。Worker 启动成功后返回日志器，抛异常时，局部 shared_ptr 负责回收已构造的资源。
+    auto logger = Logger::Ptr(new Logger(std::move(output), m_threadPool));
+    logger->m_worker.start();
+    return logger;
+}
 
 void LogManager::shutdown()
 {
@@ -38,17 +42,6 @@ void LogManager::shutdown()
     for (auto &entry : m_loggers) stop(entry.second);
 
     if (firstError) std::rethrow_exception(firstError);
-}
-
-void LogManager::registerLogger(std::string name, Logger::Ptr logger)
-{
-    if (name.empty() || !logger) throw std::invalid_argument("LogManager::registerLogger(): name and logger must not be empty");
-
-    std::unique_lock<std::shared_mutex> lock(m_loggerMapMutex);
-
-    if (m_shutdown) throw std::logic_error("LogManager::registerLogger(): manager has stopped");
-
-    if (!m_loggers.try_emplace(std::move(name), std::move(logger)).second) throw std::logic_error("LogManager::registerLogger(): logger name already registered");
 }
 
 Logger::Ptr LogManager::getLogger(const std::string &name) const
