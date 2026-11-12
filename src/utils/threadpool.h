@@ -18,6 +18,7 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
+// 参考：[https://github.com/progschj/ThreadPool](https://github.com/progschj/ThreadPool)
 class DLOG_API_EXPORTED ThreadPool
 {
 
@@ -57,7 +58,7 @@ private:
     // 条件变量，用于任务队列的同步。
     std::condition_variable m_condition;
 
-    std::atomic_bool m_running{false};
+    bool m_running = false;
 };
 
 
