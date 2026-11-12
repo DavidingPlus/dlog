@@ -10,7 +10,10 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 LogWorker::LogWorker(OutputFunc output, unsigned int flushInterval)
-    : m_output(std::move(output)), m_flushInterval(flushInterval), m_thread(std::bind(&LogWorker::threadFunc, this), "LogWorker"), m_producerBuffer(std::make_unique<LargeFixedBuffer>())
+    : LogWorker(std::move(output), flushInterval, nullptr) {}
+
+LogWorker::LogWorker(OutputFunc output, unsigned int flushInterval, std::shared_ptr<ThreadPool> threadPool)
+    : m_output(std::move(output)), m_threadPool(std::move(threadPool)), m_flushInterval(flushInterval), m_thread(std::bind(&LogWorker::threadFunc, this), "LogWorker"), m_producerBuffer(std::make_unique<LargeFixedBuffer>())
 {
     if (!m_output) throw std::invalid_argument("LogWorker::constructor(): output must not be empty");
 

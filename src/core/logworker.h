@@ -16,11 +16,16 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
+class ThreadPool;
+
+
 // LogWorker 只负责字节缓冲和后台批次处理，输出方式由回调决定，不承担日志记录格式化或文件配置。
 class DLOG_API_EXPORTED LogWorker
 {
 
     DLOG_CLASS_NONCOPYABLE(LogWorker)
+
+    friend class Logger;
 
 public:
 
@@ -53,6 +58,8 @@ private:
     using BufferVector = std::vector<BufferPtr>;
 
 
+    LogWorker(OutputFunc output, unsigned int flushInterval, std::shared_ptr<ThreadPool> threadPool);
+
     // 后台线程入口。
     void threadFunc();
 
@@ -61,6 +68,9 @@ private:
 
     // 决定如何处理每个字节批次；Worker 不保存文件路径或轮转配置。
     OutputFunc m_output;
+
+    // 全局共享线程池，后续批次调度接入时使用。
+    std::shared_ptr<ThreadPool> m_threadPool;
 
     // 后台线程的运行标志。置为 false 后仍需处理尾部数据并回收线程。
     std::atomic_bool m_running{false};
