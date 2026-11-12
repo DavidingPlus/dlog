@@ -211,7 +211,7 @@ TEST(LogMacroTest, TargetAndSavedErrnoAreEvaluatedOnceAndNullRejected)
     int errors = 0;
     DLOG_LOGGER_SYS_ERROR((++targets, logger), (++errors, 1234567)) << "system error";
     DLOG_LOGGER_SYS_FATAL(logger, 1234568) << "fatal system error";
-    EXPECT_THROW(DLOG_LOGGER_INFO(Logger::Ptr{}) << "invalid", std::invalid_argument);
+    EXPECT_THROW(DLOG_LOGGER_INFO(Logger::SharedPtr{}) << "invalid", std::invalid_argument);
     logger->stop();
     EXPECT_EQ(targets, 1);
     EXPECT_EQ(errors, 1);
@@ -276,13 +276,13 @@ namespace
         {
             // Manager 在测试中创建，其析构先于此回调，确保文件句柄已关闭。
             ASSERT_EQ(std::atexit([]
-            {
+                                  {
                 for (const auto &directory : testDirectories)
                 {
                     std::error_code error;
                     std::filesystem::remove_all(directory, error);
-                }
-            }), 0);
+                } }),
+                      0);
         }
 
         void TearDown() override { EXPECT_NO_THROW(LogManager::Shutdown()); }
@@ -579,7 +579,7 @@ TEST(LoggerMessageTest, CustomOutputCanEnableLevelColor)
 TEST_F(LoggerFileTest, MessagePreservesSavedErrno)
 {
     const auto path = m_directory / "errno.log";
-    Logger::Ptr logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-559", path);
+    Logger::SharedPtr logger = LogManager::GetInstance().buildLogger<FileFlush>("logger-test-559", path);
     logger->message("app.cpp", 42, LogLevel::ERROR, EACCES).stream() << "open failed";
     logger->stop();
 

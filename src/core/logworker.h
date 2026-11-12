@@ -47,10 +47,6 @@ public:
 
 private:
 
-    // 缓冲区的独占所有权指针；交换指针即可交接生产者和消费者缓冲区。
-    using BufferPtr = std::unique_ptr<FlexibleBuffer>;
-
-
     void scheduleTaskLocked();
 
     // 在线程池中按顺序处理待写缓冲块。
@@ -82,11 +78,12 @@ private:
     // 4. stop() 被唤醒，确认条件成立后返回。
     std::condition_variable m_taskDoneCond;
 
+    // 缓冲区的独占所有权指针；交换指针即可交接生产者和消费者缓冲区。
     // 前台生产者正在追加日志的缓冲区；容量不足时按需增长。
-    BufferPtr m_producerBuffer;
+    FlexibleBuffer::UniquePtr m_producerBuffer;
 
     // 后台处理当前批次的缓冲区；输出后清空并与生产者缓冲区轮换复用。
-    BufferPtr m_consumerBuffer;
+    FlexibleBuffer::UniquePtr m_consumerBuffer;
 
     // 异常只沿当前线程的调用栈传播，逃出后台任务（线程）入口会触发 std::terminate。这里的设计是先保存后台异常，等 stop() 回收线程后，再在调用 stop() 的线程上重抛。若重抛后始终无人捕获，进程同样会终止。任务提交失败也保存在这里，供后续调用报告。
     // 从目前来看，其实没有什么区别，只是维护了正确的语义，后续如果需要扩充的话可以正常让前台捕获后台抛出的异常，为正确处理留出了口子。调用方可在 stop() 外加 try/catch。析构只回收线程。

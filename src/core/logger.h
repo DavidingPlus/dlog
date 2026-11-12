@@ -23,7 +23,7 @@ class DLOG_API_EXPORTED Logger : public std::enable_shared_from_this<Logger>
 
 public:
 
-    using Ptr = std::shared_ptr<Logger>;
+    using SharedPtr = std::shared_ptr<Logger>;
 
     ~Logger() = default;
 

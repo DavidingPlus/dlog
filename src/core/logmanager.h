@@ -39,11 +39,11 @@ public:
     // 3. buildLogger<RollFileFlush>(basePath, rollSize) 按基础路径和大小阈值初始化轮转日志文件。
     // 输出构造成功后，三种调用都进入 buildLoggerImpl，通过构造函数创建日志器 Logger 并启动 Worker。
     template <typename LogFlushType = StdoutFlush, typename... Args>
-    Logger::Ptr buildLogger(const std::string &name, Args &&...args);
+    Logger::SharedPtr buildLogger(const std::string &name, Args &&...args);
 
-    DLOG_API_EXPORTED Logger::Ptr getLogger(const std::string &name) const;
+    DLOG_API_EXPORTED Logger::SharedPtr getLogger(const std::string &name) const;
 
-    Logger::Ptr getDefaultLogger() const { return m_defaultLogger; }
+    Logger::SharedPtr getDefaultLogger() const { return m_defaultLogger; }
 
     // 日志组件全局共享的线程池。
     std::shared_ptr<ThreadPool> getThreadPool() const { return m_threadPool; }
@@ -71,7 +71,7 @@ private:
 
     ~LogManager() { shutdown(); }
 
-    DLOG_API_EXPORTED Logger::Ptr buildLoggerImpl(std::shared_ptr<LogFlush> output);
+    DLOG_API_EXPORTED Logger::SharedPtr buildLoggerImpl(std::shared_ptr<LogFlush> output);
 
     DLOG_API_EXPORTED void shutdown();
 
@@ -84,15 +84,15 @@ private:
     std::shared_ptr<ThreadPool> m_threadPool;
 
     // 固定的默认终端日志器，独立于命名表。
-    Logger::Ptr m_defaultLogger;
+    Logger::SharedPtr m_defaultLogger;
 
     // 注册进命名表的其他日志器。
-    std::unordered_map<std::string, Logger::Ptr> m_loggers;
+    std::unordered_map<std::string, Logger::SharedPtr> m_loggers;
 };
 
 
 template <typename LogFlushType, typename... Args>
-Logger::Ptr LogManager::buildLogger(const std::string &name, Args &&...args)
+Logger::SharedPtr LogManager::buildLogger(const std::string &name, Args &&...args)
 {
     if (name.empty()) throw std::invalid_argument("LogManager::buildLogger(): name must not be empty");
 

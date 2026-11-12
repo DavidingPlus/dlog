@@ -3,6 +3,7 @@
 
 #include "globalmacros.h"
 
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -37,8 +38,12 @@ class DLOG_API_EXPORTED FlexibleBuffer
 
 public:
 
+    using UniquePtr = std::unique_ptr<FlexibleBuffer>;
+
+
     // 初始预留的 readable 和 writable 数据空间大小。初始时 readableBytes 为 0，writableBytes 为 kInitialSize，这个是符合语义的。
     static constexpr size_t kInitialSize = 1024;
+
 
     explicit FlexibleBuffer(size_t initialSize = kInitialSize) : m_buffer(initialSize) {}
 

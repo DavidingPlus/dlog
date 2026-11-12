@@ -237,7 +237,7 @@ TEST(LogManagerDeathTest, ConcurrentFirstAccessReturnsTheSameManagerAndDefaultLo
         {
             constexpr size_t count = 8;
             std::vector<LogManager *> managers(count);
-            std::vector<Logger::Ptr> defaults(count);
+            std::vector<Logger::SharedPtr> defaults(count);
             std::atomic_bool start{false};
             std::vector<std::thread> threads;
             for (size_t i = 0; i < count; ++i)
@@ -525,7 +525,7 @@ TEST(LogManagerTest, ConcurrentCreationAndLookupKeepEachTarget)
 {
     auto &manager = LogManager::GetInstance();
     constexpr size_t count = 8;
-    std::vector<Logger::Ptr> loggers(count);
+    std::vector<Logger::SharedPtr> loggers(count);
     std::atomic_int errors{0};
     std::vector<std::thread> threads;
     for (size_t i = 0; i < count; ++i)
