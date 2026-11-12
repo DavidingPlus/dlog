@@ -5,14 +5,19 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cwchar>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using namespace dlog;
 
@@ -501,3 +506,117 @@ TEST(LogManagerTest, ConcurrentDuplicateRegistrationHasExactlyOneWinner)
     for (const auto &logger : loggers) known = known || winner == logger;
     EXPECT_TRUE(known);
 }
+
+#ifdef _WIN32
+
+
+namespace
+{
+    void checkDllExit(bool explicitFlush)
+    {
+        wchar_t executable[32768];
+        const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+        ASSERT_GT(length, 0u);
+        ASSERT_LT(length, std::size(executable));
+
+        const auto prefix = std::filesystem::temp_directory_path() /
+                            ("dlog-dll-exit-" + std::to_string(GetCurrentProcessId()) + "-" +
+                             std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+        const auto outputPath = prefix.wstring() + L".output";
+        SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+        HANDLE output = CreateFileW(outputPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                    &security, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(output, INVALID_HANDLE_VALUE);
+
+        // 使用当前测试程序的子进程，使 DLL 退出卡住时可由父进程超时结束。
+        std::wstring command = L"\"" + std::wstring(executable) +
+                               L"\" --gtest_also_run_disabled_tests --gtest_filter=LogManagerDllExitTest.DISABLED_Child --dlog-dll-exit=" +
+                               (explicitFlush ? L"control|" : L"exit|") + prefix.wstring();
+        std::vector<wchar_t> buffer(command.begin(), command.end());
+        buffer.push_back(L'\0');
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdOutput = output;
+        startup.hStdError = output;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        PROCESS_INFORMATION process{};
+        const bool started = CreateProcessW(executable, buffer.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                                            nullptr, std::filesystem::path(executable).parent_path().c_str(),
+                                            &startup, &process) != FALSE;
+        CloseHandle(output);
+        ASSERT_TRUE(started);
+
+        const DWORD wait = WaitForSingleObject(process.hProcess, 10000);
+        if (wait == WAIT_TIMEOUT)
+        {
+            TerminateProcess(process.hProcess, 124);
+            WaitForSingleObject(process.hProcess, 5000);
+        }
+        DWORD exitCode = static_cast<DWORD>(-1);
+        GetExitCodeProcess(process.hProcess, &exitCode);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+
+        const auto logPath = prefix.string() + ".log";
+        const auto taskPath = prefix.string() + ".task";
+        auto readFile = [](const std::filesystem::path &path)
+        {
+            std::ifstream file(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        };
+        const auto log = readFile(logPath);
+        const auto task = readFile(taskPath);
+        const auto diagnostic = readFile(outputPath);
+        std::error_code error;
+        std::filesystem::remove(logPath, error);
+        std::filesystem::remove(taskPath, error);
+        std::filesystem::remove(outputPath, error);
+
+        ASSERT_EQ(wait, WAIT_OBJECT_0) << diagnostic;
+        ASSERT_EQ(exitCode, 0u) << diagnostic;
+        EXPECT_NE(log.find("dll log at exit"), std::string::npos) << diagnostic;
+        EXPECT_NE(task.find("dll task at exit"), std::string::npos) << diagnostic;
+    }
+}
+
+// 子进程入口，不在普通测试中直接运行。
+TEST(LogManagerDllExitTest, DISABLED_Child)
+{
+    const wchar_t *argument = std::wcsstr(GetCommandLineW(), L"--dlog-dll-exit=");
+    if (!argument) GTEST_SKIP();
+    argument += std::wcslen(L"--dlog-dll-exit=");
+    const bool explicitFlush = std::wcsncmp(argument, L"control|", 8) == 0;
+    argument += explicitFlush ? 8 : 5;
+
+    wchar_t executable[32768];
+    ASSERT_GT(GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))), 0u);
+    const auto dll = std::filesystem::path(executable).parent_path() / L"logmanager_dll_probe.dll";
+    HMODULE module = LoadLibraryW(dll.c_str());
+    ASSERT_NE(module, nullptr);
+    const auto submit = reinterpret_cast<void (*)(const char *)>(GetProcAddress(module, "ProbeSubmit"));
+    const auto flush = reinterpret_cast<void (*)()>(GetProcAddress(module, "ProbeFlush"));
+    ASSERT_NE(submit, nullptr);
+    ASSERT_NE(flush, nullptr);
+    const auto prefix = std::filesystem::path(argument).string();
+    submit(prefix.c_str());
+    if (explicitFlush)
+    {
+        flush();
+        std::_Exit(EXIT_SUCCESS);
+    }
+}
+
+TEST(LogManagerDllExitTest, ExplicitFlush)
+{
+    checkDllExit(true);
+}
+
+// 已复现失败；显式启用后检查 DLL 内 Manager 的正常退出清理。
+TEST(LogManagerDllExitTest, DISABLED_NormalExit)
+{
+    checkDllExit(false);
+}
+
+
+#endif
