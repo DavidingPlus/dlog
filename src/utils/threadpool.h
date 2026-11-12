@@ -3,6 +3,7 @@
 
 #include "thread.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <future>
@@ -11,7 +12,6 @@
 #include <queue>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 
@@ -57,28 +57,34 @@ private:
     // 条件变量，用于任务队列的同步。
     std::condition_variable m_condition;
 
-    bool m_running = false;
+    std::atomic_bool m_running{false};
 };
 
 
 template <class F, class... Args>
 std::future<std::invoke_result_t<F, Args...>> ThreadPool::enqueue(F &&func, Args &&...args)
 {
+    // 推导以 Args... 调用 F 时的返回类型。std::invoke_result_t<F, Args...> 等价于 std::invoke_result<F, Args...>::type。
+    // 参考实现中 std::result_of<F(Args...)>::type 在 C++17 中弃用、C++20 中移除。
     using ReturnType = std::invoke_result_t<F, Args...>;
 
-    auto task = std::make_shared<std::packaged_task<ReturnType()>>(
-        std::bind(std::forward<F>(func), std::forward<Args>(args)...));
-    auto result = task->get_future();
+    // std::packaged_task 可以理解为一个带有结果通道的任务包装器。它包装一个可调用对象，执行时会把返回值或异常保存到共享状态中，供另一端的 std::future 获取。
+    auto task = std::make_shared<std::packaged_task<ReturnType()>>(std::bind(std::forward<F>(func), std::forward<Args>(args)...));
+    auto res = task->get_future();
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+
         if (!m_running) throw std::runtime_error("ThreadPool: enqueue on stopped pool");
+
         m_tasks.emplace([task]
                         { (*task)(); });
     }
 
     m_condition.notify_one();
-    return result;
+
+
+    return res;
 }
 
 

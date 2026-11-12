@@ -60,6 +60,7 @@ void ThreadPool::stopAndJoin()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
+        // 虽然 m_running 是原子变量，但这里仍使用 m_mutex。它需要协调条件变量等待和任务入队，防止漏掉唤醒或在停止后提交任务。
         m_running = false;
     }
 
