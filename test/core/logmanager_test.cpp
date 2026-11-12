@@ -267,15 +267,15 @@ static void verifyConfiguredThreadCount()
     ConfigureThreadPoolFromAnotherSourceFile(3);
     EXPECT_EQ(Thread::NumCreated(), before);
     auto &manager = LogManager::GetInstance();
-    // 除共享池的 3 个 Thread 外，默认 Logger 还创建了一个 Thread。
-    EXPECT_EQ(Thread::NumCreated() - before, 4);
+    // 默认 Logger 共用线程池，不再创建独立线程。
+    EXPECT_EQ(Thread::NumCreated() - before, 3);
     EXPECT_EQ(&manager, &GetInstanceFromAnotherSourceFile());
     ::testing::internal::CaptureStderr();
     LogManager::ConfigureThreadPool(5);
     LogManager::ConfigureThreadPool(0);
     const auto warning = ::testing::internal::GetCapturedStderr();
     EXPECT_NE(warning.find("configuration ignored"), std::string::npos);
-    EXPECT_EQ(Thread::NumCreated() - before, 4);
+    EXPECT_EQ(Thread::NumCreated() - before, 3);
     auto result = manager.getThreadPool()->enqueue([]
                                                    { return 42; });
     EXPECT_EQ(result.get(), 42);
@@ -297,7 +297,7 @@ TEST(LogManagerDeathTest, DefaultThreadCountIsFour)
         {
             const int before = Thread::NumCreated();
             LogManager::GetInstance();
-            EXPECT_EQ(Thread::NumCreated() - before, 5);
+            EXPECT_EQ(Thread::NumCreated() - before, 4);
             std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
         },
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
@@ -323,7 +323,7 @@ TEST(LogManagerDeathTest, ConcurrentConfigurationAndFirstAccessAreConsistent)
             initialize.join();
             const auto warning = ::testing::internal::GetCapturedStderr();
             const bool ignored = warning.find("configuration ignored") != std::string::npos;
-            EXPECT_EQ(Thread::NumCreated() - before, ignored ? 5 : 4);
+            EXPECT_EQ(Thread::NumCreated() - before, ignored ? 4 : 3);
             std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
         },
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");

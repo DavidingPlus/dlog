@@ -1,49 +1,16 @@
-#include "logcolorguard.h"
 #include "log.h"
-
-#include <cerrno>
-#include <array>
-#include <cstdio>
-#include <string_view>
-
-
-namespace
-{
-
-    struct LogLevelExample
-    {
-        dlog::LogLevel level;
-        std::string_view name;
-        std::string_view colorName;
-    };
-
-    void showLoggerColor(const LogLevelExample &example)
-    {
-        auto logger = dlog::LogManager::GetInstance().getDefaultLogger();
-        // dlog::LogColorGuard color(logger.stream(), example.level);
-        logger->message(__FILE__, __LINE__, example.level).stream() << example.name << " (" << example.colorName << ") color sample";
-    }
-
-    void showFatalColor()
-    {
-        DLOG_FATAL() << "FATAL (spdlog CRITICAL, bold on red) color sample";
-    }
-
-} // namespace
 
 
 int main()
 {
-    constexpr std::array<LogLevelExample, 5> examples{{
-        {dlog::LogLevel::TRACE, "TRACE", "white"},
-        {dlog::LogLevel::DEBUG, "DEBUG", "cyan"},
-        {dlog::LogLevel::INFO, "INFO", "green"},
-        {dlog::LogLevel::WARN, "WARN", "bold yellow"},
-        {dlog::LogLevel::ERROR, "ERROR", "bold red"},
-    }};
+    // 所有日志器由 Manager 统一管理。
 
-    for (const LogLevelExample &example : examples) showLoggerColor(example);
-    DLOG_SYS_ERROR(ENOENT);
+    auto &manager = dlog::LogManager::GetInstance();
+    auto file = manager.buildLogger<dlog::FileFlush>("file", "logs/async-logger.log");
 
-    showFatalColor();
+    DLOG_INFO() << "console message";
+    DLOG_LOGGER_INFO(manager.getLogger("file")) << "file message";
+
+    auto rolling = manager.buildLogger<dlog::RollFileFlush>("rolling", "logs/async-rolling", 1024 * 1024);
+    DLOG_LOGGER_INFO(rolling) << "rolling message";
 }

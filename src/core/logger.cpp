@@ -12,7 +12,6 @@ Logger::Logger(std::shared_ptr<LogFlush> output, std::shared_ptr<ThreadPool> thr
       m_output(std::move(output)),
       m_worker([output = m_output.get()](const LargeFixedBuffer &buffer)
                { output->writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-               3,
                std::move(threadPool)) {}
 
 LogMessage Logger::message(const char *filename, int line, LogLevel level, int savedErrno)

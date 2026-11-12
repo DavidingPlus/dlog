@@ -2,9 +2,7 @@
 #define _DLOG_LOGWORKER_H_
 
 #include "fixedbuffer.h"
-#include "thread.h"
 
-#include <atomic>
 #include <condition_variable>
 #include <exception>
 #include <functional>
@@ -29,17 +27,16 @@ class DLOG_API_EXPORTED LogWorker
 
 public:
 
-    // 后台按批次交付只读缓冲块。缓冲区由 LogWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免后台线程 join 自身。
+    // 后台按批次交付只读缓冲块。缓冲区由 LogWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免任务等待自身。
     using OutputFunc = std::function<void(const LargeFixedBuffer &)>;
 
-    // 保存输出回调并准备缓冲，不启动线程；flushInterval 为周期处理间隔，单位为秒。
-    explicit LogWorker(OutputFunc output, unsigned int flushInterval = 3);
+    // 调用方负责提供线程池，并在任务完成前保持线程池可用。
+    explicit LogWorker(OutputFunc output, std::shared_ptr<ThreadPool> threadPool);
 
-    // 停止并回收已启动的后台线程；后台异常由显式 stop() 报告。
-    ~LogWorker() { stopAndJoin(); }
+    // 等待已安排的任务；后台异常由显式 stop() 报告。
+    ~LogWorker() { stopAndWait(); }
 
-    // 将一段已经格式化的日志字节复制到 Worker 的内存缓冲区。
-    // 整次追加持有互斥锁，按顺序分段复制，写满的块移入待写队列；全部复制完成并释放锁后，若有完整块入队，只通知后台线程一次。后台失败后，非空追加重抛原异常。
+    // 将一段已经格式化的日志字节复制到 Worker 的内存缓冲区。整次追加持有互斥锁，按顺序分段复制，写满的块移入待写队列；启动后有非空数据就安排线程池处理。后台失败后，非空追加重抛原异常。
     void append(const char *data, size_t len);
 
     // 启停由调用方串行执行；运行中重复启动无效，正常停止后可重启，后台失败后重抛原异常。
@@ -58,33 +55,30 @@ private:
     using BufferVector = std::vector<BufferPtr>;
 
 
-    LogWorker(OutputFunc output, unsigned int flushInterval, std::shared_ptr<ThreadPool> threadPool);
+    void scheduleTaskLocked();
 
-    // 后台线程入口。
+    // 在线程池中按顺序处理待写缓冲块。
     void threadFunc();
 
-    void stopAndJoin();
+    void stopAndWait();
 
 
     // 决定如何处理每个字节批次；Worker 不保存文件路径或轮转配置。
     OutputFunc m_output;
 
-    // 全局共享线程池，后续批次调度接入时使用。
+    // 日志输出任务使用的线程池。
     std::shared_ptr<ThreadPool> m_threadPool;
-
-    // 后台线程的运行标志。置为 false 后仍需处理尾部数据并回收线程。
-    std::atomic_bool m_running{false};
-
-    // 未满缓冲块的周期处理间隔，单位为秒。
-    unsigned int m_flushInterval = 3;
-
-    // 后台写盘线程，入口函数绑定到 threadFunc()。
-    Thread m_thread;
 
     // 保护前台生产者缓冲区和待处理队列，协调 append() 与后台批量取队列。
     mutable std::mutex m_mtx;
 
-    // 前台移交新批次后唤醒后台线程；后台线程也可配合定时等待。
+    // Worker 是否已启动。
+    bool m_running = false;
+
+    // 是否已有输出任务排队或执行。
+    bool m_scheduled = false;
+
+    // 工作任务结束时唤醒等待停止的调用方。
     std::condition_variable m_cond;
 
     // 前台生产者正在追加日志的缓冲区；写满后移入 m_pendingBuffers，并分配新缓冲区继续接收。
@@ -93,9 +87,8 @@ private:
     // 前台已经填充并移交、等待后台线程处理的缓冲区队列。
     BufferVector m_pendingBuffers;
 
-    // 异常只沿当前线程的调用栈传播，逃出后台线程入口会触发 std::terminate。这里的设计是先保存后台异常，等 stop() 回收线程后，再在调用 stop() 的线程上重抛。若重抛后始终无人捕获，进程同样会终止。
-    // 从目前来看，其实没有什么区别，只是维护了正确的语义，后续如果需要扩充的话可以正常让前台捕获后台抛出的异常，为正确处理留出了口子。调用方可在 stop() 外加 try/catch。析构只回收线程。
-    // std::exception_ptr 默认构造为空，可用 if (m_backgroundError) 判断是否保存了异常。后台在 catch 中用 std::current_exception() 保存原异常，调用方判空后用 std::rethrow_exception(m_backgroundError) 按原异常类型重新抛出。
+    // 后台任务中保存异常，等 stop() 等待任务结束后，在调用 stop() 的线程上重抛；析构只负责等待。任务提交失败也保存在这里，供后续调用报告。
+    // std::exception_ptr 默认构造为空；后台使用 std::current_exception() 保存原异常，调用方使用 std::rethrow_exception() 按原类型重抛。
     std::exception_ptr m_backgroundError;
 };
 

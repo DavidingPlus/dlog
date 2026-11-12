@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "logworker.h"
+#include "threadpool.h"
 #include "logflush.h"
 
 #include <algorithm>
@@ -22,7 +23,7 @@ using namespace std::chrono_literals;
 
 TEST(LogWorkerTest, RejectsEmptyOutput)
 {
-    EXPECT_THROW({ LogWorker worker(LogWorker::OutputFunc{}); }, std::invalid_argument);
+    EXPECT_THROW({ LogWorker worker(LogWorker::OutputFunc{}, std::make_shared<ThreadPool>(1)); }, std::invalid_argument);
 }
 
 TEST(LogWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThread)
@@ -37,7 +38,7 @@ TEST(LogWorkerTest, CopiesBinaryDataAcrossBlocksAndCallsOutputOnBackgroundThread
                        {
                            allCallsOnBackgroundThread &= std::this_thread::get_id() != caller;
                            actual.append(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
 
     worker.append(input.data(), input.size());
     input.assign(input.size(), 'X');
@@ -54,7 +55,7 @@ TEST(LogWorkerTest, RepeatedStartStopAndAppendBetweenRunsPreserveData)
     std::string actual;
     LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
 
     worker.stop();
     worker.append("before|", 7);
@@ -74,7 +75,7 @@ TEST(LogWorkerTest, EmptyWritesDoNotInvokeOutput)
     size_t calls = 0;
     LogWorker worker([&](const LargeFixedBuffer &)
                        { ++calls; },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     worker.append(nullptr, 1);
     worker.append(nullptr, 0);
     worker.append("data", 0);
@@ -90,7 +91,7 @@ TEST(LogWorkerTest, DestructorDrainsPartialBlock)
     {
         LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
-                           60);
+                       std::make_shared<ThreadPool>(2));
         worker.append(message.data(), message.size());
         worker.start();
     }
@@ -101,7 +102,7 @@ TEST(LogWorkerTest, StopRethrowsOriginalBackgroundError)
 {
     LogWorker worker([](const LargeFixedBuffer &)
                        { throw std::runtime_error("output failed"); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     worker.append("tail", 4);
     worker.start();
 
@@ -137,7 +138,7 @@ TEST(LogWorkerTest, JoinsAfterBackgroundFailureBeforeStop)
                            entered.set_value();
                            releaseResult.wait();
                            throw OutputError{71}; },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     const std::string fullBlock(kLargeFixedBufferSize, 'E');
     worker.append(fullBlock.data(), fullBlock.size());
     worker.start();
@@ -185,27 +186,27 @@ TEST(LogWorkerTest, DestructorJoinsAfterBackgroundErrorWithoutExplicitStop)
                            {
                                ++calls;
                                throw std::runtime_error("output failed during destruction"); },
-                           60);
+                       std::make_shared<ThreadPool>(2));
         worker.append("tail", 4);
         worker.start();
     }
     EXPECT_EQ(calls, 1u);
 }
 
-TEST(LogWorkerTest, ZeroIntervalStillProcessesPartialDataPeriodically)
+TEST(LogWorkerTest, PartialDataIsProcessedWithoutWaitingForStop)
 {
     std::promise<std::string> delivered;
     auto result = delivered.get_future();
     LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { delivered.set_value(buffer.toString()); },
-                       0);
-    worker.append("periodic", 8);
+                       std::make_shared<ThreadPool>(2));
+    worker.append("promptly", 8);
     worker.start();
     const auto status = result.wait_for(5s);
     worker.stop();
 
     ASSERT_EQ(status, std::future_status::ready);
-    EXPECT_EQ(result.get(), "periodic");
+    EXPECT_EQ(result.get(), "promptly");
 }
 
 TEST(LogWorkerTest, ConcurrentLongRecordsStayWholeAcrossBlocks)
@@ -215,7 +216,7 @@ TEST(LogWorkerTest, ConcurrentLongRecordsStayWholeAcrossBlocks)
     std::string actual;
     LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { actual.append(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     worker.start();
     std::vector<std::thread> producers;
     for (size_t index = 0; index < producerCount; ++index)
@@ -257,7 +258,7 @@ TEST(LogWorkerTest, SlowOutputDoesNotHoldProducerMutex)
                                releaseResult.wait();
                            }
                            actual.append(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     const std::string fullBlock(kLargeFixedBufferSize, 'S');
     worker.append(fullBlock.data(), fullBlock.size());
     worker.start();
@@ -282,7 +283,7 @@ TEST(LogWorkerTest, DeliversBytesToStdoutFlush)
     StdoutFlush output;
     LogWorker worker([&](const LargeFixedBuffer &buffer)
                        { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
 
     ::testing::internal::CaptureStdout();
     worker.start();
@@ -301,7 +302,7 @@ TEST(LogWorkerTest, DeliversBytesToPlainFileFlush)
         FileFlush output(filename);
         LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-                           60);
+                       std::make_shared<ThreadPool>(2));
         worker.start();
         worker.append(message.data(), message.size());
         worker.stop();
@@ -324,7 +325,7 @@ TEST(LogWorkerTest, ReportsFileShortWriteAtStop)
     FileFlush output("/dev/full");
     LogWorker worker([&output](const LargeFixedBuffer &buffer)
                        { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-                       60);
+                       std::make_shared<ThreadPool>(2));
     // 超过文件流的 64 KiB 缓冲，使错误在 append 而非 flush 时发生。
     const std::string batch(128 * 1024, 'x');
     worker.append(batch.data(), batch.size());
@@ -350,7 +351,7 @@ TEST(LogWorkerTest, DeliversBatchesToRollingFileFlush)
         RollFileFlush output(directory / "app", 4);
         LogWorker worker([&](const LargeFixedBuffer &buffer)
                            { output.writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-                           60);
+                       std::make_shared<ThreadPool>(2));
         worker.append("abcd", 4);
         worker.start();
         worker.stop();
