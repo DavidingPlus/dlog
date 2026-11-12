@@ -17,6 +17,7 @@
 using namespace dlog;
 
 extern LogManager &GetInstanceFromAnotherSourceFile();
+extern void ConfigureThreadPoolFromAnotherSourceFile(size_t threadCount);
 
 
 namespace
@@ -264,6 +265,76 @@ TEST(LogManagerDeathTest, ConcurrentFirstAccessReturnsTheSameManagerAndDefaultLo
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
+static void verifyConfiguredThreadCount()
+{
+    const int before = Thread::NumCreated();
+    EXPECT_THROW(LogManager::ConfigureThreadPool(0), std::invalid_argument);
+    LogManager::ConfigureThreadPool(2);
+    ConfigureThreadPoolFromAnotherSourceFile(3);
+    EXPECT_EQ(Thread::NumCreated(), before);
+    auto &manager = LogManager::GetInstance();
+    // 除共享池的 3 个 Thread 外，默认 Logger 还创建了一个 Thread。
+    EXPECT_EQ(Thread::NumCreated() - before, 4);
+    EXPECT_EQ(&manager, &GetInstanceFromAnotherSourceFile());
+    ::testing::internal::CaptureStderr();
+    LogManager::ConfigureThreadPool(5);
+    LogManager::ConfigureThreadPool(0);
+    const auto warning = ::testing::internal::GetCapturedStderr();
+    EXPECT_NE(warning.find("configuration ignored"), std::string::npos);
+    EXPECT_EQ(Thread::NumCreated() - before, 4);
+    auto result = manager.getThreadPool()->enqueue([]
+                                                   { return 42; });
+    EXPECT_EQ(result.get(), 42);
+}
+
+TEST(LogManagerDeathTest, ConfiguredThreadCountIsUsedAndLateConfigurationIsIgnored)
+{
+    EXPECT_EXIT(
+        {
+            verifyConfiguredThreadCount();
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
+TEST(LogManagerDeathTest, DefaultThreadCountIsFour)
+{
+    EXPECT_EXIT(
+        {
+            const int before = Thread::NumCreated();
+            LogManager::GetInstance();
+            EXPECT_EQ(Thread::NumCreated() - before, 5);
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
+TEST(LogManagerDeathTest, ConcurrentConfigurationAndFirstAccessAreConsistent)
+{
+    EXPECT_EXIT(
+        {
+            const int before = Thread::NumCreated();
+            std::atomic_bool start{false};
+            ::testing::internal::CaptureStderr();
+            std::thread configure([&]
+                                  {
+                while (!start.load()) std::this_thread::yield();
+                LogManager::ConfigureThreadPool(3); });
+            std::thread initialize([&]
+                                   {
+                while (!start.load()) std::this_thread::yield();
+                LogManager::GetInstance(); });
+            start = true;
+            configure.join();
+            initialize.join();
+            const auto warning = ::testing::internal::GetCapturedStderr();
+            const bool ignored = warning.find("configuration ignored") != std::string::npos;
+            EXPECT_EQ(Thread::NumCreated() - before, ignored ? 5 : 4);
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
 TEST(LogManagerTest, MissingLookupDoesNotReserveAName)
 {
     auto &manager = LogManager::GetInstance();
@@ -272,6 +343,43 @@ TEST(LogManagerTest, MissingLookupDoesNotReserveAName)
     auto logger = Logger::BuildLogger<DiscardFlush>();
     manager.registerLogger("lookup-then-register", logger);
     EXPECT_EQ(manager.getLogger("lookup-then-register"), logger);
+}
+
+TEST(LogManagerTest, SharesThreadPoolAndExecutesTasks)
+{
+    auto &manager = LogManager::GetInstance();
+    auto first = manager.getThreadPool();
+    auto second = LogManager::GetInstance().getThreadPool();
+
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(first, GetInstanceFromAnotherSourceFile().getThreadPool());
+    auto result = first->enqueue([]
+                                 { return 42; });
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_EQ(result.get(), 42);
+}
+
+TEST(LogManagerDeathTest, DrainsThreadPoolTasksAtExit)
+{
+    EXPECT_EXIT(
+        {
+            static std::atomic_int completed{0};
+            static std::atomic_bool release{false};
+            std::atexit([]
+                        { std::_Exit(completed.load() == 20 ? EXIT_SUCCESS : EXIT_FAILURE); });
+            auto &manager = LogManager::GetInstance();
+            for (int i = 0; i < 20; ++i)
+                manager.getThreadPool()->enqueue([]
+                                                 {
+                    while (!release.load()) std::this_thread::yield();
+                    ++completed; });
+            // 后注册的回调先执行，让 Manager 析构前已有任务处于等待或排队状态。
+            std::atexit([]
+                        { release = true; });
+            std::exit(EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
 TEST(LogManagerTest, InvalidRegistrationLeavesTheNameAndDefaultUnchanged)
