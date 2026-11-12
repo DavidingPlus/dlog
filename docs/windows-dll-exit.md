@@ -1,6 +1,10 @@
 # Windows 业务 DLL 内的日志退出清理问题
 
-状态：**TODO，已复现，尚未修复**。本文记录当前现象、原因分析和后续验证方向；现有实现和使用接口暂不改变。
+状态：已提供可选的 `LogManager::Shutdown()`，可在后台线程仍能运行时主动完成清理；DLL 退出阶段的自动兜底仍是 TODO。
+
+业务 DLL 应在正常业务退出或卸载前，由普通控制线程调用 `dlog::LogManager::Shutdown()`。调用前先停止外部日志生产者并结束临时日志消息；调用会停止接收线程池新任务、等待已提交任务，随后停止并排空 Manager 管理的日志器。未注册的独立 Logger 仍由调用方自行停止。不要从 `DllMain`、线程池任务或输出回调中调用，也不要并发调用关闭接口。关闭后 Manager 不支持重新使用。
+
+普通 EXE 场景仍可依赖正常析构自动清理；显式关闭是可选的。如果从未使用 Manager 就调用 `Shutdown()`，会先创建实例再关闭。后台输出失败时，关闭会继续停止其他日志器，最后抛出第一个异常。
 
 ## 1. 问题范围
 
@@ -14,10 +18,10 @@ EXE 与不同业务模块各自管理自己的 Manager 是预期的使用边界�
 
 - `LogManager::GetInstance()` 定义在 `src/core/logmanager.h`，局部静态对象在调用它的模块侧建立生命周期。将定义放在头文件，是当前 EXE 侧自动清理方案的一部分。
 - Manager 创建并持有共享线程池；**当前 Logger 的输出尚未接入共享线程池**，每个 `LogWorker` 仍有自己的后台线程。线程池任务与 Logger 输出在本次复现中分别检查。
-- 正常关闭时，Manager 析构函数会调用其管理的 Logger 的 `stop()`；线程池由共享指针管理，在最后一个引用释放时析构并等待线程。
+- 正常关闭时，Manager 会先停止并等待共享线程池，再停止其管理的 Logger；即使外部仍持有线程池的共享指针，关闭后的线程池也不再接收任务。
 - 业务 DLL 侧创建 Manager 后，在测试中分别提交一条 Logger 日志和一个向文件写内容的线程池任务。直接正常退出时，本次测试没有读到尾部日志及任务输出；主动调用该 Logger 的 `stop()` 并等待该任务后，可以读到输出。
 
-主动停止和等待的对照只证明该 Logger 和该任务能够完成，**不证明整个 Manager、线程池及 DLL 已安全关闭**。日志已提前写完时也可能观察不到丢失，因此不应根据一次运行推断每次都会丢失。
+上述主动停止单个 Logger 和等待单个任务的历史对照，只证明该 Logger 和该任务能够完成。现在另有 `Shutdown()` 的显式关闭测试。日志已提前写完时也可能观察不到丢失，因此不应根据一次运行推断每次都会丢失。
 
 ## 3. 退出时序分析
 
@@ -40,21 +44,9 @@ Windows 正常结束进程时，`ExitProcess` 先终止其他线程，之后才�
 相关用例：
 
 - `LogManagerExitFileDeathTest.NormalExitFlushesRegisteredLogger`：EXE 侧创建 Manager，正常退出时检查已注册 Logger 的文件输出；该路径此前通过。
-- `LogManagerDllExitTest.ExplicitFlush`：DLL 内主动停止 Logger 并等待任务，作为输出路径的对照；此前通过。
-- `LogManagerDllExitTest.DISABLED_NormalExit`：DLL 内直接正常退出后检查尾部日志和任务输出；当前已复现失败，因此默认禁用。
-- `LogManagerDllExitTest.DISABLED_Child`：上述 DLL 测试使用的子进程入口，不应当作为独立功能测试直接判断。
+- `LogManagerDllExitTest.ExplicitShutdown`：DLL 内主动调用 `Shutdown()`，卸载 DLL 后正常退出，检查日志和任务输出。
 
-Windows 配置已启用 `with_gtest` 时，可以在 PowerShell 中显式运行正常退出诊断：
-
-```powershell
-$env:GTEST_ALSO_RUN_DISABLED_TESTS = '1'
-$env:GTEST_FILTER = 'LogManagerDllExitTest.DISABLED_NormalExit'
-xmake test tests/core
-Remove-Item Env:GTEST_ALSO_RUN_DISABLED_TESTS
-Remove-Item Env:GTEST_FILTER
-```
-
-当前环境中 `xmake test` 曾因创建 `ninja` 包锁失败而无法执行；上述用例此前使用本机 MSVC 和已有依赖手动构建验证。DLL 和静态库的本次复现都只覆盖 Windows x64 Debug；其他平台、构建模式和退出时机尚未覆盖。诊断用例在未修复前预期失败。
+DLL 和静态库的原始复现只覆盖 Windows x64 Debug；其他平台、构建模式和退出时机尚未覆盖。未主动调用 `Shutdown()` 的自动清理问题仍待后续研究。
 
 ## 5. 后续研究方向
 

@@ -9,6 +9,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <stdexcept>
 #include <string>
@@ -387,6 +388,72 @@ TEST(LogManagerDeathTest, DrainsThreadPoolTasksAtExit)
         ::testing::ExitedWithCode(EXIT_SUCCESS), "");
 }
 
+static void verifyExplicitShutdown()
+{
+    std::string text;
+    auto &manager = LogManager::GetInstance();
+    auto logger = Logger::BuildLogger<RecordingFlush>(text);
+    manager.registerLogger("shutdown", logger);
+    auto pool = manager.getThreadPool();
+    std::promise<void> started, release;
+    auto releaseSignal = release.get_future().share();
+    auto task = pool->enqueue([logger, &started, releaseSignal]
+                              {
+        started.set_value();
+        releaseSignal.wait();
+        logger->message("app.cpp", 1, LogLevel::INFO).stream() << "task record"; });
+    started.get_future().wait();
+    auto shutdown = std::async(std::launch::async, []
+                               { LogManager::Shutdown(); });
+    EXPECT_EQ(shutdown.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    release.set_value();
+    shutdown.get();
+    task.get();
+    EXPECT_NE(text.find("task record"), std::string::npos);
+    EXPECT_THROW(pool->enqueue([] {}), std::runtime_error);
+    EXPECT_THROW(logger->message("app.cpp", 1, LogLevel::INFO), std::logic_error);
+    EXPECT_THROW(manager.registerLogger("after-shutdown", logger), std::logic_error);
+    EXPECT_NO_THROW(LogManager::Shutdown());
+}
+
+static void verifyExplicitShutdownAfterFailure()
+{
+    std::atomic_int failures{0};
+    std::string text;
+    auto &manager = LogManager::GetInstance();
+    auto failing = Logger::BuildLogger<FailingFlush>(failures);
+    auto healthy = Logger::BuildLogger<RecordingFlush>(text);
+    manager.registerLogger("failing", failing);
+    manager.registerLogger("healthy", healthy);
+    failing->message("app.cpp", 1, LogLevel::INFO).stream() << "failure";
+    healthy->message("app.cpp", 2, LogLevel::INFO).stream() << "healthy record";
+    EXPECT_THROW(LogManager::Shutdown(), OutputError);
+    EXPECT_EQ(failures.load(), 1);
+    EXPECT_NE(text.find("healthy record"), std::string::npos);
+    EXPECT_THROW(manager.getThreadPool()->enqueue([] {}), std::runtime_error);
+    EXPECT_NO_THROW(LogManager::Shutdown());
+}
+
+TEST(LogManagerDeathTest, ExplicitShutdownDrainsTasksAndLoggers)
+{
+    EXPECT_EXIT(
+        {
+            verifyExplicitShutdown();
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
+TEST(LogManagerDeathTest, ExplicitShutdownStopsAllAfterOutputFailure)
+{
+    EXPECT_EXIT(
+        {
+            verifyExplicitShutdownAfterFailure();
+            std::exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+        },
+        ::testing::ExitedWithCode(EXIT_SUCCESS), "");
+}
+
 TEST(LogManagerTest, InvalidRegistrationLeavesTheNameAndDefaultUnchanged)
 {
     auto &manager = LogManager::GetInstance();
@@ -512,7 +579,7 @@ TEST(LogManagerTest, ConcurrentDuplicateRegistrationHasExactlyOneWinner)
 
 namespace
 {
-    void checkDllExit(bool explicitFlush)
+    void checkDllExit()
     {
         wchar_t executable[32768];
         const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
@@ -530,8 +597,7 @@ namespace
 
         // 使用当前测试程序的子进程，使 DLL 退出卡住时可由父进程超时结束。
         std::wstring command = L"\"" + std::wstring(executable) +
-                               L"\" --gtest_also_run_disabled_tests --gtest_filter=LogManagerDllExitTest.DISABLED_Child --dlog-dll-exit=" +
-                               (explicitFlush ? L"control|" : L"exit|") + prefix.wstring();
+                               L"\" --gtest_filter=LogManagerDllExitTest.ExplicitShutdown --dlog-dll-exit=" + prefix.wstring();
         std::vector<wchar_t> buffer(command.begin(), command.end());
         buffer.push_back(L'\0');
         STARTUPINFOW startup{};
@@ -580,15 +646,18 @@ namespace
     }
 }
 
-// 子进程入口，不在普通测试中直接运行。
-TEST(LogManagerDllExitTest, DISABLED_Child)
+TEST(LogManagerDllExitTest, ExplicitShutdown)
 {
     const wchar_t *argument = std::wcsstr(GetCommandLineW(), L"--dlog-dll-exit=");
-    if (!argument) GTEST_SKIP();
-    argument += std::wcslen(L"--dlog-dll-exit=");
-    const bool explicitFlush = std::wcsncmp(argument, L"control|", 8) == 0;
-    argument += explicitFlush ? 8 : 5;
+    if (!argument)
+    {
+        checkDllExit();
+        return;
+    }
 
+    argument += std::wcslen(L"--dlog-dll-exit=");
+
+    // 子进程内实际加载 DLL，父进程检查其退出状态和输出。
     wchar_t executable[32768];
     ASSERT_GT(GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))), 0u);
     const auto dll = std::filesystem::path(executable).parent_path() / L"logmanager_dll_probe.dll";
@@ -600,22 +669,8 @@ TEST(LogManagerDllExitTest, DISABLED_Child)
     ASSERT_NE(flush, nullptr);
     const auto prefix = std::filesystem::path(argument).string();
     submit(prefix.c_str());
-    if (explicitFlush)
-    {
-        flush();
-        std::_Exit(EXIT_SUCCESS);
-    }
-}
-
-TEST(LogManagerDllExitTest, ExplicitFlush)
-{
-    checkDllExit(true);
-}
-
-// 已复现失败；显式启用后检查 DLL 内 Manager 的正常退出清理。
-TEST(LogManagerDllExitTest, DISABLED_NormalExit)
-{
-    checkDllExit(false);
+    flush();
+    ASSERT_TRUE(FreeLibrary(module));
 }
 
 

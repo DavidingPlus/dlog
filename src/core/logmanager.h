@@ -29,6 +29,9 @@ public:
     // 可选。可在首次获取 LogManager（即 GetInstance()）前设置共享池线程数。线程数为 0 时抛出异常，LogManager 初始化后配置会警告并忽略。
     static void ConfigureThreadPool(size_t threadCount);
 
+    // 可选。显式关闭，先停止外部生产者并结束临时日志消息，再由控制线程串行调用，不可从线程池任务或输出回调中调用。等待已提交的线程池任务，再停止并排空受管理的 Logger；关闭后不可重新使用，可重复调用。未使用过时调用会先创建实例。未注册的独立 Logger 由调用方自行停止；后台输出失败时停止其余 Logger 后重抛第一个异常。
+    static void Shutdown() { GetInstance().shutdown(); }
+
 
     // 空名称或空目标抛出 invalid_argument，重复名称抛出 logic_error。不推荐用多个名称注册同一实例或注册默认实例，关闭时会重复调用 stop()，后果不可预期。
     DLOG_API_EXPORTED void registerLogger(std::string name, Logger::Ptr logger);
@@ -57,15 +60,19 @@ private:
     static ThreadPoolConfig &GetThreadPoolConfig();
 
 
-    // 先构造线程池、后释放，确保已管理的 Logger 先停止且 Manager 先释放线程池的引用，防止线程池停止后还可能有 Logger 添加任务。
+    // 线程池由 Manager 持有，关闭时先等待池中任务，再停止已管理的 Logger。
     // GetInstance() 中调用构造函数，在外部已对 m_configMutex，这里不考虑竞争问题。
     explicit LogManager(ThreadPoolConfig &config) : m_threadPool(std::make_shared<ThreadPool>(config.m_threadCount)), m_defaultLogger(Logger::BuildLogger()) { config.m_initialized = true; }
 
-    DLOG_API_EXPORTED ~LogManager();
+    ~LogManager() { shutdown(); }
+
+    DLOG_API_EXPORTED void shutdown();
 
 
-    // 仅保护 m_loggers：注册时独占，查找时共享；Manager 创建前无法使用这把成员锁。
+    // 保护日志器表和关闭状态；Manager 创建前无法使用这把成员锁。
     mutable std::shared_mutex m_loggerMapMutex;
+
+    bool m_shutdown = false;
 
     std::shared_ptr<ThreadPool> m_threadPool;
 
@@ -85,7 +92,7 @@ private:
 // 2. GetThreadPoolConfig() 的局部静态 config 保存线程数、初始化状态和锁，ConfigureThreadPool() 修改的必须是 GetInstance() 读取的同一个 config。如果单独把配置入口或配置对象移入 DLL，可能使 EXE 和 DLL 访问不同的状态，导致配置不生效或初始化后的检查失效；若要拆分，须明确传递或统一管理配置。
 // 3. 三个定义均使用 inline，以允许同一链接模块的多个翻译单元包含这些定义，并共享对应的局部静态对象；inline 不要求编译器实际展开函数。
 // EXE 与各业务 DLL 可以分别持有和管理自己的 Manager；不要求它们跨模块共享同一实例。
-// TODO 上述讨论的是 Windows 业务 exe 的生命周期。但还有第二关，Windows 业务 DLL 内的 Manager 在进程退出时可能无法排空尾部日志，因为无论如何设计，Manager 都是属于业务 DLL 而非业务 DLL 交予的 exe 的，复现和后续研究见 docs/windows-dll-exit-todo.md。
+// 上述讨论的是 Windows 业务 exe 的生命周期。但还有第二关，Windows 业务 DLL 内的 Manager 在进程退出时可能无法排空尾部日志，因为无论如何设计，Manager 都是属于业务 DLL 而非业务 DLL 交予的 exe 的，详见 docs/windows-dll-exit.md。目前同 spdlog，显式提供 Shutdown() 函数，Windows 业务 DLL 应在正常业务退出或卸载前主动调用 Shutdown()，若等到进程退出时才自动析构，仍可能无法排空尾部日志。
 
 inline LogManager::ThreadPoolConfig &LogManager::GetThreadPoolConfig()
 {

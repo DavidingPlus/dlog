@@ -91,7 +91,7 @@ Manager 构造时会创建默认 Logger，不能让该 Logger 再通过 `GetInst
 
 通过 `Logger`、`LogManager` 和默认宏验证完整日志链路，保留已有 `LogWorker` 与 Logger 测试；根据实际实现更新 README、相关注释及本文状态。检查公开头文件、安装产物、静态库和动态库的影响。
 
-**验证：**运行现有全量测试和新增并发测试；验证普通文件、滚动文件、终端输出及正常进程退出时的尾部日志。至少覆盖 Windows DLL / 静态库和 Linux 可用构建；EXE 使用 DLL 的退出路径继续回归。业务 DLL 内创建 Manager 的正常退出问题暂留 TODO，复现和研究方向见 [windows-dll-exit-todo.md](windows-dll-exit-todo.md)。未运行的环境必须如实记录。
+**验证：**运行现有全量测试和新增并发测试；验证普通文件、滚动文件、终端输出及正常进程退出时的尾部日志。至少覆盖 Windows DLL / 静态库和 Linux 可用构建；EXE 使用 DLL 的退出路径继续回归。业务 DLL 内创建 Manager 的正常退出问题暂留 TODO，复现和研究方向见 [windows-dll-exit.md](windows-dll-exit.md)。未运行的环境必须如实记录。
 
 ### 步骤 6：比较与收尾
 
@@ -107,4 +107,4 @@ Manager 构造时会创建默认 Logger，不能让该 Logger 再通过 `GetInst
 - 2026-11-12：完成共享归属小步：`LogManager` 在创建默认 Logger 前创建 2 线程的共享池，提供 `getThreadPool()`；Manager 停止已管理的 Logger 后释放线程池引用。新增共享实例、任务执行及正常退出处理任务的测试。因 xmake 创建 `ninja` 包锁失败，使用本机 MSVC 和已有依赖手动构建 Windows x64 Debug DLL 并运行 Manager 测试，15 项通过；未验证 Linux、静态库、DLL 内创建 Manager 等场景，也未注入初始化或入队失败。Logger、Worker 尚未使用该池，定时调度器尚未实现。
 - 2026-11-12：共享池默认线程数调整为 4，新增 `ConfigureThreadPool()`，由同一锁协调配置与首次初始化；初始化失败会恢复配置状态。手动构建 Windows x64 Debug DLL 后，18 项 Manager 测试通过，覆盖默认值、配置生效、无效值、初始化后拒绝配置及并发初始化。其他平台、构建模式和初始化失败注入仍未验证。
 - 2026-11-12：配置接口保持延迟初始化；Manager 初始化后再配置时输出警告并忽略，不再抛出异常。仅在 Manager 成功构造后标记初始化完成，构造失败时可以重新配置或重试。
-- 2026-11-12：增加 Windows DLL 内创建 Manager 的退出探针。MSVC x64 Debug 下，主动等待任务并停止 Logger 时输出正常；直接正常退出时测试未读到尾部日志及任务输出，尚不能保证自动排空。该诊断暂以 Google Test 的 `DISABLED_` 标记保留，可使用 `--gtest_also_run_disabled_tests` 显式运行。未验证其他平台或配置。
+- 2026-11-12：增加 Windows DLL 内创建 Manager 的退出探针。MSVC x64 Debug 下，主动等待任务并停止 Logger 时输出正常；直接正常退出时测试未读到尾部日志及任务输出，尚不能保证自动排空。原诊断测试已移除，显式 `Shutdown()` 的验证继续保留。未验证其他平台或配置。

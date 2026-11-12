@@ -41,6 +41,9 @@ public:
 
 private:
 
+    friend class LogManager;
+
+
     void run();
 
     void stopAndJoin();

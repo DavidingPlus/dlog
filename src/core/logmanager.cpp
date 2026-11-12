@@ -8,9 +8,18 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-LogManager::~LogManager()
+void LogManager::shutdown()
 {
-    // 保存第一个停止异常，不要遇到异常就停止程序，让其余日志器仍有机会完成排空。全部停止后重新抛出，析构函数会因此终止进程。
+    {
+        std::unique_lock<std::shared_mutex> lock(m_loggerMapMutex);
+        if (m_shutdown) return;
+        m_shutdown = true;
+    }
+
+    // 任务可能写日志，先等待线程池排空，再停止日志器。
+    m_threadPool->stopAndJoin();
+
+    // 保存第一个停止异常，让其余日志器仍有机会完成排空；全部停止后再抛出异常。
     std::exception_ptr firstError;
 
     auto stop = [&firstError](const Logger::Ptr &logger)
@@ -36,6 +45,8 @@ void LogManager::registerLogger(std::string name, Logger::Ptr logger)
     if (name.empty() || !logger) throw std::invalid_argument("LogManager::registerLogger(): name and logger must not be empty");
 
     std::unique_lock<std::shared_mutex> lock(m_loggerMapMutex);
+
+    if (m_shutdown) throw std::logic_error("LogManager::registerLogger(): manager has stopped");
 
     if (!m_loggers.try_emplace(std::move(name), std::move(logger)).second) throw std::logic_error("LogManager::registerLogger(): logger name already registered");
 }

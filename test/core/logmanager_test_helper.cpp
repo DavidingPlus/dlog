@@ -29,8 +29,8 @@ extern "C" __declspec(dllexport) void ProbeSubmit(const char *prefix)
 
 extern "C" __declspec(dllexport) void ProbeFlush()
 {
+    dlog::LogManager::Shutdown();
     task.get();
-    dlog::LogManager::GetInstance().getLogger("dll-exit")->stop();
 }
 
 
