@@ -29,7 +29,7 @@ Windows 下使用 `--build_shared=y` 构建 DLL，使用 `--build_shared=n` 构�
 
 外部项目需要将 `<install-dir>/include` 加入头文件搜索路径，并链接 `<install-dir>/lib` 中的 dlog 和对应的 `fmt` 依赖。Windows DLL 消费方编译时还需定义 `DLOG_BUILD_SHARED`，运行时需让系统找到 `<install-dir>/bin/dlog.dll`；静态库消费方不定义该宏。Linux 动态库消费方需让运行时找到安装目录下的 `libdlog.so`，例如配置运行时库搜索路径。
 
-本次验证覆盖 Windows / MSVC / Debug 的 DLL 与静态库，以及 Ubuntu WSL / x86-64 / Debug 动态库：外部程序仅使用安装后的 dlog 头文件、库和独立配置的 `fmt`，验证了默认终端、普通文件、轮转文件、显式停止和注册日志器正常退出排空。Windows DLL 安装的 18 个公开头文件分别通过独立包含编译。该验证不代表所有公开符号及平台组合均已验证；Linux 静态库、Release 模式、真实磁盘故障及长期压力仍未验证。
+此前版本的安装验证覆盖 Windows / MSVC / Debug 的 DLL 与静态库，以及 Ubuntu WSL / x86-64 / Debug 动态库：外部程序仅使用安装后的 dlog 头文件、库和独立配置的 `fmt`，验证了默认终端、普通文件、轮转文件、显式停止和注册日志器正常退出排空。Windows DLL 安装的 18 个公开头文件分别通过独立包含编译。该验证不代表所有公开符号及平台组合均已验证；Linux 静态库、Release 模式、真实磁盘故障及长期压力仍未验证。
 
 ## 基本用法
 
@@ -73,7 +73,7 @@ int main()
 dlog::LogManager::Shutdown();
 ```
 
-该调用等待共享线程池中的任务完成，再停止并排空 Manager 管理的日志器；独立创建且未注册的 Logger 需自行停止。关闭后 Manager 不可重新使用。请在普通控制线程中串行调用，不要在 `DllMain`、线程池任务或日志输出回调中调用。详见 [Windows DLL 退出说明](docs/windows-dll-exit.md)。
+该调用等待共享线程池中的任务完成，再停止并排空 Manager 管理的日志器。关闭后 Manager 不可重新使用。请在普通控制线程中串行调用，不要在 `DllMain`、线程池任务或日志输出回调中调用。详见 [Windows DLL 退出说明](docs/windows-dll-exit.md)。
 
 系统错误日志应在系统调用失败后立即保存 `errno`，再传给日志宏：
 
@@ -103,7 +103,7 @@ public:
     }
 };
 
-auto logger = dlog::Logger::BuildLogger<MyOutput>();
+auto logger = dlog::LogManager::GetInstance().buildLogger<MyOutput>("custom");
 DLOG_LOGGER_INFO(logger) << "custom output";
 logger->stop();
 ```
@@ -112,7 +112,7 @@ logger->stop();
 
 ## Logger 单目标输出
 
-`Logger` 是长期持有的异步日志器，每个实例使用一个输出目标。`LogManager` 提供固定的默认终端日志器，并管理显式注册的命名日志器：
+`Logger` 是长期持有的异步日志器，每个实例使用一个输出目标。`LogManager` 提供固定的默认终端日志器，并创建、持有命名日志器：
 
 ```cpp
 #include <dlog/core/log.h>
@@ -121,8 +121,7 @@ logger->stop();
 int main()
 {
     auto &manager = dlog::LogManager::GetInstance();
-    auto file = dlog::Logger::BuildLogger<dlog::FileFlush>(std::filesystem::path("logs") / "app.log");
-    manager.registerLogger("file", file);
+    auto file = manager.buildLogger<dlog::FileFlush>("file", std::filesystem::path("logs") / "app.log");
 
     DLOG_INFO() << "console message";
     DLOG_LOGGER_INFO(manager.getLogger("file")) << "file message";
@@ -130,24 +129,24 @@ int main()
 }
 ```
 
-普通文件使用 `BuildLogger<FileFlush>(filename)`，轮转文件使用 `BuildLogger<RollFileFlush>(basePath, rollSize)`，终端可使用 `BuildLogger()` 或 Manager 的默认日志器。每个调用创建独立的单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/DLogTest/main2.cpp`](snippet/DLogTest/main2.cpp)。仓库中的示例按需构建：在 `snippet/DLogTest` 目录创建空的 `.buildme` 文件后，运行 `xmake -y DLogTest2` 和 `xmake run DLogTest2`。
+普通文件使用 `manager.buildLogger<FileFlush>(name, filename)`，轮转文件使用 `manager.buildLogger<RollFileFlush>(name, basePath, rollSize)`，终端可使用 `manager.buildLogger(name)` 或 Manager 的默认日志器。创建时自动注册，空名称或重复名称会抛出异常。并发创建同名日志器时，落败的调用可能已构造输出目标，再因重名失败。每个调用创建单目标实例；终端默认启用等级颜色，文件默认使用纯文本。相对文件路径以可执行文件所在目录为基准。完整示例见 [`snippet/DLogTest/main2.cpp`](snippet/DLogTest/main2.cpp)。仓库中的示例按需构建：在 `snippet/DLogTest` 目录创建空的 `.buildme` 文件后，运行 `xmake -y DLogTest2` 和 `xmake run DLogTest2`。
 
 默认宏始终写入终端，显式宏 `DLOG_LOGGER_TRACE/DEBUG/INFO/WARN/ERROR/FATAL(logger)` 和 `DLOG_LOGGER_SYS_ERROR/SYS_FATAL(logger, savedErrno)` 写入指定日志器；空日志器抛出 `std::invalid_argument`。也可以使用 `message(__FILE__, __LINE__, level).stream()`。FATAL 与其他等级一样异步提交，不会立即排空或终止进程。
 
 首次使用默认宏时会初始化 Manager 和默认日志器；初始化失败会向调用方抛出异常。
 
-停止或自动回收前，先结束生产线程及临时消息。未注册的日志器在最后一个持有者释放时自动回收；也可主动调用 `stop()` 等待排空，并捕获后台输出异常。前台提交失败只输出 stderr 诊断，`stop()` 无法反馈该错误。后台写入失败后放弃剩余待写数据，不自动重试。Manager 析构会停止默认和命名日志器；若停止失败，仍尝试关闭其他日志器，最后触发进程终止。正常退出的排空已在 Windows EXE + DLL 场景验证；跨 DLL 不共享 Manager，也不保证其他 DLL 的退出排空。
+停止或自动回收前，先结束生产线程及临时消息。Manager 一直持有创建的日志器及其输出目标，直到 Manager 析构；自定义输出引用的外部数据必须保持有效。也可主动调用 `stop()` 等待排空，并捕获后台输出异常。前台提交失败只输出 stderr 诊断，`stop()` 无法反馈该错误。后台写入失败后放弃剩余待写数据，不自动重试。Manager 析构会停止默认和命名日志器；若停止失败，仍尝试关闭其他日志器，最后触发进程终止。正常退出的排空已在 Windows EXE + DLL 场景验证；跨 DLL 不共享 Manager，也不保证其他 DLL 的退出排空。
 
 ## 异步文件输出
 
-旧的临时记录类型 `Logger`、`SetOutput`、`SetFlush` 和 `AsyncLogging` 已移除；现在的 `Logger` 是长期持有的异步日志器。此前的 `AsyncLogger`、`AsyncWorker` 和 `BuildAsyncLogger()` 分别改名为 `Logger`、`LogWorker` 和 `BuildLogger()`，头文件改为 `logger.h` 和 `logworker.h`；使用方需迁移并重新编译。后台会自动创建缺失的父目录：
+旧的临时记录类型 `Logger`、`SetOutput`、`SetFlush` 和 `AsyncLogging` 已移除；现在的 `Logger` 是长期持有的异步日志器。此前的 `AsyncLogger`、`AsyncWorker` 和 `BuildAsyncLogger()` 分别改名为 `Logger`、`LogWorker` 和 `buildLogger()`，头文件改为 `logger.h` 和 `logworker.h`；创建入口由 `Logger::BuildLogger()` 迁至 `LogManager::GetInstance().buildLogger(name, ...)`，创建后自动注册，使用方需迁移并重新编译。后台会自动创建缺失的父目录：
 
 ```cpp
 #include <filesystem>
 #include <dlog/core/log.h>
 
 const auto basePath = std::filesystem::path("logs") / "app";
-auto logger = dlog::Logger::BuildLogger<dlog::RollFileFlush>(basePath, 64LL * 1024 * 1024);
+auto logger = dlog::LogManager::GetInstance().buildLogger<dlog::RollFileFlush>("rolling", basePath, 64LL * 1024 * 1024);
 DLOG_LOGGER_INFO(logger) << "written by the background thread";
 
 // 停止所有日志生产者后执行：

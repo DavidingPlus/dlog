@@ -1,12 +1,12 @@
 # dlog 与 Kama 对比及简化迁移计划
 
-**命名更新（2026-11-11）：** dlog 的长期日志器 `AsyncLogger` 更名为 `Logger`，工厂方法 `BuildAsyncLogger` 更名为 `BuildLogger`，后台工作器 `AsyncWorker` 更名为 `LogWorker`，对应头文件为 `logger.h` 和 `logworker.h`。旧临时记录类型也曾叫 `Logger`，与现在的长期日志器含义不同。下文的历史实施记录及 Kama 参考名称保留当时的名称；当前接口以本说明及第 3、4 节为准。
+**命名更新（2026-11-11）：** dlog 的长期日志器 `AsyncLogger` 更名为 `Logger`，工厂方法 `BuildAsyncLogger` 更名为 `BuildLogger`，后台工作器 `AsyncWorker` 更名为 `LogWorker`，对应头文件为 `logger.h` 和 `logworker.h`。旧临时记录类型也曾叫 `Logger`，与现在的长期日志器含义不同。下文的历史实施记录及 Kama 参考名称保留当时的名称；创建入口现为 `LogManager::GetInstance().buildLogger(name, ...)`，下文历史记录保留当时的名称。
 
 ## 1. 目标与进度
 
 更新日期：2026-11-11；最初设计落档时的代码基线：`a3dc91f`。本文合并原对比文档与迁移计划，后续只维护这一份。
 
-借鉴 Kama 的长期日志器用法。`Logger` 管理工作器和输出目标，由静态方法 `Logger::BuildLogger()` 创建。业务侧使用流式宏，单条记录由内部 `LogMessage` 管理，`LogStream` 负责格式化和缓冲。
+借鉴 Kama 的长期日志器用法。`Logger` 管理工作器和输出目标，由 `LogManager::GetInstance().buildLogger(name, ...)` 创建。业务侧使用流式宏，单条记录由内部 `LogMessage` 管理，`LogStream` 负责格式化和缓冲。
 
 **执行约定（2026-11-10）：先落文档，再逐步实施。** 步骤 1 已完成实现，按用户“复核无问题后分四到五批提交”的授权完成本轮复核，并分四批提交；当前按下述小步推进。后续仍在每次开始前说明范围，完成后报告实际改动、验证结果及剩余限制，等待用户明确审核通过后再进入下一步。提交当前步骤不表示授权自动开始下一步；未获明确要求不提交 Git。
 
@@ -92,18 +92,18 @@ Kama 的 SAFE 表示容量等待策略，不代表整个实现已经可靠。相
 
 ## 3. 迁移后怎样使用
 
-静态 BuildLogger、message、正常 stop 和 LogManager 已实现。`Logger::BuildLogger<T>(...)` 使用现有 LogFlushFactory 创建输出，`Logger::BuildLogger()` 使用默认终端输出。可以通过对象接口或公共宏写入，也可以用 LogManager 注册命名日志器；默认日志器固定为终端。主程序中使用模块内 Manager 的正常退出自动排空已通过 Windows / MSVC / Debug / DLL 验证；EXE 与其他 DLL 各自持有实例，其他 DLL 内实例的退出排空不由该结果保证。
+`buildLogger`、message、正常 stop 和 LogManager 已实现。`LogManager::GetInstance().buildLogger<T>(name, ...)` 使用现有 LogFlushFactory 创建输出并自动注册，`buildLogger(name)` 使用默认终端输出。可以通过对象接口或公共宏写入；默认日志器固定为终端。主程序中使用模块内 Manager 的正常退出自动排空已通过 Windows / MSVC / Debug / DLL 验证；EXE 与其他 DLL 各自持有实例，其他 DLL 内实例的退出排空不由该结果保证。
 
 显式异步文件日志器（步骤 2）：
 
 ```cpp
-auto app = dlog::Logger::BuildLogger<dlog::RollFileFlush>(
-    std::filesystem::path("logs") / "app",
+auto app = dlog::LogManager::GetInstance().buildLogger<dlog::RollFileFlush>(
+    "app", std::filesystem::path("logs") / "app",
     64LL * 1024 * 1024);
 
 app->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "request=" << 42;
 
-// 结束所有生产线程及临时消息后，最后一个持有者释放 app 时自动排空回收。
+// 结束所有生产线程及临时消息后，Manager 关闭时自动排空。
 // 如果需要提前等待写完、捕获输出异常，可在此处显式调用 app->stop()。
 ```
 
@@ -116,18 +116,17 @@ DLOG_INFO() << "request=" << 42;
 // 退出前需先结束所有生产线程及临时消息。
 ```
 
-通过 LogManager 注册并使用命名文件日志器：
+通过 LogManager 创建并使用命名文件日志器：
 
 ```cpp
-auto app = dlog::Logger::BuildLogger<dlog::RollFileFlush>(
-    std::filesystem::path("logs") / "app", 64LL * 1024 * 1024);
+auto app = dlog::LogManager::GetInstance().buildLogger<dlog::RollFileFlush>(
+    "app", std::filesystem::path("logs") / "app", 64LL * 1024 * 1024);
 auto &manager = dlog::LogManager::GetInstance();
-manager.registerLogger("app", app);
 
 manager.getLogger("app")->message(__FILE__, __LINE__, dlog::LogLevel::INFO).stream() << "request=" << 42;
 ```
 
-`logs/app` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式使用完整文件名。BuildLogger 通过 LogFlushFactory 准备输出、目录和文件，再创建 Logger 并启动 Worker。输出构造或线程启动失败均从 BuildLogger 报告。正常使用不要求手动调用 stop，也不再手工接 SetOutput/SetFlush 或启停 Worker。自动回收发生在最后一个 Logger 持有者释放时；局部 shared_ptr 离开作用域时若管理器或消息仍持有它，不会提前析构。未注册的显式 Logger 由持有方管理，不能假定 LogManager 会自动发现未注册的实例；当前不提供单独的 shutdown() 接口。
+`logs/app` 是轮转模式的基础路径，实际文件类似 `logs/app.YYYYMMDD.0.log`。普通文件模式使用完整文件名。BuildLogger 通过 LogFlushFactory 准备输出、目录和文件，再创建 Logger 并启动 Worker。输出构造或线程启动失败均从 BuildLogger 报告。正常使用不要求手动调用 stop，也不再手工接 SetOutput/SetFlush 或启停 Worker。自动回收发生在最后一个 Logger 持有者释放时；局部 shared_ptr 离开作用域时若管理器或消息仍持有它，不会提前析构。创建的 Logger 均由 Manager 持有并统一关闭；Manager 提供可选的 `Shutdown()` 接口。
 
 LogFile 支持单参数普通模式、双参数轮转模式。输出层使用 FileFlush(filename) 或 RollFileFlush(basePath, rollSize)，后者继承前者，共用 writeAndFlush。FileFlush 的双参数构造为 protected；轮转输出使用 RollFileFlush。普通模式重开时追加已有内容，LogFile 的 `rollFile()` 抛出 `std::logic_error`；两种模式都会自动创建缺失的父目录，创建失败或路径被非目录占用时抛出 filesystem_error。LogFlushFactory 只创建输出对象。
 
@@ -349,7 +348,7 @@ Windows / MSVC / Debug / DLL：库构建成功，核心 147 项测试全部通�
 - **验收：** 验证单例、默认终端、命名注册与查找、拒绝空目标及重名、不同日志器写入独立、共享同一实例时重复停止、输出失败时仍关闭其余实例，以及重复关闭。
 - **交付与审核：** 审核 Manager 的对象接口、模块内生命周期及跨 DLL 边界，通过后再做 2.6。
 
-**2.5 实施结果（2026-11-10，实现及退出修复已提交，已通过验收）。** `LogManager::GetInstance()` 首次调用时创建单例和固定的默认终端日志器。默认目标可通过 `getDefaultLogger()` 查询，不提供替换接口。命名表由 `registerLogger(name, logger)` 写入，由 `getLogger(name)` 查询；默认目标不隐式注册为 `"default"`，同一个实例仍可另行注册到命名表。注册和查询复用 `AsyncLogger::Ptr`。注册空名称或空实例抛出 `std::invalid_argument`，重名抛出 `std::logic_error`。
+**2.5 实施结果（2026-11-10，实现及退出修复已提交，已通过验收）。** `LogManager::GetInstance()` 首次调用时创建单例和固定的默认终端日志器。默认目标可通过 `getDefaultLogger()` 查询，不提供替换接口。命名表由 `registerLogger(logger, name)` 写入，由 `getLogger(name)` 查询；默认目标不隐式注册为 `"default"`，同一个实例仍可另行注册到命名表。注册和查询复用 `AsyncLogger::Ptr`。注册空名称或空实例抛出 `std::invalid_argument`，重名抛出 `std::logic_error`。
 
 `LogManager::~LogManager()` 在锁外逐个停止默认日志器和命名表中的日志器，已删除单独的 shutdown() 及显式 atexit 注册逻辑。同一实例有多个名称时会重复调用 `stop()`。firstError 用于保存首个停止异常，让其余日志器仍有机会完成排空；全部停止后重抛，异常逃出析构函数会触发 std::terminate，不再仅打印通用错误后吞掉异常。调用方须在退出前结束生产者、临时消息及注册操作，并在收尾期间保持命名表不变。
 
