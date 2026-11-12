@@ -10,7 +10,7 @@ DLOG_NAMESPACE_BEGIN(dlog)
 Logger::Logger(std::shared_ptr<LogFlush> output, std::shared_ptr<ThreadPool> threadPool)
     : m_running(true),
       m_output(std::move(output)),
-      m_worker([output = m_output.get()](const LargeFixedBuffer &buffer)
+      m_worker([output = m_output.get()](const FlexibleBuffer &buffer)
                { output->writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
                std::move(threadPool)) {}
 

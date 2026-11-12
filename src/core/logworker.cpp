@@ -1,7 +1,6 @@
 #include "logworker.h"
 #include "threadpool.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -10,17 +9,15 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 LogWorker::LogWorker(OutputFunc output, std::shared_ptr<ThreadPool> threadPool)
-    : m_output(std::move(output)), m_threadPool(std::move(threadPool)), m_producerBuffer(std::make_unique<LargeFixedBuffer>())
+    : m_output(std::move(output)), m_threadPool(std::move(threadPool)), m_producerBuffer(std::make_unique<FlexibleBuffer>()), m_consumerBuffer(std::make_unique<FlexibleBuffer>())
 {
     if (!m_output) throw std::invalid_argument("LogWorker::constructor(): output must not be empty");
     if (!m_threadPool) throw std::invalid_argument("LogWorker::constructor(): thread pool must not be empty");
-
-    m_pendingBuffers.reserve(16);
 }
 
 void LogWorker::scheduleTaskLocked()
 {
-    if (m_scheduled || (m_pendingBuffers.empty() && 0 == m_producerBuffer->readableBytes())) return;
+    if (m_scheduled || 0 == m_producerBuffer->readableBytes()) return;
 
     // 状态与任务提交在同一把锁下协调，避免并发追加重复安排输出。
     m_scheduled = true;
@@ -51,30 +48,8 @@ void LogWorker::append(const char *data, size_t length)
 
     if (m_backgroundError) std::rethrow_exception(m_backgroundError);
 
-    // currentData 指向这条日志中“接下来要复制的位置”。
-    const char *currentData = data;
-    // remaining 是还没复制的字节数。
-    size_t remaining = length;
-
-    while (remaining > 0)
-    {
-        // chunkLength 取“待复制字节数”和“剩余空间”中较小的那个，保证这次不会写过缓冲区边界。
-        size_t chunkLength = std::min(remaining, m_producerBuffer->writableBytes());
-
-        // 单条日志可能大于一个 LargeFixedBuffer；分段按顺序入队，保证每次追加不超过 FixedBuffer 的剩余容量。
-        m_producerBuffer->append(currentData, chunkLength);
-        currentData += chunkLength;
-        remaining -= chunkLength;
-
-        // 如果本次追加导致缓冲区装满。
-        if (0 == m_producerBuffer->writableBytes())
-        {
-            // 先准备替换块，分配失败时仍保有当前生产者缓冲区。
-            auto nextBuffer = std::make_unique<LargeFixedBuffer>();
-            m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
-            m_producerBuffer = std::move(nextBuffer);
-        }
-    }
+    // 可增长缓冲区先保证本次追加所需空间，再复制完整数据，避免不同日志交错。
+    m_producerBuffer->append(data, length);
 
     // 非空追加后安排任务；已有任务时由该任务继续处理新数据。
     if (m_running) scheduleTaskLocked();
@@ -114,64 +89,46 @@ void LogWorker::stopAndWait()
     std::unique_lock<std::mutex> lock(m_mtx);
 
     m_running = false;
+
     // wait 期间释放 m_mtx，后台任务才能获取锁、处理尾部数据并结束。
-    m_cond.wait(lock, [this]
-                { return !m_scheduled; });
+    m_taskDoneCond.wait(lock, [this]
+                        { return !m_scheduled; });
 }
 
 void LogWorker::threadFunc()
 {
     try
     {
-        // replaceBuffer 用于替换前台生产者缓冲区；写完一批后，后台留出一块供下一轮复用。
-        BufferPtr replaceBuffer = std::make_unique<LargeFixedBuffer>();
-
-        // 后台在每批次中要写盘的缓冲区，实际过程中和前台 m_pendingBuffers 进行交换获得数据。
-        BufferVector buffersToWrite;
-        buffersToWrite.reserve(16);
+        // 双缓冲 m_producerBuffer 和 m_consumerBuffer 通过交换指针交接数据。假设两块缓冲区分别为 A 和 B。
+        // 1. 前台将日志追加到 A；此时 m_producerBuffer 指向 A，m_consumerBuffer 指向已清空的 B。
+        // 2. 后台持有 m_mtx，然后交换两个指针：m_consumerBuffer 指向有数据的 A，m_producerBuffer 指向空的 B。
+        // 3. 后台解锁并输出 A；与此同时，前台的 m_producerBuffer 为空了，可以持锁向 B 追加新日志，不会改动正在输出的 A。此时 m_scheduled 仍为 true，前台只追加数据，不会为同一个 Worker 重复提交任务。
+        // 4. A 输出完毕后清空。如果 B 有新日志，在进入下一轮：前台写入空的 A，后台输出 B。
+        // 5. 直到生产者缓冲区为空，就清除 m_scheduled 并结束任务；之后有新日志时再提交任务，不占用池线程等待。
+        // 因此下面的这套逻辑是 while(true) 和 if (0 == m_producerBuffer->readableBytes()) 退出循环，就是为了让前台可以合并日志请求到同一个任务中。
 
         while (true)
         {
             {
                 std::lock_guard<std::mutex> lock(m_mtx);
 
-                // 没有待写块和尾部数据时，在同一把锁下清除任务状态，避免漏掉后续追加。
-                if (m_pendingBuffers.empty() && 0 == m_producerBuffer->readableBytes())
+                // 没有待写数据时，结束任务。与 append() 使用同一把锁：若追加先拿锁，任务会看到新数据并继续；若任务先确认为空并清除标志，之后的追加会看到 m_scheduled == false，提交新任务。
+                if (0 == m_producerBuffer->readableBytes())
                 {
                     m_scheduled = false;
-                    m_cond.notify_all();
+                    m_taskDoneCond.notify_all();
                     return;
                 }
 
-                // 把未写满的生产者缓冲区也交给后台，并用 replaceBuffer 给前台替换。
-                if (m_producerBuffer->readableBytes() > 0)
-                {
-                    if (!replaceBuffer) replaceBuffer = std::make_unique<LargeFixedBuffer>();
-                    m_pendingBuffers.emplace_back(std::move(m_producerBuffer));
-                    m_producerBuffer = std::move(replaceBuffer);
-                }
-
-                // 把待处理队列交给后台本地批次。解锁后前台可以继续填充新的 m_pendingBuffers。
-                buffersToWrite.swap(m_pendingBuffers);
+                // 把生产者缓冲区交给后台，并将已清空的消费者缓冲区换给前台。
+                m_producerBuffer.swap(m_consumerBuffer);
             }
 
-            // 每块作为一个输出批次，在锁外完成写入和刷新，避免阻塞前台 append()。
-            for (auto &buffer : buffersToWrite)
-            {
-                if (buffer && buffer->readableBytes() > 0) m_output(*buffer);
-            }
+            // 在锁外输出当前批次，前台可以继续向另一块缓冲区追加日志。
+            m_output(*m_consumerBuffer);
 
-            // 本批次已写完，留下一块供下一轮替换前台缓冲区，其余释放，不额外维护缓冲池。
-            if (buffersToWrite.size() > 1) buffersToWrite.resize(1);
-
-            if (!replaceBuffer && !buffersToWrite.empty())
-            {
-                replaceBuffer = std::move(buffersToWrite.back());
-                buffersToWrite.pop_back();
-                replaceBuffer->clear();
-            }
-
-            buffersToWrite.clear();
+            // 本批次已写完，清空消费者缓冲区以供下一轮交换复用。
+            m_consumerBuffer->clear();
         }
     }
     catch (...)
@@ -184,10 +141,10 @@ void LogWorker::threadFunc()
         m_scheduled = false;
 
         // 已输出的前缀无法回滚，放弃剩余数据，避免重试造成重复写入。
-        m_pendingBuffers.clear();
         m_producerBuffer->clear();
+        m_consumerBuffer->clear();
 
-        m_cond.notify_all();
+        m_taskDoneCond.notify_all();
     }
 }
 
