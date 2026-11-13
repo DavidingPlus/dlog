@@ -7,6 +7,7 @@ bool DlogBenchReporter::ReportContext(const Context &)
 {
     GetOutputStream() << "\n基准测试配置：吞吐场景每次 " << m_records << " 条日志，多线程场景 " << m_threads << " 个生产者。\n"
                       << "吞吐量通常越高越好，耗时和延迟通常越低越好；结果受构建模式及系统负载影响。\n";
+
 #ifndef NDEBUG
     GetOutputStream() << "当前为 Debug 构建，适合检查功能；比较性能请使用 Release 构建。\n";
 #endif

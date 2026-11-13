@@ -39,6 +39,17 @@ int main(int argc, char **argv)
     size_t threads = 4;
     const char *format = std::getenv("BENCHMARK_FORMAT");
     bool nativeReporter = format && std::string(format) != "console";
+    const char *configuredOutput = std::getenv("BENCHMARK_OUT");
+    bool customOutput = configuredOutput && *configuredOutput;
+    const char *configuredOutputFormat = std::getenv("BENCHMARK_OUT_FORMAT");
+    std::string outputFormat = configuredOutputFormat && *configuredOutputFormat ? configuredOutputFormat : "json";
+    const char *listTests = std::getenv("BENCHMARK_LIST_TESTS");
+    bool listing = listTests && (std::string(listTests) == "true" || std::string(listTests) == "1");
+    std::filesystem::path resultDirectory;
+    std::filesystem::path resultFile;
+    std::string defaultOutputArg;
+    char defaultRepetitionsArg[] = "--benchmark_repetitions=5";
+    std::vector<char *> benchmarkArgs;
 
     try
     {
@@ -48,6 +59,10 @@ int main(int argc, char **argv)
         {
             std::string arg(argv[i]);
             if (arg.rfind("--benchmark_format=", 0) == 0) nativeReporter = arg.substr(19) != "console";
+            if (arg.rfind("--benchmark_out=", 0) == 0) customOutput = true;
+            if (arg.rfind("--benchmark_out_format=", 0) == 0) outputFormat = arg.substr(23);
+            if (arg == "--help" || arg == "-h" || arg == "--benchmark_list_tests" || arg == "--benchmark_list_tests=true" || arg == "--benchmark_list_tests=1") listing = true;
+            if (arg == "--benchmark_list_tests=false" || arg == "--benchmark_list_tests=0") listing = false;
             size_t *target = nullptr;
             size_t offset = 0;
             if (arg.rfind("--dlog-records=", 0) == 0)
@@ -76,15 +91,52 @@ int main(int argc, char **argv)
         }
         argc = kept;
         argv[argc] = nullptr;
+
+        if (!customOutput && !listing)
+        {
+            if (outputFormat != "json" && outputFormat != "csv" && outputFormat != "console") throw std::invalid_argument("不支持的基准输出格式：" + outputFormat);
+
+            // 稳定时钟计数不是日期；后缀从 0 开始，同名时递增以避免覆盖历史结果。
+            auto base = dlog::FileUtil::executableDirectory() / "bench-results";
+            std::filesystem::create_directories(base);
+            auto stamp = Clock::now().time_since_epoch().count();
+
+            for (size_t attempt = 0; attempt < 100; ++attempt)
+            {
+                auto candidate = base / ("run-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+                if (std::filesystem::create_directory(candidate))
+                {
+                    resultDirectory = std::move(candidate);
+                    break;
+                }
+            }
+
+            if (resultDirectory.empty()) throw std::runtime_error("无法创建不重名的结果目录");
+            resultFile = resultDirectory / (outputFormat == "json" ? "results.json" : outputFormat == "csv" ? "results.csv"
+                                                                                                            : "results.txt");
+            defaultOutputArg = "--benchmark_out=" + resultFile.string();
+        }
+
+        benchmarkArgs.assign(argv, argv + argc);
+        // 默认值放在用户参数之前，让命令行和环境变量保留原有的覆盖能力。
+        if (!std::getenv("BENCHMARK_REPETITIONS")) benchmarkArgs.insert(benchmarkArgs.begin() + 1, defaultRepetitionsArg);
+        if (!defaultOutputArg.empty()) benchmarkArgs.push_back(defaultOutputArg.data());
+        benchmarkArgs.push_back(nullptr);
+        argc = static_cast<int>(benchmarkArgs.size() - 1);
+        argv = benchmarkArgs.data();
     }
     catch (const std::exception &error)
     {
-        std::cerr << "基准测试参数错误：" << error.what() << '\n';
+        std::cerr << "基准测试初始化失败：" << error.what() << '\n';
         return EXIT_FAILURE;
     }
 
     benchmark::Initialize(&argc, argv);
-    if (benchmark::ReportUnrecognizedArguments(argc, argv)) return EXIT_FAILURE;
+    if (benchmark::ReportUnrecognizedArguments(argc, argv))
+    {
+        if (!resultDirectory.empty()) std::filesystem::remove(resultDirectory);
+        return EXIT_FAILURE;
+    }
 
     // 测试失败时保留目录；仅在全部测试及关闭成功后删除本次创建的文件。
     std::filesystem::path directory;
@@ -106,7 +158,7 @@ int main(int argc, char **argv)
     auto nextName = [&]
     { return std::to_string(++index); };
 
-    // 只有文件场景真正运行时才创建目录，避免筛选其他场景也产生空目录。
+    // 只有文件场景运行时才创建目录；命名方式与结果目录相同。
     auto makeDirectory = [&]
     {
         if (!directory.empty()) return;
@@ -245,13 +297,27 @@ int main(int argc, char **argv)
         benchmark::AddCustomContext("dlog_threads", std::to_string(threads));
 
         DlogBenchReporter reporter(records, threads);
+        size_t matched = 0;
         if (nativeReporter)
         {
-            benchmark::RunSpecifiedBenchmarks();
+            matched = benchmark::RunSpecifiedBenchmarks();
         }
         else
         {
-            benchmark::RunSpecifiedBenchmarks(&reporter);
+            matched = benchmark::RunSpecifiedBenchmarks(&reporter);
+        }
+
+        if (!resultFile.empty() && matched)
+        {
+            if (!std::filesystem::is_regular_file(resultFile)) throw std::runtime_error("基准测试结果文件未生成：" + resultFile.string());
+            std::cerr << "\n原始基准数据已保存：" << resultFile.string() << '\n';
+        }
+        else if (!resultDirectory.empty() && !matched)
+        {
+            // 框架可能预先创建空文件；没有匹配场景时清理本次结果目录。
+            std::error_code ignored;
+            std::filesystem::remove(resultFile, ignored);
+            std::filesystem::remove(resultDirectory, ignored);
         }
 
         // 先停止池中任务，再释放文件句柄，Windows 才能删除这些文件。
