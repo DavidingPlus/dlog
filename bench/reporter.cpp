@@ -5,7 +5,7 @@
 
 bool DlogBenchReporter::ReportContext(const Context &)
 {
-    GetOutputStream() << "\n基准测试配置：每个场景 " << m_records << " 条日志，多线程场景 " << m_threads << " 个生产者。\n"
+    GetOutputStream() << "\n基准测试配置：吞吐场景每次 " << m_records << " 条日志，多线程场景 " << m_threads << " 个生产者。\n"
                       << "吞吐量通常越高越好，耗时和延迟通常越低越好；结果受构建模式及系统负载影响。\n";
 #ifndef NDEBUG
     GetOutputStream() << "当前为 Debug 构建，适合检查功能；比较性能请使用 Release 构建。\n";
@@ -80,18 +80,18 @@ void DlogBenchReporter::ReportRuns(const std::vector<Run> &runs)
         print("records", "日志记录", 1, " 条");
         print("records_per_logger", "每个日志器的记录", 1, " 条");
         print("output_bytes", "输出数据", 1, " 字节");
-        print("submit_records_per_second", "前台提交速度", 1, " 条/秒");
-        print("total_records_per_second", "含后台排空的速度", 1, " 条/秒");
-        print("drain_seconds", "提交后等待排空", 1000, " 毫秒");
+        print("submit_records_per_second", "前台提交吞吐量", 1, " 条/秒");
+        print("total_records_per_second", "含后台排空的总吞吐量", 1, " 条/秒");
+        print("drain_seconds", "提交后排空耗时", 1000, " 毫秒");
         print("batches", "后台输出批次", 1, " 次");
         print("samples", "延迟样本", 1, " 条");
         print("mean_ms", "平均回调延迟", 1, " 毫秒");
         print("p95_ms", "P95 回调延迟（95% 的样本不超过此值）", 1, " 毫秒");
         print("max_ms", "最大回调延迟", 1, " 毫秒");
-        print("submit_seconds", "两种日志全部提交", 1000, " 毫秒");
-        print("fast_seconds", "普通输出收到全部记录", 1000, " 毫秒");
-        print("slow_seconds", "慢输出收到全部记录", 1000, " 毫秒");
-        if (!cv && run.counters.count("records_per_logger")) out << "  两个日志器全部排空：" << std::setprecision(3) << run.GetAdjustedRealTime() << " 毫秒\n";
+        print("submit_seconds", "两种日志全部提交耗时", 1000, " 毫秒");
+        print("fast_seconds", "普通输出收全记录耗时（从开始计）", 1000, " 毫秒");
+        print("slow_seconds", "慢输出收全记录耗时（从开始计）", 1000, " 毫秒");
+        if (!cv && run.counters.count("records_per_logger")) out << "  两个日志器全部排空总耗时：" << std::setprecision(3) << run.GetAdjustedRealTime() << " 毫秒\n";
         print("fast_batches", "普通输出批次", 1, " 次");
         print("slow_batches", "慢输出批次", 1, " 次");
     }
