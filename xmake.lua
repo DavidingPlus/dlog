@@ -65,6 +65,12 @@ option("with_gtest")
     set_description("Enable GoogleTest-based unit tests.")
 option_end()
 
+option("with_bench")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable Google Benchmark performance tests.")
+option_end()
+
 option("install_in_place")
     set_default(true)
     set_showmenu(true)
@@ -183,8 +189,11 @@ target_end()
 
 
 includes("snippet")
-includes("bench")
 
 if get_config("with_gtest") then
     includes("test")
+end
+
+if get_config("with_bench") then
+    includes("bench")
 end

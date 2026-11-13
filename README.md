@@ -33,15 +33,19 @@ Windows 下使用 `--build_shared=y` 构建 DLL，使用 `--build_shared=n` 构�
 
 ## 性能基准测试
 
-基准程序使用公开日志宏和异步 Logger，分别测试计数型自定义输出和普通文件输出，各运行一次单生产者和指定数量的多生产者。它不参与默认构建或单元测试，也不设置性能通过阈值。建议在 Release 模式运行：
+基准程序使用 Google Benchmark 和公开异步 Logger 接口，不参与默认构建或单元测试，也不设置性能通过阈值。启用后建议在 Release 模式运行：
 
 ```sh
-xmake f -m release
+xmake f -m release --with_bench=y
 xmake build -y dlog-bench
-xmake run dlog-bench 100000 4 5
+xmake run dlog-bench --dlog-records=100000 --dlog-threads=4 --benchmark_repetitions=5
 ```
 
-三个参数分别是每个吞吐场景的总记录数、多生产者线程数和重复次数，均为正整数；省略时分别为 100000、4 和 5。程序输出每次提交与排空耗时及吞吐量，并汇总各场景吞吐量中位数。额外执行 100 次低频回调延迟采样、每批等待 1 毫秒的慢输出测试，以及慢、快两个 Logger 共享线程池的测试；额外场景各运行一次，慢输出和共享池场景使用指定记录数。低频延迟从提交前计时到后台回调收到数据，包含前台格式化和调度，不代表写盘或持久化延迟。
+`--dlog-records` 和 `--dlog-threads` 分别指定每个吞吐场景的总记录数和多生产者线程数，默认 100000 和 4，均为正整数。`--benchmark_repetitions` 控制各场景的重复次数，框架默认一次；多次运行时输出均值、中位数等统计。还可通过 `--benchmark_list_tests=true` 查看场景，使用 `--benchmark_filter=file` 等英文前缀筛选。
+
+每项吞吐测试的一次迭代对应一个完整批次：`Time` 是包括后台排空的批次耗时，`submit_records_per_second` 是提交吞吐量，`total_records_per_second` 是含排空的吞吐量，`drain_seconds` 是提交后等待排空的秒数；`records`、`output_bytes` 和 `batches` 分别是记录数、字节数和后台批次数。低频场景逐条采样 100 次，`mean_ms`、`p95_ms`、`max_ms` 是从提交前到后台回调收到数据的延迟，不代表落盘或持久化延迟。慢输出每批等待 1 毫秒；共享池场景中 `fast_seconds` / `slow_seconds` 是两个 Logger 从开始到各自收到全部记录的秒数。控制台表头和计数器名由框架以英文显示。
+
+可使用 `--benchmark_out=<绝对路径> --benchmark_out_format=json` 保存结构化结果；`xmake run` 的工作目录可能是可执行文件目录，使用绝对路径可避免混淆。JSON 是额外结果文件，不属于自动清理范围。Google Benchmark 的 `Time` 是手动上报的耗时，`CPU` 列不代表全部工作线程的 CPU 用量。
 
 程序在计时结束后检查输出的换行记录数，并报告字节数；这不是逐条内容、顺序或重复记录的完整性验证。文件场景在可执行文件所在目录下新建独立子目录，路径在运行时打印；全部场景成功后自动清理本次文件和目录，测试失败时保留供排查。清理失败时会报告目录，已删除的文件不会恢复。
 

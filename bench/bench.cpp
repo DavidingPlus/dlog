@@ -1,7 +1,6 @@
 #include "bench.h"
 
 #include <fstream>
-#include <iostream>
 #include <numeric>
 #include <stdexcept>
 
@@ -67,7 +66,7 @@ Rates runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, si
     logger->stop();
     auto drained = Clock::now();
 
-    // stop() 返回后后台不再写入，此时再统计数据不会影响计时。
+    // stop() 返回后后台不再写入，此时再统计数据不会影响计时；换行数不能证明内容和顺序正确。
     size_t actualRecords = 0;
     size_t actualBytes = 0;
     if (counts)
@@ -92,33 +91,15 @@ Rates runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, si
     }
     if (actualRecords != records) throw std::runtime_error(name + "：输出记录数与预期不一致");
 
-    // 提交吞吐量反映前台写入速度；总吞吐量还包括等待后台排空的时间。
+    // 例如 100 条用 2 秒提交、3 秒排空：提交 50 条/秒，含排空约 33.3 条/秒。
     double submitSeconds = std::chrono::duration<double>(submitted - begin).count();
     double totalSeconds = std::chrono::duration<double>(drained - begin).count();
 
-    std::cout << "\n测试场景：" << name << "\n"
-              << "  生产者线程数：" << threadCount << "\n"
-              << "  输出记录数：" << actualRecords << " 条\n"
-              << "  输出字节数：" << actualBytes << " 字节\n"
-              << "  提交耗时：" << submitSeconds << " 秒\n"
-              << "  总耗时（含排空）：" << totalSeconds << " 秒\n"
-              << "  提交后等待排空：" << totalSeconds - submitSeconds << " 秒\n"
-              << "  提交吞吐量：" << records / submitSeconds << " 条/秒\n"
-              << "  总吞吐量（含排空）：" << records / totalSeconds << " 条/秒\n";
 
-    if (counts) std::cout << "  后台输出批次数：" << counts->batches << "\n";
-    return {records / submitSeconds, records / totalSeconds};
+    return {records / submitSeconds, records / totalSeconds, totalSeconds, totalSeconds - submitSeconds, actualBytes};
 }
 
-double median(std::vector<double> values)
-{
-    // 排序后取中间值；偶数个取中间两个数的平均值，例如 2、4、6、8 得到 5。
-    std::sort(values.begin(), values.end());
-    size_t mid = values.size() / 2;
-    return values.size() % 2 ? values[mid] : values[mid - 1] / 2 + values[mid] / 2;
-}
-
-void runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<LatencyState> &state, size_t count)
+LatencyResult runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<LatencyState> &state, size_t count)
 {
     for (size_t i = 0; i < count; ++i)
     {
@@ -144,15 +125,14 @@ void runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<Lat
 
     std::sort(samples.begin(), samples.end());
 
+
     // P95 使用向上取整的排名：100 个样本取排序后的第 95 个，即下标 94。
-    std::cout << "\n低频输出到回调的延迟：样本=" << count
-              << "，平均=" << std::accumulate(samples.begin(), samples.end(), 0.0) / count
-              << " 毫秒，P95=" << samples[(count * 95 + 99) / 100 - 1]
-              << " 毫秒，最大=" << samples.back() << " 毫秒\n";
+    return {std::accumulate(samples.begin(), samples.end(), 0.0) / count,
+            samples[(count * 95 + 99) / 100 - 1], samples.back()};
 }
 
-void runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::SharedPtr &fast,
-                   const std::shared_ptr<Counts> &slowCounts, const std::shared_ptr<Counts> &fastCounts, size_t records)
+SharedResult runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::SharedPtr &fast,
+                           const std::shared_ptr<Counts> &slowCounts, const std::shared_ptr<Counts> &fastCounts, size_t records)
 {
     auto begin = Clock::now();
 
@@ -172,10 +152,9 @@ void runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::Shar
     auto allDone = Clock::now();
     if (slowCounts->records != records || fastCounts->records != records) throw std::runtime_error("共享线程池测试记录数不符");
 
-    std::cout << "\n共享线程池（两个日志器各 " << records << " 条，慢输出每批等待 1 毫秒）：\n"
-              << "  提交耗时：" << std::chrono::duration<double>(submitted - begin).count() << " 秒\n"
-              << "  普通日志器收到全部记录（从开始计）：" << std::chrono::duration<double>(fastCounts->completed - begin).count() << " 秒\n"
-              << "  慢日志器收到全部记录（从开始计）：" << std::chrono::duration<double>(slowCounts->completed - begin).count() << " 秒\n"
-              << "  两者全部排空耗时：" << std::chrono::duration<double>(allDone - begin).count() << " 秒\n"
-              << "  慢输出批次数：" << slowCounts->batches << "，普通输出批次数：" << fastCounts->batches << '\n';
+
+    return {std::chrono::duration<double>(submitted - begin).count(),
+            std::chrono::duration<double>(fastCounts->completed - begin).count(),
+            std::chrono::duration<double>(slowCounts->completed - begin).count(),
+            std::chrono::duration<double>(allDone - begin).count()};
 }

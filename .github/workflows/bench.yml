@@ -44,7 +44,7 @@ jobs:
     - name: Configure XMake
       run: |
         touch snippet/SkipList/.buildme
-        xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} -y
+        xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} --with_bench=yes -y
 
     - name: Build Bench
       working-directory: ${{github.workspace}}

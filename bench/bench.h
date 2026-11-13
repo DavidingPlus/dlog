@@ -88,6 +88,29 @@ struct Rates
 
     // 每秒完成记录数，计时包含 stop() 排空。
     double total;
+
+    // 从生产者开始到 stop() 返回的批次总秒数。
+    double seconds;
+
+    // 生产者结束后，等待后台排空所花的秒数。
+    double drainSeconds;
+
+    // 校验时实际收到或从文件中读取的字节数。
+    size_t bytes;
+};
+
+
+struct LatencyResult
+{
+    // 单条日志从提交前到后台回调收到数据的延迟，单位均为毫秒。
+    double meanMs, p95Ms, maxMs;
+};
+
+
+struct SharedResult
+{
+    // 从共同起点计算：提交结束、普通/慢回调收全记录、两个 Logger 排空，单位均为秒。
+    double submitSeconds, fastSeconds, slowSeconds, totalSeconds;
 };
 
 
@@ -130,13 +153,10 @@ private:
 // counts 非空时校验计数输出，否则读取 file；调用前需传入已启动且未停止的 Logger。
 Rates runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, size_t records, size_t threadCount, const std::shared_ptr<Counts> &counts, const std::filesystem::path &file = {});
 
-// values 必须非空，按值传递以免改变调用方数据。
-double median(std::vector<double> values);
-
 // count 必须大于零。
-void runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<LatencyState> &state, size_t count);
+LatencyResult runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<LatencyState> &state, size_t count);
 
-void runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::SharedPtr &fast, const std::shared_ptr<Counts> &slowCounts, const std::shared_ptr<Counts> &fastCounts, size_t records);
+SharedResult runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::SharedPtr &fast, const std::shared_ptr<Counts> &slowCounts, const std::shared_ptr<Counts> &fastCounts, size_t records);
 
 
 #endif
