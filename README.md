@@ -193,26 +193,36 @@ logger->stop();
 
 ## 独立 Worker
 
-Worker 不格式化日志、不保存文件配置，输出方式由回调决定。构造不启动线程；可以先追加数据，再启动和停止：
+Worker 不格式化日志，输出方式由 `LogFlush` 决定。构造不启动输出任务；可以先追加数据，再启动和停止：
 
 ```cpp
+#include <dlog/core/logflush.h>
 #include <dlog/core/logworker.h>
 #include <dlog/utils/threadpool.h>
 #include <memory>
 #include <string>
 
-auto pool = std::make_shared<dlog::ThreadPool>(2);
-std::string received;
-dlog::LogWorker worker([&received](const dlog::FlexibleBuffer &buffer) {
-    received.append(buffer.readableBegin(), buffer.readableBytes());
-}, pool);
-worker.append("hello\n", 6);
-worker.start();
-worker.stop();
-// stop 完成后读取 received，内容为 "hello\n"。
+class StringFlush : public dlog::LogFlush {
+public:
+    void write(const char *data, size_t len) override { received.append(data, len); }
+    void flush() override {}
+
+    std::string received;
+};
+
+int main()
+{
+    auto pool = std::make_shared<dlog::ThreadPool>(2);
+    auto output = std::make_shared<StringFlush>();
+    dlog::LogWorker worker(output, pool);
+    worker.append("hello\n", 6);
+    worker.start();
+    worker.stop();
+    // stop 完成后读取 output->received，内容为 "hello\n"。
+}
 ```
 
-回调在后台、队列锁外执行，接收 `const FlexibleBuffer &`，通过 `readableBegin()` 和 `readableBytes()` 读取本批字节。缓冲区的清空和复用由 Worker 管理，引用及数据指针仅在本次回调期间有效；回调及捕获对象需活到 stop 完成后，不得从回调中启停或销毁 Worker。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。有数据时安排线程池任务，输出期间可继续追加；线程池由调用方提供并管理。
+`LogFlush::write()` 和 `flush()` 在后台、Worker 的生产者锁外执行；每个批次写入后刷新一次。传给 `write()` 的数据指针仅在本次调用期间有效；输出目标引用的外部对象须活到 stop 完成后，不得从输出操作中启停或销毁 Worker。Worker 持有输出目标和线程池的共享所有权；示例只在 `stop()` 完成后读取 `received`。多个生产者可并发追加，启停操作由调用方串行执行。停止前先结束生产者；正常停止后允许缓存新数据并再次启动。有数据时安排线程池任务，输出期间可继续追加。
 
 后台抛出异常时，Worker 停止消费并放弃剩余待写数据。显式 `stop()` 等任务结束后重抛原异常，析构只负责回收。失败后的非空 `append()` 和 `start()` 也会重抛该异常。未启动时 `stop()` 不输出缓存数据。
 
