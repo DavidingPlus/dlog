@@ -1,0 +1,34 @@
+name: Show MSVC versions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  show-msvc:
+    runs-on: windows-2025
+
+    steps:
+    - name: Show Visual Studio and MSVC versions
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $installations = & $vswhere -all -products * -format json | ConvertFrom-Json
+        $installations | ForEach-Object {
+          Write-Host "Visual Studio: $($_.displayName), version $($_.installationVersion)"
+          Write-Host ""
+          $toolsets = Join-Path $_.installationPath "VC\Tools\MSVC"
+          if (Test-Path $toolsets) {
+            Get-ChildItem $toolsets -Directory | ForEach-Object {
+              Write-Host "MSVC toolset: $($_.FullName)"
+              $compiler = Join-Path $_.FullName "bin\HostX64\x64\cl.exe"
+              if (Test-Path $compiler) {
+                Write-Host "Compiler: $compiler"
+                & cmd.exe /c "`"$compiler`" 2>&1" | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "x64 compiler not found"
+              }
+              Write-Host ""
+            }
+          }
+        }
+        $global:LASTEXITCODE = 0

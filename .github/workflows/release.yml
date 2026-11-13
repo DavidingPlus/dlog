@@ -16,6 +16,8 @@ jobs:
     strategy:
       matrix:
         include:
+          # windows 侧固定 windows-2025，避免 windows-latest 切换镜像时改变构建环境。该镜像提供 v142 工具集。使用 VS 2019 的 MSVC 14.29 构建预编译包，让较新的 MSVC 工具集也能链接，避免较新库无法被旧链接器消费。
+
           # Windows MD shared
           - os: windows
             arch: x86_64
@@ -23,7 +25,9 @@ jobs:
             xmake-arch: x64
             runtime: MD
             shared: true
-            runs-on: windows-latest
+            runs-on: windows-2025
+            vs: 2026
+            vs-toolset: "14.29"
 
           # Windows MD static
           - os: windows
@@ -32,7 +36,9 @@ jobs:
             xmake-arch: x64
             runtime: MD
             shared: false
-            runs-on: windows-latest
+            runs-on: windows-2025
+            vs: 2026
+            vs-toolset: "14.29"
 
           # Windows MDd shared
           - os: windows
@@ -41,7 +47,9 @@ jobs:
             xmake-arch: x64
             runtime: MDd
             shared: true
-            runs-on: windows-latest
+            runs-on: windows-2025
+            vs: 2026
+            vs-toolset: "14.29"
 
           # Windows MDd static
           - os: windows
@@ -50,7 +58,9 @@ jobs:
             xmake-arch: x64
             runtime: MDd
             shared: false
-            runs-on: windows-latest
+            runs-on: windows-2025
+            vs: 2026
+            vs-toolset: "14.29"
 
           # Linux x86_64 shared
           - os: ubuntu
@@ -104,13 +114,17 @@ jobs:
       run: |
         args="-m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }}"
 
+        if [ "${{ matrix.os }}" = "windows" ]; then
+            args="$args --vs=${{ matrix.vs }} --vs_toolset=${{ matrix.vs-toolset }}"
+        fi
+
         if [ -n "${{ matrix.runtime }}" ]; then
             args="$args --runtimes=${{ matrix.runtime }}"
         fi
 
         args="$args --build_shared=${{ matrix.shared }}"
 
-        xmake f $args -y
+        xmake f $args -v -y
 
     - name: Read package name
       shell: bash
@@ -128,7 +142,7 @@ jobs:
 
     - name: Build Targets
       working-directory: ${{github.workspace}}
-      run: xmake build
+      run: xmake build -v
 
     # 使用 xmake 原生 package 机制生成编译完成的二进制包。
     # build/packages/
