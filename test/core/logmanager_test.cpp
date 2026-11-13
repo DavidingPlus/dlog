@@ -32,9 +32,10 @@ namespace
     class RecordingFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         explicit RecordingFlush(std::string &text) : m_text(text) {}
-        void writeAndFlush(const char *data, size_t len) override { m_text.append(data, len); }
+        void write(const char *data, size_t len) override { m_text.append(data, len); }
 
     private:
 
@@ -44,18 +45,20 @@ namespace
     class DiscardFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
-        void writeAndFlush(const char *, size_t) override {}
+        void write(const char *, size_t) override {}
     };
 
     class BlockingFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         BlockingFlush(std::string &text, std::promise<void> &started, std::shared_future<void> release)
             : m_text(text), m_started(started), m_release(std::move(release)) {}
 
-        void writeAndFlush(const char *data, size_t len) override
+        void write(const char *data, size_t len) override
         {
             m_started.set_value();
             m_release.wait();
@@ -76,16 +79,18 @@ namespace
     class DiagnosticFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
-        void writeAndFlush(const char *, size_t) override { throw std::runtime_error("output diagnostic"); }
+        void write(const char *, size_t) override { throw std::runtime_error("output diagnostic"); }
     };
 
     class FailingFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         explicit FailingFlush(std::atomic_int &calls) : m_calls(calls) {}
-        void writeAndFlush(const char *, size_t) override
+        void write(const char *, size_t) override
         {
             ++m_calls;
             throw OutputError{};
@@ -574,8 +579,9 @@ TEST(LogManagerTest, FailedOutputConstructionDoesNotReserveName)
     class InvalidFlush : public LogFlush
     {
     public:
+        void flush() override {}
         InvalidFlush() { throw std::runtime_error("output construction failed"); }
-        void writeAndFlush(const char *, size_t) override {}
+        void write(const char *, size_t) override {}
     };
     auto &manager = LogManager::GetInstance();
     EXPECT_THROW(manager.buildLogger<InvalidFlush>("retry"), std::runtime_error);

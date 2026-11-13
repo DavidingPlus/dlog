@@ -10,7 +10,7 @@
 2. `LogManager` 建立 Logger 的共享所有权后启动 Worker，成功后才返回 Logger；构造或启动失败时由已建立的所有权回收资源。`Logger::message()` 从 Worker 持有的输出目标读取颜色模式，为每条消息创建 `LogMessage` 并绑定提交回调。
 3. `LogMessage` 在自己的 `LogStream` 中构造前缀和正文；析构时追加结束内容，调用接收 `const LogStream &` 的回调。回调捕获 Logger 的共享引用，检查状态并将流同步交给 Worker。
 4. Worker 持锁把流的有效字节复制到生产者缓冲区，按需安排线程池任务；流及其数据只在回调执行期间借用，不能保存其引用或指针。
-5. 后台任务持锁交换生产者与消费者缓冲区，再在锁外调用 Worker 持有的 `LogFlush::writeAndFlush()` 输出整个批次，完成后清空并复用缓冲区。
+5. 后台任务持锁交换生产者与消费者缓冲区，再在锁外调用 Worker 持有的 `LogFlush::write()` 输出整个批次，调用 `flush()` 刷新后清空并复用缓冲区。
 
 `LogMessage` 的回调表示单条记录的提交入口；它不等于已经写入目标。`LogFlush` 是实际刷写的统一入口，一批数据可能包含多条记录。`Logger` 负责协调，不单独保存输出目标；它利用 Worker 已声明的友元关系读取输出目标的颜色模式。
 
@@ -20,7 +20,8 @@
 - `LogWorker` 构造时接收非空 `LogFlush` 和线程池，后台任务通过该目标输出。Worker 销毁前等待任务结束，目标在此期间保持存活。
 - `Logger` 独占持有非空 `LogWorker`；Worker 含互斥锁，不能直接按值转移，因此使用 `std::unique_ptr`，多一次动态分配。Manager 负责组装，Logger 负责协调提交和停止。
 - `LogWorker` 接收 `LogStream` 并复制有效字节；原字节追加接口可继续用于直接调用，以保留既有调用能力和边界语义。单次追加仍持锁，记录不会交错。
-- `Logger::message()`、日志宏和 `LogFlush::writeAndFlush(data, len)` 保持现有使用方式；最后一个接口接收的是批次字节而非单条 LogStream。
+- `Logger::message()` 和日志宏保持现有使用方式；`LogFlush` 的 `write(data, len)` 与 `flush()` 分离，Worker 每个消费者批次写入后刷新一次。
+- `write()` 不主动刷新，`flush()` 可单独调用；写入或刷新失败均沿用 Worker 的后台错误处理。多个 Worker 共享输出目标时，写入和刷新之间可能交错，不承诺跨 Worker 的批次原子性。
 - 调用方仍需在停止前结束生产者和临时消息，不能从输出操作中停止或销毁同一 Worker。后台异常仍由 Worker 保存、停止后报告；已写入部分无法回滚。
 - `LogMessage`、`LogWorker` 是导出类，回调类型和构造接口的修改会影响直接调用者及二进制兼容性，需同步迁移并重新编译。
 

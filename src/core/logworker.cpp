@@ -133,7 +133,8 @@ void LogWorker::threadFunc()
             }
 
             // 在锁外输出当前批次，前台可以继续向另一块缓冲区追加日志。
-            m_logFlush->writeAndFlush(m_consumerBuffer->readableBegin(), m_consumerBuffer->readableBytes());
+            m_logFlush->write(m_consumerBuffer->readableBegin(), m_consumerBuffer->readableBytes());
+            m_logFlush->flush();
 
             // 本批次已写完，清空消费者缓冲区以供下一轮交换复用。
             m_consumerBuffer->clear();

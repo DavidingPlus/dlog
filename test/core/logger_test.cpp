@@ -31,9 +31,10 @@ namespace
     class RecordingFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         explicit RecordingFlush(std::string &text) : m_text(text) {}
-        void writeAndFlush(const char *data, size_t size) override { m_text.append(data, size); }
+        void write(const char *data, size_t size) override { m_text.append(data, size); }
 
     private:
 
@@ -315,11 +316,12 @@ namespace
     class TrackedFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         TrackedFlush(int &constructions, int &destructions, std::unique_ptr<int> value)
             : m_destructions(destructions), m_value(std::move(value)) { ++constructions; }
         ~TrackedFlush() override { ++m_destructions; }
-        void writeAndFlush(const char *, size_t) override {}
+        void write(const char *, size_t) override {}
 
     private:
 
@@ -502,9 +504,10 @@ TEST(LoggerFailureTest, StopReportsBackgroundErrorAfterJoining)
             class FailingFlush : public LogFlush
             {
             public:
+                void flush() override {}
 
                 explicit FailingFlush(int &calls) : m_calls(calls) {}
-                void writeAndFlush(const char *, size_t) override
+                void write(const char *, size_t) override
                 {
                     ++m_calls;
                     throw std::runtime_error("output failed");
@@ -557,9 +560,10 @@ TEST(LoggerMessageTest, CustomOutputCanEnableLevelColor)
     class ColoredFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         explicit ColoredFlush(std::string &text) : LogFlush(LogLevelColorMode::ON), m_text(text) {}
-        void writeAndFlush(const char *data, size_t len) override { m_text.append(data, len); }
+        void write(const char *data, size_t len) override { m_text.append(data, len); }
 
     private:
 

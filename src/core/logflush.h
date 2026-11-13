@@ -24,8 +24,9 @@ public:
 
     LogLevelColorMode colorMode() const { return m_colorMode; }
 
-    // 写入并刷新；len 为 0 时不操作。
-    virtual void writeAndFlush(const char *data, size_t len) = 0;
+    virtual void write(const char *data, size_t len) = 0;
+
+    virtual void flush() = 0;
 
 
 protected:
@@ -46,7 +47,9 @@ public:
 
     StdoutFlush() : LogFlush(LogLevelColorMode::ON) {}
 
-    virtual void writeAndFlush(const char *data, size_t len) override;
+    void write(const char *data, size_t len) override;
+
+    void flush() override;
 };
 
 
@@ -59,7 +62,9 @@ public:
 
     virtual ~FileFlush() override = default;
 
-    virtual void writeAndFlush(const char *data, size_t len) override;
+    void write(const char *data, size_t len) override;
+
+    void flush() override { m_file->flush(); }
 
 
 protected:

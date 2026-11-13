@@ -69,9 +69,9 @@ TEST(StdoutFlushTest, WritesCompleteBinaryDataAndRespectsExplicitLength)
     const char tail[] = {'t', 'a', 'i', 'l', '!'};
 
     testing::internal::CaptureStdout();
-    EXPECT_NO_THROW(target.writeAndFlush("prefix|", 7));
-    EXPECT_NO_THROW(target.writeAndFlush(payload.data(), payload.size()));
-    EXPECT_NO_THROW(target.writeAndFlush(tail, 4));
+    EXPECT_NO_THROW(target.write("prefix|", 7));
+    EXPECT_NO_THROW(target.write(payload.data(), payload.size()));
+    EXPECT_NO_THROW(target.write(tail, 4));
     const std::string actual = testing::internal::GetCapturedStdout();
 
     EXPECT_EQ(actual, "prefix|" + payload + "tail");
@@ -82,8 +82,8 @@ TEST(StdoutFlushTest, EmptyWritesProduceNoOutput)
     StdoutFlush logFlush;
 
     testing::internal::CaptureStdout();
-    EXPECT_NO_THROW(logFlush.writeAndFlush(nullptr, 0));
-    EXPECT_NO_THROW(logFlush.writeAndFlush("ignored", 0));
+    EXPECT_NO_THROW(logFlush.write(nullptr, 0));
+    EXPECT_NO_THROW(logFlush.write("ignored", 0));
     const std::string actual = testing::internal::GetCapturedStdout();
 
     EXPECT_TRUE(actual.empty());
@@ -93,7 +93,7 @@ TEST(StdoutFlushTest, RejectsNullDataWithPositiveLength)
 {
     StdoutFlush logFlush;
 
-    EXPECT_THROW(logFlush.writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_THROW(logFlush.write(nullptr, 1), std::invalid_argument);
 }
 
 TEST(StdoutFlushTest, RejectsLengthThatCannotBeRepresentedByStreamsize)
@@ -103,7 +103,7 @@ TEST(StdoutFlushTest, RejectsLengthThatCannotBeRepresentedByStreamsize)
 
     StdoutFlush logFlush;
     const char data = 'x';
-    EXPECT_THROW(logFlush.writeAndFlush(&data, maxLength + 1), std::length_error);
+    EXPECT_THROW(logFlush.write(&data, maxLength + 1), std::length_error);
 }
 
 TEST(StdoutFlushTest, ReportsFailedStreamState)
@@ -112,13 +112,14 @@ TEST(StdoutFlushTest, ReportsFailedStreamState)
     const auto oldState = std::cout.rdstate();
     std::cout.setstate(std::ios::badbit);
 
-    EXPECT_THROW(logFlush.writeAndFlush("x", 1), std::runtime_error);
-    EXPECT_NO_THROW(logFlush.writeAndFlush(nullptr, 0));
+    EXPECT_THROW(logFlush.write("x", 1), std::runtime_error);
+    EXPECT_THROW(logFlush.flush(), std::runtime_error);
+    EXPECT_NO_THROW(logFlush.write(nullptr, 0));
 
     std::cout.clear(oldState);
 }
 
-TEST(StdoutFlushTest, FlushesNonemptyWritesAndIgnoresEmptyWrites)
+TEST(StdoutFlushTest, WritesDoNotFlushUntilExplicitlyRequested)
 {
     class CountingBuffer : public std::stringbuf
     {
@@ -134,9 +135,11 @@ TEST(StdoutFlushTest, FlushesNonemptyWritesAndIgnoresEmptyWrites)
 
     StdoutFlush logFlush;
     auto *oldBuffer = std::cout.rdbuf(&buffer);
-    EXPECT_NO_THROW(logFlush.writeAndFlush("data", 4));
-    EXPECT_NO_THROW(logFlush.writeAndFlush(nullptr, 0));
-    EXPECT_NO_THROW(logFlush.writeAndFlush("ignored", 0));
+    EXPECT_NO_THROW(logFlush.write("data", 4));
+    EXPECT_NO_THROW(logFlush.write(nullptr, 0));
+    EXPECT_NO_THROW(logFlush.write("ignored", 0));
+    EXPECT_EQ(buffer.flushes, 0);
+    EXPECT_NO_THROW(logFlush.flush());
     std::cout.rdbuf(oldBuffer);
 
     EXPECT_EQ(buffer.str(), "data");
@@ -151,12 +154,24 @@ TEST_F(FileFlushTest, NormalFileIsReadableAfterEachWriteAndPreservesBinaryData)
     std::unique_ptr<LogFlush> logFlush = std::make_unique<FileFlush>(filename);
     const char tail[] = {'t', 'a', 'i', 'l', '!'};
 
-    logFlush->writeAndFlush(payload.data(), payload.size());
+    logFlush->write(payload.data(), payload.size());
+    logFlush->flush();
     EXPECT_EQ(readFile(filename), payload);
-    logFlush->writeAndFlush(tail, 4);
+    logFlush->write(tail, 4);
+    logFlush->flush();
     EXPECT_EQ(readFile(filename), payload + "tail");
     ASSERT_EQ(files().size(), 1u);
     EXPECT_EQ(files().front(), filename);
+}
+
+TEST_F(FileFlushTest, MultipleWritesCanShareOneFlush)
+{
+    const auto filename = m_directory / "batch.log";
+    FileFlush logFlush(filename);
+    logFlush.write("first", 5);
+    logFlush.write("\0tail", 5);
+    logFlush.flush();
+    EXPECT_EQ(readFile(filename), std::string("first\0tail", 10));
 }
 
 TEST_F(FileFlushTest, ReopeningNormalFileAppendsExistingContent)
@@ -164,10 +179,11 @@ TEST_F(FileFlushTest, ReopeningNormalFileAppendsExistingContent)
     const auto filename = m_directory / "app.log";
     {
         FileFlush logFlush(filename);
-        logFlush.writeAndFlush("first|", 6);
+        logFlush.write("first|", 6);
     }
     FileFlush logFlush(filename);
-    logFlush.writeAndFlush("second", 6);
+    logFlush.write("second", 6);
+    logFlush.flush();
 
     EXPECT_EQ(readFile(filename), "first|second");
 }
@@ -176,17 +192,19 @@ TEST_F(FileFlushTest, RollingFileFlushesBeforeAndAfterRotation)
 {
     const auto basePath = m_directory / std::filesystem::u8path(u8"\u8f6e\u8f6c \U0001f680");
     std::unique_ptr<LogFlush> logFlush = std::make_unique<RollFileFlush>(basePath, 4);
-    logFlush->writeAndFlush("abcd", 4);
+    logFlush->write("abcd", 4);
+    logFlush->flush();
     ASSERT_EQ(files().size(), 1u);
     EXPECT_EQ(readFile(files().front()), "abcd");
 
-    EXPECT_NO_THROW(logFlush->writeAndFlush(nullptr, 0));
-    EXPECT_NO_THROW(logFlush->writeAndFlush("ignored", 0));
-    EXPECT_THROW(logFlush->writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_NO_THROW(logFlush->write(nullptr, 0));
+    EXPECT_NO_THROW(logFlush->write("ignored", 0));
+    EXPECT_THROW(logFlush->write(nullptr, 1), std::invalid_argument);
     EXPECT_EQ(files().size(), 1u);
 
     const char tail[] = {'e', '\0', 'f', '!'};
-    logFlush->writeAndFlush(tail, 3);
+    logFlush->write(tail, 3);
+    logFlush->flush();
     const auto paths = files();
     ASSERT_EQ(paths.size(), 2u);
     EXPECT_EQ(readFile(paths[0]), "abcd");
@@ -198,12 +216,13 @@ TEST_F(FileFlushTest, EmptyAndInvalidWritesLeaveNormalFileUnchanged)
     const auto filename = m_directory / "app.log";
     FileFlush logFlush(filename);
 
-    EXPECT_NO_THROW(logFlush.writeAndFlush(nullptr, 0));
-    EXPECT_NO_THROW(logFlush.writeAndFlush("ignored", 0));
-    EXPECT_THROW(logFlush.writeAndFlush(nullptr, 1), std::invalid_argument);
+    EXPECT_NO_THROW(logFlush.write(nullptr, 0));
+    EXPECT_NO_THROW(logFlush.write("ignored", 0));
+    EXPECT_THROW(logFlush.write(nullptr, 1), std::invalid_argument);
     EXPECT_TRUE(readFile(filename).empty());
 
-    logFlush.writeAndFlush("valid", 5);
+    logFlush.write("valid", 5);
+    logFlush.flush();
     EXPECT_EQ(readFile(filename), "valid");
 }
 
@@ -213,8 +232,10 @@ TEST_F(FileFlushTest, CreatesMissingParentDirectoriesInBothModes)
     const auto rollingPath = m_directory / "rolling" / "nested" / "app";
     FileFlush normal(normalPath);
     RollFileFlush rolling(rollingPath, 4);
-    normal.writeAndFlush("plain", 5);
-    rolling.writeAndFlush("roll", 4);
+    normal.write("plain", 5);
+    normal.flush();
+    rolling.write("roll", 4);
+    rolling.flush();
 
     EXPECT_EQ(readFile(normalPath), "plain");
     std::vector<std::filesystem::path> paths;
@@ -228,10 +249,11 @@ TEST_F(FileFlushTest, ReopeningRollingFileKeepsOldContentsAndUsesNextIndex)
     const auto basePath = m_directory / "app";
     {
         RollFileFlush logFlush(basePath, 4);
-        logFlush.writeAndFlush("first", 5);
+        logFlush.write("first", 5);
     }
     RollFileFlush logFlush(basePath, 4);
-    logFlush.writeAndFlush("next", 4);
+    logFlush.write("next", 4);
+    logFlush.flush();
 
     const auto paths = files();
     ASSERT_EQ(paths.size(), 2u);
@@ -253,7 +275,7 @@ TEST(LogFlushFactoryTest, CreatesStdoutFlushWithNoArguments)
     ASSERT_NE(std::dynamic_pointer_cast<StdoutFlush>(logFlush), nullptr);
 
     testing::internal::CaptureStdout();
-    EXPECT_NO_THROW(logFlush->writeAndFlush("factory", 7));
+    EXPECT_NO_THROW(logFlush->write("factory", 7));
     const auto actual = testing::internal::GetCapturedStdout();
     EXPECT_EQ(actual, "factory");
 }
@@ -265,7 +287,8 @@ TEST_F(FileFlushTest, FactoryCreatesNormalFileWithNativePath)
     ASSERT_NE(std::dynamic_pointer_cast<FileFlush>(logFlush), nullptr);
     const char bytes[] = {'a', '\0', 'b'};
 
-    logFlush->writeAndFlush(bytes, sizeof(bytes));
+    logFlush->write(bytes, sizeof(bytes));
+    logFlush->flush();
 
     EXPECT_EQ(readFile(filename), std::string(bytes, sizeof(bytes)));
     ASSERT_EQ(files().size(), 1u);
@@ -278,8 +301,10 @@ TEST_F(FileFlushTest, FactoryCreatesRollingFileWithNativePathAndSize)
     const auto logFlush = LogFlushFactory::CreateLogFlush<RollFileFlush>(basePath, 4);
     ASSERT_NE(std::dynamic_pointer_cast<RollFileFlush>(logFlush), nullptr);
 
-    logFlush->writeAndFlush("abcd", 4);
-    logFlush->writeAndFlush("e", 1);
+    logFlush->write("abcd", 4);
+    logFlush->flush();
+    logFlush->write("e", 1);
+    logFlush->flush();
 
     const auto paths = files();
     ASSERT_EQ(paths.size(), 2u);
@@ -310,10 +335,11 @@ TEST(LogFlushFactoryTest, ForwardsLvalueAndMoveOnlyArgumentsAndSharesLifetime)
     class TrackedFlush : public LogFlush
     {
     public:
+        void flush() override {}
 
         TrackedFlush(int &destructions, std::unique_ptr<int> value) : destructions(destructions), value(std::move(value)) {}
         ~TrackedFlush() override { ++destructions; }
-        void writeAndFlush(const char *, size_t) override {}
+        void write(const char *, size_t) override {}
 
         int &destructions;
         std::unique_ptr<int> value;

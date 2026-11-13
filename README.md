@@ -10,7 +10,7 @@ dlog 是一个基于 C++17 的轻量级日志库，支持异步输出和文件�
 - 记录实现：长期 `Logger` 支持单目标异步输出，宏和对象接口共用 `LogMessage` 管理单条记录。
 - 输出方式：默认日志器写入 `stdout`；可创建文件、轮转文件或自定义 `LogFlush` 输出目标。
 - 文件写入与轮转：`dlog::LogFile(filename)` 追加到固定文件；`dlog::LogFile(basePath, rollSize)` 按本地日期和文件大小轮转，文件名形如 `app.20260924.0.log`。程序重启后会检查当天已有的序号，继续使用新的序号，避免覆盖旧日志。
-- 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`writeAndFlush(data, len)` 一次完成写入和刷新，零长度直接返回，缺失的父目录会自动创建。
+- 文件输出接口：`dlog::FileFlush(filename)` 写普通文件，`dlog::RollFileFlush(basePath, rollSize)` 写轮转文件；轮转逻辑仍由 LogFile 管理。`write(data, len)` 写入数据，零长度直接返回；`flush()` 显式刷新。缺失的父目录会自动创建。
 - 异步写盘：`Logger` 通过 `LogWorker` 缓冲并在后台批量写入；正常 `stop()` 等待剩余数据处理完成。
 - 系统错误日志：`DLOG_SYS_ERROR(savedErrno)` 和 `DLOG_SYS_FATAL(savedErrno)` 接收调用方预先保存的错误码，并在消息前附加错误描述和数值，便于定位系统调用失败原因。
 
@@ -75,7 +75,7 @@ python -m pip install "matplotlib>=3.6"
 
 FileUtil 使用 `FixedBuffer<64 * 1024>` 为文件流提供固定存储，通过 `storageData()` 和 `capacity()` 传给 `setvbuf()`。借出后不再调用该对象的追加、清空或清零接口，存储在 `fclose()` 完成前始终有效；文件流的缓冲状态由 C 运行库维护，不能通过 FixedBuffer 的 `readableBytes()` 查询。
 
-直接使用 `LogFile` 时，`append()` 不按时间主动刷新，应显式调用 `flush()` 或使用 `FileFlush::writeAndFlush()`。
+直接使用 `LogFile` 或 `FileFlush` 时，应在需要刷新时显式调用 `flush()`；Worker 会在每个消费者批次写入后刷新。
 
 `FileUtil`、`LogFile`、`FileFlush` 和 `RollFileFlush` 的路径参数接收 `const std::filesystem::path&`；Windows 下使用原生宽字符路径打开文件。直接传入路径对象可避免先调用 `.string()` 丢失字符。轮转输出使用 `RollFileFlush(basePath, rollSize)`。
 
@@ -121,7 +121,9 @@ DLOG_SYS_ERROR(savedErrno) << "open file failed";
 
 ## 自定义输出
 
-通过继承 `LogFlush` 实现 `writeAndFlush()`，再创建显式日志器。回调在后台线程运行，数据指针仅在本次调用期间有效：
+通过继承 `LogFlush` 实现 `write()` 和 `flush()`，再创建显式日志器。接口在后台线程调用，数据指针仅在 `write()` 调用期间有效；每个消费者批次写入后刷新一次：
+
+旧的 `writeAndFlush()` 已移除；自定义输出需要实现两个方法并重新编译。多个 Worker 共享输出目标时，写入和刷新之间可能交错。
 
 ```cpp
 #include <dlog/core/log.h>
@@ -129,8 +131,10 @@ DLOG_SYS_ERROR(savedErrno) << "open file failed";
 
 class MyOutput : public dlog::LogFlush {
 public:
-    void writeAndFlush(const char *data, size_t length) override {
+    void write(const char *data, size_t length) override {
         std::fwrite(data, 1, length, stdout);
+    }
+    void flush() override {
         std::fflush(stdout);
     }
 };

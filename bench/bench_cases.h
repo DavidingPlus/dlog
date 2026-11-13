@@ -38,10 +38,11 @@ class CountingFlush : public dlog::LogFlush
 {
 
 public:
+    void flush() override {}
 
     explicit CountingFlush(std::shared_ptr<Counts> counts, unsigned delayMs = 0) : m_counts(std::move(counts)), m_delayMs(delayMs) {}
 
-    void writeAndFlush(const char *data, size_t length) override
+    void write(const char *data, size_t length) override
     {
         // 延迟按回调批次计算，不是按每条记录计算。
         if (m_delayMs) std::this_thread::sleep_for(std::chrono::milliseconds(m_delayMs));
@@ -69,10 +70,11 @@ class BenchFileFlush : public dlog::LogFlush
 
 
 public:
+    void flush() override { (*m_logFlush)->flush(); }
 
     BenchFileFlush(const std::filesystem::path &file, std::shared_ptr<std::unique_ptr<dlog::FileFlush>> logFlush) : m_logFlush(std::move(logFlush)) { *m_logFlush = std::make_unique<dlog::FileFlush>(file); }
 
-    void writeAndFlush(const char *data, size_t length) override { (*m_logFlush)->writeAndFlush(data, length); }
+    void write(const char *data, size_t length) override { (*m_logFlush)->write(data, length); }
 
 
 private:
@@ -131,10 +133,11 @@ class LatencyFlush : public dlog::LogFlush
 {
 
 public:
+    void flush() override {}
 
     explicit LatencyFlush(std::shared_ptr<LatencyState> state) : m_state(std::move(state)) {}
 
-    void writeAndFlush(const char *, size_t) override
+    void write(const char *, size_t) override
     {
         // 每次只允许一条待测日志，因此这个回调对应当前 started。
         std::lock_guard<std::mutex> lock(m_state->mutex);

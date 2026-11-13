@@ -28,8 +28,9 @@ namespace
 class TestFlush : public LogFlush
 {
 public:
+    void flush() override {}
     explicit TestFlush(std::function<void(const char *, size_t)> output) : m_output(std::move(output)) {}
-    void writeAndFlush(const char *data, size_t len) override { m_output(data, len); }
+    void write(const char *data, size_t len) override { m_output(data, len); }
 private:
     std::function<void(const char *, size_t)> m_output;
 };
@@ -44,6 +45,33 @@ auto makeTestFlush(std::function<void(const char *, size_t)> output)
 TEST(LogWorkerTest, RejectsEmptyOutput)
 {
     EXPECT_THROW({ LogWorker worker(std::shared_ptr<LogFlush>{}, std::make_shared<ThreadPool>(1)); }, std::invalid_argument);
+}
+
+TEST(LogWorkerTest, FlushesEachBatchAndReportsFlushFailure)
+{
+    class FlushProbe : public LogFlush
+    {
+    public:
+        void write(const char *data, size_t len) override { events.append(data, len); events += '|'; }
+        void flush() override
+        {
+            events += "flush|";
+            if (++flushes == 2) throw std::runtime_error("flush failed");
+        }
+        std::string events;
+        int flushes = 0;
+    };
+    auto logFlush = std::make_shared<FlushProbe>();
+    LogWorker worker(logFlush, std::make_shared<ThreadPool>(1));
+    worker.append("first", 5);
+    worker.start();
+    worker.stop();
+    EXPECT_EQ(logFlush->events, "first|flush|");
+    worker.append("second", 6);
+    worker.start();
+    EXPECT_THROW(worker.stop(), std::runtime_error);
+    EXPECT_EQ(logFlush->events, "first|flush|second|flush|");
+    EXPECT_THROW(worker.append("later", 5), std::runtime_error);
 }
 
 TEST(LogWorkerTest, CopiesStreamBeforeItIsDestroyedAndOwnsOutput)

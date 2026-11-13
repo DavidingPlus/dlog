@@ -1,5 +1,7 @@
 # dlog 与 Kama 对比及简化迁移计划
 
+**接口更新（2026-11-13）：** 下文有关 `writeAndFlush()` 的说明保留历史设计；当前 `LogFlush` 已拆为 `write()` 和 `flush()`，Worker 每个消费者批次写入后刷新。详见 [日志提交与刷写设计](log-submission-design.md)。
+
 **命名更新（2026-11-11）：** dlog 的长期日志器 `AsyncLogger` 更名为 `Logger`，工厂方法 `BuildAsyncLogger` 更名为 `BuildLogger`，后台工作器 `AsyncWorker` 更名为 `LogWorker`，对应头文件为 `logger.h` 和 `logworker.h`。旧临时记录类型也曾叫 `Logger`，与现在的长期日志器含义不同。下文的历史实施记录及 Kama 参考名称保留当时的名称；创建入口现为 `LogManager::GetInstance().buildLogger(name, ...)`，下文历史记录保留当时的名称。
 
 ## 1. 目标与进度
