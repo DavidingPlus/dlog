@@ -70,14 +70,14 @@ class BenchFileFlush : public dlog::LogFlush
 
 public:
 
-    BenchFileFlush(const std::filesystem::path &file, std::shared_ptr<std::unique_ptr<dlog::FileFlush>> output) : m_output(std::move(output)) { *m_output = std::make_unique<dlog::FileFlush>(file); }
+    BenchFileFlush(const std::filesystem::path &file, std::shared_ptr<std::unique_ptr<dlog::FileFlush>> logFlush) : m_logFlush(std::move(logFlush)) { *m_logFlush = std::make_unique<dlog::FileFlush>(file); }
 
-    void writeAndFlush(const char *data, size_t length) override { (*m_output)->writeAndFlush(data, length); }
+    void writeAndFlush(const char *data, size_t length) override { (*m_logFlush)->writeAndFlush(data, length); }
 
 
 private:
 
-    std::shared_ptr<std::unique_ptr<dlog::FileFlush>> m_output;
+    std::shared_ptr<std::unique_ptr<dlog::FileFlush>> m_logFlush;
 };
 
 
