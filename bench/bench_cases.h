@@ -1,5 +1,5 @@
-#ifndef _DLOG_BENCH_H_
-#define _DLOG_BENCH_H_
+#ifndef _DLOG_BENCH_CASES_H_
+#define _DLOG_BENCH_CASES_H_
 
 #include "log.h"
 

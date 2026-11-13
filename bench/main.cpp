@@ -1,5 +1,7 @@
-#include "bench.h"
 #include "fileutil.h"
+
+#include "bench_cases.h"
+#include "reporter.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -35,6 +37,8 @@ int main(int argc, char **argv)
 
     size_t records = 100000;
     size_t threads = 4;
+    const char *format = std::getenv("BENCHMARK_FORMAT");
+    bool nativeReporter = format && std::string(format) != "console";
 
     try
     {
@@ -43,6 +47,7 @@ int main(int argc, char **argv)
         for (int i = 1; i < argc; ++i)
         {
             std::string arg(argv[i]);
+            if (arg.rfind("--benchmark_format=", 0) == 0) nativeReporter = arg.substr(19) != "console";
             size_t *target = nullptr;
             size_t offset = 0;
             if (arg.rfind("--dlog-records=", 0) == 0)
@@ -116,7 +121,7 @@ int main(int argc, char **argv)
             }
         }
         if (directory.empty()) throw std::runtime_error("无法创建不重名的基准测试目录");
-        std::cerr << "日志文件保存目录：" << directory.string() << '\n';
+        std::cerr << "\n日志文件保存目录：" << directory.string() << '\n';
     };
 
     // 每个迭代是完整批次；runCase 计时从生产者同时开始到 stop 排空，不含创建、校验和清理。
@@ -239,13 +244,15 @@ int main(int argc, char **argv)
         benchmark::AddCustomContext("dlog_records", std::to_string(records));
         benchmark::AddCustomContext("dlog_threads", std::to_string(threads));
 
-        std::cerr << "指标说明：Time 为手动计时，CPU 为框架测得的主线程 CPU 时间，Iterations 为迭代次数。\n"
-                  << "submit_records_per_second / total_records_per_second：提交 / 排空后吞吐量（条/秒）；drain_seconds：提交后排空秒数。\n"
-                  << "records / output_bytes / batches：记录数 / 字节数 / 输出批次数；samples：延迟样本数。\n"
-                  << "mean_ms / p95_ms / max_ms：平均 / P95 / 最大延迟（毫秒）。\n"
-                  << "submit_seconds / fast_seconds / slow_seconds：共享池提交 / 普通输出完成 / 慢输出完成的秒数。\n";
-
-        benchmark::RunSpecifiedBenchmarks();
+        DlogBenchReporter reporter(records, threads);
+        if (nativeReporter)
+        {
+            benchmark::RunSpecifiedBenchmarks();
+        }
+        else
+        {
+            benchmark::RunSpecifiedBenchmarks(&reporter);
+        }
 
         // 先停止池中任务，再释放文件句柄，Windows 才能删除这些文件。
         if (managerUsed) dlog::LogManager::Shutdown();
@@ -256,7 +263,7 @@ int main(int argc, char **argv)
         {
             for (const auto &file : files) std::filesystem::remove(file);
             if (!std::filesystem::remove(directory)) throw std::runtime_error("无法删除基准测试目录");
-            std::cerr << "基准测试文件已清理。\n";
+            std::cerr << "\n基准测试文件已清理。\n";
         }
     }
     catch (const std::exception &error)

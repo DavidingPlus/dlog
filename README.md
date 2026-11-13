@@ -43,9 +43,9 @@ xmake run dlog-bench --dlog-records=100000 --dlog-threads=4 --benchmark_repetiti
 
 `--dlog-records` 和 `--dlog-threads` 分别指定每个吞吐场景的总记录数和多生产者线程数，默认 100000 和 4，均为正整数。`--benchmark_repetitions` 控制各场景的重复次数，框架默认一次；多次运行时输出均值、中位数等统计。还可通过 `--benchmark_list_tests=true` 查看场景，使用 `--benchmark_filter=file` 等英文前缀筛选。
 
-每项吞吐测试的一次迭代对应一个完整批次：`Time` 是包括后台排空的批次耗时，`submit_records_per_second` 是提交吞吐量，`total_records_per_second` 是含排空的吞吐量，`drain_seconds` 是提交后等待排空的秒数；`records`、`output_bytes` 和 `batches` 分别是记录数、字节数和后台批次数。低频场景逐条采样 100 次，`mean_ms`、`p95_ms`、`max_ms` 是从提交前到后台回调收到数据的延迟，不代表落盘或持久化延迟。慢输出每批等待 1 毫秒；共享池场景中 `fast_seconds` / `slow_seconds` 是两个 Logger 从开始到各自收到全部记录的秒数。控制台表头和计数器名由框架以英文显示。
+每项吞吐测试的一次迭代对应一个完整批次。控制台按场景用中文展示提交速度、含排空的速度和等待时间；多次运行时展示每次结果以及平均值、中位数、标准差和变异系数。低频场景逐条采样 100 次，显示从提交前到后台回调收到数据的平均值、P95 和最大延迟，不代表落盘或持久化延迟。慢输出每批等待 1 毫秒；共享池场景分别显示两个 Logger 从开始到各自收到全部记录的时间。
 
-可使用 `--benchmark_out=<绝对路径> --benchmark_out_format=json` 保存结构化结果；`xmake run` 的工作目录可能是可执行文件目录，使用绝对路径可避免混淆。JSON 是额外结果文件，不属于自动清理范围。Google Benchmark 的 `Time` 是手动上报的耗时，`CPU` 列不代表全部工作线程的 CPU 用量。
+可使用 `--benchmark_out=<绝对路径> --benchmark_out_format=json` 保存 Google Benchmark 原始结构化结果；`xmake run` 的工作目录可能是可执行文件目录，使用绝对路径可避免混淆。JSON 是额外结果文件，不属于自动清理范围。通过 `--benchmark_format=json` 可将标准输出切换为框架原生 JSON；框架原生 `CPU` 值不代表全部工作线程的 CPU 用量。
 
 程序在计时结束后检查输出的换行记录数，并报告字节数；这不是逐条内容、顺序或重复记录的完整性验证。文件场景在可执行文件所在目录下新建独立子目录，路径在运行时打印；全部场景成功后自动清理本次文件和目录，测试失败时保留供排查。清理失败时会报告目录，已删除的文件不会恢复。
 
