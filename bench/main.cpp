@@ -3,6 +3,7 @@
 #include "bench_cases.h"
 #include "reporter.h"
 
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 
@@ -41,6 +42,7 @@ int main(int argc, char **argv)
     bool nativeReporter = format && std::string(format) != "console";
     const char *configuredOutput = std::getenv("BENCHMARK_OUT");
     bool customOutput = configuredOutput && *configuredOutput;
+    std::string outputPath = customOutput ? configuredOutput : "";
     const char *configuredOutputFormat = std::getenv("BENCHMARK_OUT_FORMAT");
     std::string outputFormat = configuredOutputFormat && *configuredOutputFormat ? configuredOutputFormat : "json";
     const char *listTests = std::getenv("BENCHMARK_LIST_TESTS");
@@ -59,7 +61,11 @@ int main(int argc, char **argv)
         {
             std::string arg(argv[i]);
             if (arg.rfind("--benchmark_format=", 0) == 0) nativeReporter = arg.substr(19) != "console";
-            if (arg.rfind("--benchmark_out=", 0) == 0) customOutput = true;
+            if (arg.rfind("--benchmark_out=", 0) == 0)
+            {
+                customOutput = true;
+                outputPath = arg.substr(16);
+            }
             if (arg.rfind("--benchmark_out_format=", 0) == 0) outputFormat = arg.substr(23);
             if (arg == "--help" || arg == "-h" || arg == "--benchmark_list_tests" || arg == "--benchmark_list_tests=true" || arg == "--benchmark_list_tests=1") listing = true;
             if (arg == "--benchmark_list_tests=false" || arg == "--benchmark_list_tests=0") listing = false;
@@ -114,6 +120,7 @@ int main(int argc, char **argv)
             if (resultDirectory.empty()) throw std::runtime_error("无法创建不重名的结果目录");
             resultFile = resultDirectory / (outputFormat == "json" ? "results.json" : outputFormat == "csv" ? "results.csv"
                                                                                                             : "results.txt");
+            outputPath = resultFile.string();
             defaultOutputArg = "--benchmark_out=" + resultFile.string();
         }
 
@@ -330,6 +337,17 @@ int main(int argc, char **argv)
             for (const auto &file : files) std::filesystem::remove(file);
             if (!std::filesystem::remove(directory)) throw std::runtime_error("无法删除基准测试目录");
             std::cerr << "\n基准测试文件已清理。\n";
+        }
+
+        // XMake 使用独立临时文件接收本次 JSON 路径，避免并发运行时选错结果。
+        if (!failed && matched && outputFormat == "json" && !outputPath.empty())
+        {
+            if (const char *pathFile = std::getenv("DLOG_BENCH_RESULT_PATH_FILE"))
+            {
+                std::ofstream marker(pathFile, std::ios::binary);
+                marker << std::filesystem::absolute(std::filesystem::path(outputPath)).u8string();
+                if (!marker) throw std::runtime_error("无法将结果路径传递给 XMake");
+            }
         }
     }
     catch (const std::exception &error)
