@@ -100,6 +100,29 @@ Windows 的 [`WriteFileGather()`](https://learn.microsoft.com/en-us/windows/win3
 
 实施顺序保持简单：先完成分段所有权交接，使用逐段输出验证正确性并建立基线；再单独设计平台适配的批量输出，用同一负载与当前连续双缓冲、分段逐段输出比较。聚集写入的具体接口、跨平台实现和是否采用，均以正确性与测量结果为准。
 
+### 3.2 Windows 后续研究：I/O Ring 批量提交
+
+Windows 的 I/O Ring 是除逐段 `fwrite()` 和受对齐限制的 `WriteFileGather()` 之外，值得后续研究的一条路径。它可以为每个日志段构造独立的文件写入请求，再使用 [`SubmitIoRing()`](https://learn.microsoft.com/en-us/windows/win32/api/ioringapi/nf-ioringapi-submitioring) 批量提交已构造的请求；`IORING_BUFFER_REF` 支持引用普通地址或已注册的缓冲区。参见 [I/O Ring 接口](https://learn.microsoft.com/en-us/windows/win32/api/ioringapi/)、[缓冲区引用](https://learn.microsoft.com/en-us/windows/win32/api/ioringapi/ns-ioringapi-ioring_buffer_ref)以及 [BuildIoRingWriteFile 接口定义](https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/Storage/FileSystem/fn.BuildIoRingWriteFile.html)。
+
+```text
+已拥有的日志段 A、B、C
+    → 分别构造写入请求，并指定各自的文件偏移
+    → 批量提交请求
+    → 分别检查完成结果，完成后释放对应的段
+```
+
+它可能允许后台在不先拼接日志字节的情况下，减少多次向内核提交请求的开销。但这**不是 `writev()` 式的单个聚集写入操作**：每个段仍是独立的写请求；批量提交不保证一次底层文件写入、完全无复制或性能优于现有方案。I/O Ring 的基础版本与写操作的支持版本不能混为一谈，须按实际系统检查写操作支持并准备回退路径。
+
+后续研究和原型需要确认：
+
+- **偏移与顺序：**明确如何从当前文件末尾为每个段分配互不重叠的偏移；不能假定异步请求按提交顺序完成。检查其他写入者、文件追加和轮转与偏移管理的关系。
+- **短写与失败：**逐个检查完成结果；特别验证某一段失败或短写、后续段已经写入时的处理和错误报告，避免将有缺口的文件当作完整日志。提交失败和单个请求失败的语义不同，也需分别处理。
+- **生命周期与关闭：**段和请求所需的数据保持有效直到相应操作完成；`flush()`、`stop()`、析构和轮转应等待或按明确约定处理在途请求，不能提前释放内存或文件句柄。
+- **兼容与集成：**检查 Windows 版本、SDK、`IORING_OP_WRITE` 的运行时支持、文件句柄要求及不支持时的回退。现有输出使用 `FILE*` 和 `fwrite()`，不能忽略流缓冲状态而直接混用另一套文件写入路径；需重新明确输出顺序、锁、错误和刷新语义。
+- **性能：**在真实 Windows 环境比较 I/O Ring、逐段 `fwrite()`、后台合并后写入，以及现有连续双缓冲；覆盖小日志、多段批次和不同批次大小。记录前台延迟、后台吞吐、请求及提交次数、内存、排空耗时和输出完整性。一次 `SubmitIoRing()` 处理多个请求不等同于只发生一次底层文件操作。
+
+此项仅列为待办，尚未实现、运行或验证 I/O Ring 的写操作版本要求与实际性能；不因此改变分段缓冲第一版按段输出的计划。
+
 ## 4. 相关实现与参考
 
 - [Folly IOBufQueue](https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h)：可以接收并持有 IOBuf 链；其追加普通字节指针的接口仍复制。适合参考块的所有权交接和生命周期，不意味着 dlog 需要引入 Folly。
