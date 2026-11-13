@@ -9,6 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -29,6 +30,10 @@ struct Counts
     size_t records = 0;
 
     size_t bytes = 0;
+
+    size_t batches = 0;
+    size_t expected = 0;
+    Clock::time_point completed;
 };
 
 
@@ -37,19 +42,23 @@ class CountingFlush : public dlog::LogFlush
 
 public:
 
-    explicit CountingFlush(std::shared_ptr<Counts> counts) : m_counts(std::move(counts)) {}
+    explicit CountingFlush(std::shared_ptr<Counts> counts, unsigned delayMs = 0) : m_counts(std::move(counts)), m_delayMs(delayMs) {}
 
     void writeAndFlush(const char *data, size_t length) override
     {
+        if (m_delayMs) std::this_thread::sleep_for(std::chrono::milliseconds(m_delayMs));
         // 每条日志以换行结束。
         m_counts->records += static_cast<size_t>(std::count(data, data + length, '\n'));
         m_counts->bytes += length;
+        ++m_counts->batches;
+        if (m_counts->expected && m_counts->records >= m_counts->expected) m_counts->completed = Clock::now();
     }
 
 
 private:
 
     std::shared_ptr<Counts> m_counts;
+    unsigned m_delayMs;
 };
 
 
@@ -71,7 +80,13 @@ private:
 };
 
 
-void runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, size_t records, size_t threadCount, const std::shared_ptr<Counts> &counts, const std::filesystem::path &file = {})
+struct Rates
+{
+    double submit;
+    double total;
+};
+
+Rates runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, size_t records, size_t threadCount, const std::shared_ptr<Counts> &counts, const std::filesystem::path &file = {})
 {
     // 所有生产者先等待开始信号，避免把逐个创建线程的时间算进测试。
     std::mutex mutex;
@@ -167,8 +182,91 @@ void runCase(const std::string &name, const dlog::Logger::SharedPtr &logger, siz
               << "  输出字节数：" << actualBytes << " 字节\n"
               << "  提交耗时：" << submitSeconds << " 秒\n"
               << "  总耗时（含排空）：" << totalSeconds << " 秒\n"
+              << "  提交后等待排空：" << totalSeconds - submitSeconds << " 秒\n"
               << "  提交吞吐量：" << records / submitSeconds << " 条/秒\n"
               << "  总吞吐量（含排空）：" << records / totalSeconds << " 条/秒\n";
+    if (counts) std::cout << "  后台输出批次数：" << counts->batches << "\n";
+    return {records / submitSeconds, records / totalSeconds};
+}
+
+double median(std::vector<double> values)
+{
+    std::sort(values.begin(), values.end());
+    size_t mid = values.size() / 2;
+    return values.size() % 2 ? values[mid] : values[mid - 1] / 2 + values[mid] / 2;
+}
+
+struct LatencyState
+{
+    std::mutex mutex;
+    std::condition_variable received;
+    Clock::time_point started;
+    std::vector<double> samples;
+};
+
+class LatencyFlush : public dlog::LogFlush
+{
+public:
+
+    explicit LatencyFlush(std::shared_ptr<LatencyState> state) : m_state(std::move(state)) {}
+    void writeAndFlush(const char *, size_t) override
+    {
+        std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->samples.push_back(std::chrono::duration<double, std::milli>(Clock::now() - m_state->started).count());
+        m_state->received.notify_one();
+    }
+
+private:
+
+    std::shared_ptr<LatencyState> m_state;
+};
+
+void runLatency(const dlog::Logger::SharedPtr &logger, const std::shared_ptr<LatencyState> &state, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->started = Clock::now();
+        }
+        DLOG_LOGGER_INFO(logger) << "低频延迟测试 " << i;
+        std::unique_lock<std::mutex> lock(state->mutex);
+        if (!state->received.wait_for(lock, std::chrono::seconds(5), [&]
+                                      { return state->samples.size() > i; }))
+            throw std::runtime_error("低频延迟测试等待后台回调超时");
+    }
+    logger->stop();
+    auto samples = state->samples;
+    if (samples.size() != count) throw std::runtime_error("低频延迟测试样本数量不符");
+    std::sort(samples.begin(), samples.end());
+    std::cout << "\n低频输出到回调的延迟：样本=" << count
+              << "，平均=" << std::accumulate(samples.begin(), samples.end(), 0.0) / count
+              << " 毫秒，P95=" << samples[(count * 95 + 99) / 100 - 1]
+              << " 毫秒，最大=" << samples.back() << " 毫秒\n";
+}
+
+void runSharedPool(const dlog::Logger::SharedPtr &slow, const dlog::Logger::SharedPtr &fast,
+                   const std::shared_ptr<Counts> &slowCounts, const std::shared_ptr<Counts> &fastCounts, size_t records)
+{
+    auto begin = Clock::now();
+    for (size_t i = 0; i < records; ++i)
+    {
+        DLOG_LOGGER_INFO(slow) << "慢日志 " << i;
+        DLOG_LOGGER_INFO(fast) << "普通日志 " << i;
+    }
+    auto submitted = Clock::now();
+    fast->stop();
+    slow->stop();
+    auto allDone = Clock::now();
+    if (slowCounts->records != records || fastCounts->records != records)
+        throw std::runtime_error("共享线程池测试记录数不符");
+    std::cout << "\n共享线程池（两个日志器各 " << records << " 条，慢输出每批等待 1 毫秒）：\n"
+              << "  提交耗时：" << std::chrono::duration<double>(submitted - begin).count() << " 秒\n"
+              << "  普通日志器收到全部记录（从开始计）：" << std::chrono::duration<double>(fastCounts->completed - begin).count() << " 秒\n"
+              << "  慢日志器收到全部记录（从开始计）：" << std::chrono::duration<double>(slowCounts->completed - begin).count() << " 秒\n"
+              << "  两者全部排空耗时：" << std::chrono::duration<double>(allDone - begin).count() << " 秒\n"
+              << "  慢输出批次数：" << slowCounts->batches << "，普通输出批次数：" << fastCounts->batches << '\n';
 }
 
 
@@ -198,7 +296,7 @@ int main(int argc, char const *argv[])
 
     try
     {
-        if (argc > 3) throw std::invalid_argument("用法：dlog-bench [记录数] [线程数]");
+        if (argc > 4) throw std::invalid_argument("用法：dlog-bench [记录数] [线程数] [重复次数]");
 
         // 可省略参数；指定时记录总数和生产者线程数必须为正整数。
         auto parsePositive = [](const char *text)
@@ -221,6 +319,7 @@ int main(int argc, char const *argv[])
 
         size_t records = argc > 1 ? parsePositive(argv[1]) : 100000;
         size_t threads = argc > 2 ? parsePositive(argv[2]) : 4;
+        size_t repetitions = argc > 3 ? parsePositive(argv[3]) : 5;
 
         // 每次运行创建新目录，遇到重名则尝试下一个编号，不覆盖旧文件。
         auto stamp = Clock::now().time_since_epoch().count();
@@ -245,24 +344,55 @@ int main(int argc, char const *argv[])
         // 每种线程数分别测试只计数和真实写文件，两者使用不同日志器。
         for (size_t threadCount : {size_t{1}, threads})
         {
-            auto suffix = std::to_string(++caseIndex);
-            auto counts = std::make_shared<Counts>();
-            auto memoryName = "counting-" + suffix;
-            auto memoryLogger = manager.buildLogger<CountingFlush>(memoryName, counts);
-
-            runCase("计数输出", memoryLogger, records, threadCount, counts);
-
-            auto fileName = "file-" + suffix;
-            auto file = directory / (fileName + ".log");
-            auto output = std::make_shared<std::unique_ptr<dlog::FileFlush>>();
-
-            fileOutputs.push_back(output);
-            files.push_back(file);
-
-            auto fileLogger = manager.buildLogger<BenchFileFlush>(fileName, file, output);
-
-            runCase("文件输出", fileLogger, records, threadCount, {}, file);
+            for (bool fileCase : {false, true})
+            {
+                std::vector<double> submitRates, totalRates;
+                for (size_t iteration = 0; iteration < repetitions; ++iteration)
+                {
+                    auto suffix = std::to_string(++caseIndex);
+                    std::cout << "\n第 " << iteration + 1 << " / " << repetitions << " 次运行\n";
+                    Rates rates;
+                    if (!fileCase)
+                    {
+                        auto counts = std::make_shared<Counts>();
+                        auto logger = manager.buildLogger<CountingFlush>("counting-" + suffix, counts);
+                        rates = runCase("计数输出", logger, records, threadCount, counts);
+                    }
+                    else
+                    {
+                        auto fileName = "file-" + suffix;
+                        auto file = directory / (fileName + ".log");
+                        auto output = std::make_shared<std::unique_ptr<dlog::FileFlush>>();
+                        fileOutputs.push_back(output);
+                        files.push_back(file);
+                        auto logger = manager.buildLogger<BenchFileFlush>(fileName, file, output);
+                        rates = runCase("文件输出", logger, records, threadCount, {}, file);
+                        output->reset();
+                    }
+                    submitRates.push_back(rates.submit);
+                    totalRates.push_back(rates.total);
+                }
+                std::cout << "\n"
+                          << (fileCase ? "文件输出" : "计数输出") << "，线程数 " << threadCount
+                          << "：提交吞吐量中位数=" << median(submitRates) << " 条/秒，总吞吐量中位数="
+                          << median(totalRates) << " 条/秒\n";
+            }
         }
+
+        auto latency = std::make_shared<LatencyState>();
+        auto latencyLogger = manager.buildLogger<LatencyFlush>("latency", latency);
+        runLatency(latencyLogger, latency, 100);
+
+        auto slowCounts = std::make_shared<Counts>();
+        auto slowLogger = manager.buildLogger<CountingFlush>("slow-output", slowCounts, 1);
+        runCase("慢输出（每批等待 1 毫秒）", slowLogger, records, threads, slowCounts);
+
+        auto sharedSlowCounts = std::make_shared<Counts>();
+        auto sharedFastCounts = std::make_shared<Counts>();
+        sharedSlowCounts->expected = sharedFastCounts->expected = records;
+        auto sharedSlow = manager.buildLogger<CountingFlush>("shared-slow", sharedSlowCounts, 1);
+        auto sharedFast = manager.buildLogger<CountingFlush>("shared-fast", sharedFastCounts);
+        runSharedPool(sharedSlow, sharedFast, sharedSlowCounts, sharedFastCounts, records);
 
         dlog::LogManager::Shutdown();
 
