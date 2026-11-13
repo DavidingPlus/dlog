@@ -11,30 +11,51 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows
             arch: x86_64
             plat: windows
             xmake-arch: x64
+            python-arch: x64
             runs-on: windows-latest
 
           - os: ubuntu
             arch: x86_64
             plat: linux
             xmake-arch: x86_64
+            python-arch: x64
             runs-on: ubuntu-latest
 
           - os: ubuntu
             arch: arm64
             plat: linux
             xmake-arch: arm64
+            python-arch: arm64
             runs-on: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.runs-on }}
+    env:
+      PYTHONUTF8: "1"
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        architecture: ${{ matrix.python-arch }}
+
+    - name: Install plotting dependencies
+      run: |
+        python -m pip install "matplotlib>=3.6"
+        python -c "import matplotlib, pathlib, urllib.request; p = pathlib.Path(matplotlib.get_data_path()) / 'fonts' / 'ttf' / 'NotoSansCJKsc-Regular.otf'; urllib.request.urlretrieve('https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf', p)"
+        python -c "import sys; sys.path.insert(0, 'bench/plot'); import plot_results; plot_results.choose_font()"
+
+    - name: Test plotting
+      run: python -m unittest discover -s bench/plot -p test_plot_results.py
 
     - name: Setup XMake
       uses: xmake-io/github-action-setup-xmake@v1
@@ -43,7 +64,6 @@ jobs:
 
     - name: Configure XMake
       run: |
-        touch snippet/SkipList/.buildme
         xmake f -m release -p ${{ matrix.plat }} -a ${{ matrix.xmake-arch }} --with_bench=yes -y
 
     - name: Build Bench
@@ -53,3 +73,15 @@ jobs:
     - name: Run Bench
       working-directory: ${{github.workspace}}
       run: xmake run dlog-bench
+
+    - name: Verify benchmark results and charts
+      run: |
+        python -c "from pathlib import Path; p = Path('build/${{ matrix.plat }}/${{ matrix.xmake-arch }}/release/bench/bench-results'); runs = list(p.glob('run-*/results.json')); assert len(runs) == 1, f'Expected one result, found {len(runs)}'; missing = [name for name in ('throughput.png', 'duration.png', 'latency.png', 'shared_pool.png') if not (runs[0].parent / name).is_file()]; assert not missing, f'Missing charts: {missing}'"
+
+    - name: Upload benchmark results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bench-${{ matrix.os }}-${{ matrix.arch }}
+        path: build/${{ matrix.plat }}/${{ matrix.xmake-arch }}/release/bench/bench-results/
+        if-no-files-found: warn
