@@ -31,6 +31,20 @@ Windows 下使用 `--build_shared=y` 构建 DLL，使用 `--build_shared=n` 构�
 
 此前版本的安装验证覆盖 Windows / MSVC / Debug 的 DLL 与静态库，以及 Ubuntu WSL / x86-64 / Debug 动态库：外部程序仅使用安装后的 dlog 头文件、库和独立配置的 `fmt`，验证了默认终端、普通文件、轮转文件、显式停止和注册日志器正常退出排空。Windows DLL 安装的 18 个公开头文件分别通过独立包含编译。该验证不代表所有公开符号及平台组合均已验证；Linux 静态库、Release 模式、真实磁盘故障及长期压力仍未验证。
 
+## 性能基准测试
+
+基准程序使用公开日志宏和异步 Logger，分别测试计数型自定义输出和普通文件输出，各运行一次单生产者和指定数量的多生产者。它不参与默认构建或单元测试，也不设置性能通过阈值。建议在 Release 模式运行：
+
+```sh
+xmake f -m release
+xmake build -y dlog-bench
+xmake run dlog-bench 1000 4
+```
+
+两个参数分别是每个场景的总记录数和多生产者线程数，均为正整数；省略时分别为 1000 和 4。每个场景报告提交耗时、包含 `stop()` 排空的总耗时及对应吞吐量。程序在计时结束后检查输出的换行记录数，并报告字节数；这不是逐条内容、顺序或重复记录的完整性验证。文件场景在可执行文件所在目录下新建独立子目录，路径在运行时打印；文件会保留，便于查看，使用后可自行清理。
+
+计数输出不写磁盘，但仍包含日志格式化和计数开销；文件输出每批写入后刷新。对比结果时应记录平台、编译模式、线程数和存储设备，并重复运行。不同日志库的格式、刷新和队列满策略不同时，结果不能直接比较。
+
 ## 基本用法
 
 `FlexibleBuffer` 和 `FixedBuffer` 位于 utils 模块，公共头文件为 `<dlog/utils/flexiblebuffer.h>`、`<dlog/utils/fixedbuffer.h>`。直接使用 `LogStream::buffer()` 时，返回类型为 `const dlog::FlexibleBuffer&`；通过 `readableBegin()` 和 `readableBytes()` 读取内容。

@@ -1,0 +1,8 @@
+target("dlog-bench")
+    set_default(false)
+    set_kind("binary")
+    set_targetdir("$(builddir)/$(plat)/$(arch)/$(mode)/bench")
+    add_files("main.cpp")
+    add_deps("dlog")
+    apply_current_platform_target_config()
+target_end()

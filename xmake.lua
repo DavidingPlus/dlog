@@ -183,6 +183,7 @@ target_end()
 
 
 includes("snippet")
+includes("bench")
 
 if get_config("with_gtest") then
     includes("test")
