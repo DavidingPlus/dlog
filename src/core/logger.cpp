@@ -6,13 +6,11 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-// 先持有已构造的输出目标，再为 Worker 绑定批次写入回调，此时线程尚未启动。Worker 先于 m_output 析构并排空，因此回调只需保存指向输出目标的指针。
-Logger::Logger(std::shared_ptr<LogFlush> output, std::shared_ptr<ThreadPool> threadPool)
-    : m_running(true),
-      m_output(std::move(output)),
-      m_worker([output = m_output.get()](const FlexibleBuffer &buffer)
-               { output->writeAndFlush(buffer.readableBegin(), buffer.readableBytes()); },
-               std::move(threadPool)) {}
+Logger::Logger(std::unique_ptr<LogWorker> worker)
+    : m_running(true), m_worker(std::move(worker))
+{
+    if (!m_worker) throw std::invalid_argument("Logger: worker must not be null");
+}
 
 LogMessage Logger::message(const char *filename, int line, LogLevel level, int savedErrno)
 {
@@ -22,19 +20,19 @@ LogMessage Logger::message(const char *filename, int line, LogLevel level, int s
     return LogMessage(
         filename, line, level, savedErrno,
         // shared_from_this() 取得与 buildLogger() 返回值共享所有权的 shared_ptr。即使调用方先释放自己的引用，消息仍持有日志器和 Worker，直到析构回调完成入队。只捕获 this 时，日志器可能已被销毁，析构提交会访问悬空指针。
-        [logger = shared_from_this()](const char *data, size_t len)
+        [logger = shared_from_this()](const LogStream &stream)
         {
             if (!logger->m_running) throw std::logic_error("Logger: logger has stopped");
 
-            logger->m_worker.append(data, len);
+            logger->m_worker->append(stream);
         },
-        m_output->colorMode());
+        m_worker->m_logFlush->colorMode());
 }
 
 void Logger::stop()
 {
     m_running = false;
-    m_worker.stop();
+    m_worker->stop();
 }
 
 

@@ -40,7 +40,7 @@ private:
 // 1. 创建 LogMessage 时，LogMessageImpl 将时间、日志等级和源文件位置写入内部 LogStream 的前缀；
 // 2. 调用 stream() 获取 LogStream，通过重载的 operator<< 将正文格式化后追加到可增长缓冲区；
 // 3. LogMessage 析构时调用 finish()，为日志追加换行符；
-// 4. 析构函数通过 OutputFunc 将缓冲区中的有效字节写到 stdout 或调用方指定的输出位置。
+// 4. 析构函数通过 OutputFunc 提交完整的 LogStream；实际输出由接收方注册的回调函数负责。
 class DLOG_API_EXPORTED LogMessage
 {
 
@@ -48,8 +48,9 @@ class DLOG_API_EXPORTED LogMessage
 
 public:
 
-    // 输出函数。OutputFunc 使用 size_t 表示显式长度，因此调用方不需要、也不应该依赖 data 以 '\0' 结尾。
-    using OutputFunc = std::function<void(const char *msg, size_t len)>;
+    // 提交完整日志；流及其数据只在回调执行期间有效。
+    // LogMessage 表示构造一条日志信息，在析构的时候负责转发出去，所以由别人给他注册一个输出回调函数，是很合理的事情。在当前的 LogWorker 流程中，是把这段字节流转发到 Worker 的前台缓冲中，真正的输出发生在 LogWorker 的后台线程中，所以 LogWorker 保存 LogFlush。Logger 起一个统筹协调的作用。LogMessage Logger::message(const char *filename, int line, LogLevel level, int savedErrno) 就是最好的证明。
+    using OutputFunc = std::function<void(const LogStream &)>;
 
     // savedErrno 是调用方在系统错误发生时保存的 errno 快照；0 表示不附带系统错误信息。
     LogMessage(const char *filename, int line, LogLevel level, int savedErrno, OutputFunc output, LogLevelColorMode colorMode);

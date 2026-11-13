@@ -60,8 +60,7 @@ LogMessage::~LogMessage()
     try
     {
         m_impl.finish();
-        const FlexibleBuffer &buffer = stream().buffer();
-        m_output(buffer.readableBegin(), buffer.readableBytes());
+        m_output(stream());
     }
     catch (...)
     {

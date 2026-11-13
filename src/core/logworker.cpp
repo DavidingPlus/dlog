@@ -1,4 +1,6 @@
 #include "logworker.h"
+#include "logflush.h"
+#include "logstream.h"
 #include "threadpool.h"
 
 #include <stdexcept>
@@ -8,11 +10,17 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-LogWorker::LogWorker(OutputFunc output, std::shared_ptr<ThreadPool> threadPool)
-    : m_output(std::move(output)), m_threadPool(std::move(threadPool)), m_producerBuffer(std::make_unique<FlexibleBuffer>()), m_consumerBuffer(std::make_unique<FlexibleBuffer>())
+LogWorker::LogWorker(std::shared_ptr<LogFlush> logFlush, std::shared_ptr<ThreadPool> threadPool)
+    : m_logFlush(std::move(logFlush)), m_threadPool(std::move(threadPool)), m_producerBuffer(std::make_unique<FlexibleBuffer>()), m_consumerBuffer(std::make_unique<FlexibleBuffer>())
 {
-    if (!m_output) throw std::invalid_argument("LogWorker::constructor(): output must not be empty");
+    if (!m_logFlush) throw std::invalid_argument("LogWorker::constructor(): output must not be empty");
     if (!m_threadPool) throw std::invalid_argument("LogWorker::constructor(): thread pool must not be empty");
+}
+
+void LogWorker::append(const LogStream &stream)
+{
+    const auto &buffer = stream.buffer();
+    append(buffer.readableBegin(), buffer.readableBytes());
 }
 
 void LogWorker::scheduleTaskLocked()
@@ -125,7 +133,7 @@ void LogWorker::threadFunc()
             }
 
             // 在锁外输出当前批次，前台可以继续向另一块缓冲区追加日志。
-            m_output(*m_consumerBuffer);
+            m_logFlush->writeAndFlush(m_consumerBuffer->readableBegin(), m_consumerBuffer->readableBytes());
 
             // 本批次已写完，清空消费者缓冲区以供下一轮交换复用。
             m_consumerBuffer->clear();

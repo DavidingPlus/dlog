@@ -71,7 +71,7 @@ private:
 
     ~LogManager() { shutdown(); }
 
-    DLOG_API_EXPORTED Logger::SharedPtr buildLoggerImpl(std::shared_ptr<LogFlush> output);
+    DLOG_API_EXPORTED Logger::SharedPtr buildLoggerImpl(std::shared_ptr<LogFlush> logFlush);
 
     DLOG_API_EXPORTED void shutdown();
 

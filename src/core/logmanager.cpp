@@ -4,11 +4,12 @@
 DLOG_NAMESPACE_BEGIN(dlog)
 
 
-Logger::SharedPtr LogManager::buildLoggerImpl(std::shared_ptr<LogFlush> output)
+Logger::SharedPtr LogManager::buildLoggerImpl(std::shared_ptr<LogFlush> logFlush)
 {
     // 建立 shared_ptr 所有权，供 Logger::message() 的 shared_from_this() 使用。Worker 启动成功后返回日志器，抛异常时，局部 shared_ptr 负责回收已构造的资源。
-    auto logger = Logger::SharedPtr(new Logger(std::move(output), m_threadPool));
-    logger->m_worker.start();
+    // Logger 的私有构造函数只能由友元直接调用，不能通过 make_shared 调用。
+    auto logger = Logger::SharedPtr(new Logger(std::make_unique<LogWorker>(std::move(logFlush), m_threadPool)));
+    logger->m_worker->start();
     return logger;
 }
 

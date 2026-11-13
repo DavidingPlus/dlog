@@ -5,7 +5,6 @@
 
 #include <condition_variable>
 #include <exception>
-#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -14,9 +13,11 @@ DLOG_NAMESPACE_BEGIN(dlog)
 
 
 class ThreadPool;
+class LogFlush;
+class LogStream;
 
 
-// LogWorker 只负责字节缓冲和后台批次处理，输出方式由回调决定，不承担日志记录格式化或文件配置。
+// LogWorker 负责字节缓冲，并通过 LogFlush 在后台输出批次。
 class DLOG_API_EXPORTED LogWorker
 {
 
@@ -26,17 +27,17 @@ class DLOG_API_EXPORTED LogWorker
 
 public:
 
-    // 后台按批次交付只读缓冲块。缓冲区由 LogWorker 管理，引用及数据仅在回调期间有效，接收方应在返回前处理完或自行复制。不得从回调中启停或销毁 Worker，避免任务等待自身。
-    using OutputFunc = std::function<void(const FlexibleBuffer &)>;
-
-    // 调用方负责提供线程池，并在任务完成前保持线程池可用。
-    explicit LogWorker(OutputFunc output, std::shared_ptr<ThreadPool> threadPool);
+    // 输出目标和线程池须非空；不得从输出操作中启停或销毁本 Worker。
+    explicit LogWorker(std::shared_ptr<LogFlush> logFlush, std::shared_ptr<ThreadPool> threadPool);
 
     // 等待已安排的任务；后台异常由显式 stop() 报告。
     ~LogWorker() { stopAndWait(); }
 
     // 将一段已经格式化的日志字节复制到 Worker 的内存缓冲区。整次追加持有互斥锁，按顺序复制到可增长缓冲区；启动后有非空数据就安排线程池处理。后台失败后，非空追加重抛原异常。
     void append(const char *data, size_t len);
+
+    // 复制流中完整的有效字节到内存缓冲区。
+    void append(const LogStream &stream);
 
     // 启停由调用方串行执行；运行中重复启动无效，正常停止后可重启，后台失败后重抛原异常。
     void start();
@@ -55,8 +56,8 @@ private:
     void stopAndWait();
 
 
-    // 决定如何处理每个字节批次；Worker 不保存文件路径或轮转配置。
-    OutputFunc m_output;
+    // 后台输出目标。
+    std::shared_ptr<LogFlush> m_logFlush;
 
     // 日志输出任务使用的线程池。
     std::shared_ptr<ThreadPool> m_threadPool;
@@ -70,7 +71,7 @@ private:
     // 是否已有输出任务排队或执行。
     bool m_scheduled = false;
 
-    // 用于工作任务结束时唤醒等待停止的调用方。例如：线程池正在使用 Worker 的缓冲区和输出回调写日志，调用方调用 stop()。
+    // 用于工作任务结束时唤醒等待停止的调用方。例如：线程池正在使用 Worker 的缓冲区和输出目标写日志，调用方调用 stop()。
     // 这时 stop() 不能马上返回，否则调用方可能接着销毁 Worker，而后台任务还在访问它。正确处理是：
     // 1. stop() 把 m_running 设为 false，然后等待 m_scheduled == false。
     // 2. wait() 期间释放 m_mtx，后台任务可以继续处理剩余数据。

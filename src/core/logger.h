@@ -37,16 +37,14 @@ public:
 
 private:
 
-    explicit Logger(std::shared_ptr<LogFlush> output, std::shared_ptr<ThreadPool> threadPool);
+    explicit Logger(std::unique_ptr<LogWorker> worker);
 
 
     // 日志器是否正在运行。
     std::atomic_bool m_running{false};
 
-    std::shared_ptr<LogFlush> m_output;
-
-    // Worker 析构时会排空队列，必须先于输出目标销毁。
-    LogWorker m_worker;
+    // Worker 持有输出目标并在析构时等待后台任务。
+    std::unique_ptr<LogWorker> m_worker;
 };
 
 
